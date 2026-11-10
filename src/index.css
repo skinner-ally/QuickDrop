@@ -171,10 +171,6 @@
     overscroll-behavior: none;
     font-feature-settings: 'ss01', 'cv11';
   }
-  /* iOS увеличивает страницу при фокусе на поле с шрифтом < 16px. */
-  @media (pointer: coarse) {
-    input, textarea, select { font-size: 16px; }
-  }
   ::selection {
     background: color-mix(in oklch, var(--brand) 28%, transparent);
   }
@@ -186,9 +182,16 @@
   }
 }
 
+/* iOS увеличивает страницу при фокусе на поле с шрифтом < 16px.
+   Вне @layer, чтобы правило сильнее утилит размера (text-sm и т.п.). */
+@media (pointer: coarse) {
+  input, textarea, select { font-size: 16px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }
