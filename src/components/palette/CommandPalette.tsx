@@ -29,6 +29,7 @@ import { CategoryDot } from '@/components/items/CategoryBadge'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { setSetting } from '@/db/settings'
 import { useAllItems, useAllTags, useCategories } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { fold, makeSnippet, searchItems } from '@/search'
 import { useUi, type View } from '@/store/ui'
@@ -105,7 +106,7 @@ export function CommandPalette() {
 
   const setTheme = (theme: Settings['theme']) => {
     close()
-    setSetting('theme', theme).catch((e: unknown) => toast.error(e instanceof Error ? e.message : String(e)))
+    setSetting('theme', theme).catch((e: unknown) => toast.error(describeError(e)))
   }
 
   const go = (view: View) => {

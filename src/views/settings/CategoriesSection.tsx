@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { createCategory, deleteCategory, updateCategory } from '@/db/repo'
 import { useAllItems, useCategories } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { CATEGORY_COLORS, type Category, type CategoryColor } from '@/types'
 import { radioGroupKeyDown } from './radioKeys'
@@ -24,7 +25,7 @@ const COLOR_LABEL: Record<CategoryColor, string> = {
   pink: 'Розовый',
 }
 
-const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e))
+const fail = (e: unknown) => toast.error(describeError(e))
 
 function ColorPicker({
   value,

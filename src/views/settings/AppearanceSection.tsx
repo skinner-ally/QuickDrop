@@ -1,6 +1,7 @@
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { toast } from 'sonner'
 import { setSetting } from '@/db/settings'
+import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import type { Settings } from '@/types'
 import { radioGroupKeyDown } from './radioKeys'
@@ -14,7 +15,7 @@ const OPTIONS: Array<{ value: Settings['theme']; label: string; Icon: typeof Sun
 
 export function AppearanceSection({ settings }: { settings: Settings }) {
   const choose = (v: Settings['theme']) => {
-    setSetting('theme', v).catch((e: Error) => toast.error(e.message))
+    setSetting('theme', v).catch((e: unknown) => toast.error(describeError(e)))
   }
   return (
     <Section id="appearance" title="Оформление" description="Тема интерфейса. «Системная» следует настройке устройства.">

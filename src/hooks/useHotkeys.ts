@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useUi, type View } from '@/store/ui'
-import { isTauri } from '@/lib/platform'
+import { pastedFiles } from '@/lib/clipboard'
+import { matchKey } from '@/lib/keys'
+import { isMac } from '@/lib/platform'
 
 const VIEW_BY_DIGIT: Record<string, View> = {
   Digit1: 'inbox',
   Digit2: 'library',
   Digit3: 'favorites',
   Digit4: 'archive',
+}
+
+function viewByDigit(e: KeyboardEvent): View | undefined {
+  for (const [code, view] of Object.entries(VIEW_BY_DIGIT)) {
+    if (matchKey(e, code, code.replace('Digit', ''))) return view
+  }
+  return undefined
 }
 
 function isEditable(el: EventTarget | null): boolean {
@@ -31,18 +40,6 @@ function hasFiles(dt: DataTransfer | null): boolean {
   return !!dt && Array.from(dt.types).includes('Files')
 }
 
-function filesFromClipboard(dt: DataTransfer): File[] {
-  if (dt.files.length) return Array.from(dt.files)
-  const out: File[] = []
-  for (const it of Array.from(dt.items)) {
-    if (it.kind === 'file') {
-      const f = it.getAsFile()
-      if (f) out.push(f)
-    }
-  }
-  return out
-}
-
 /**
  * Глобальные клавиши, вставка из буфера и drag&drop.
  * Сочетания проверяются по e.code, чтобы работать в любой раскладке.
@@ -54,19 +51,22 @@ export function useHotkeys(): { dragging: boolean } {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const ui = useUi.getState()
-      const mod = e.ctrlKey || e.metaKey
+      // На Mac модификатор — только ⌘: Ctrl+K в полях ввода — «удалить до конца строки».
+      const mac = isMac()
+      const mod = mac ? e.metaKey : e.ctrlKey || e.metaKey
 
-      if (mod && e.shiftKey && e.code === 'Space') {
+      if (mod && e.shiftKey && matchKey(e, 'Space', ' ')) {
         e.preventDefault()
         ui.openCapture()
         return
       }
-      if (e.altKey && !mod && !e.shiftKey && e.code === 'KeyN') {
+      // На Mac Option+N — мёртвая клавиша (ñ): в полях ввода её не перехватываем.
+      if (e.altKey && !mod && !e.shiftKey && matchKey(e, 'KeyN', 'n') && !(mac && isEditable(e.target))) {
         e.preventDefault()
         ui.openCapture()
         return
       }
-      if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
+      if (mod && !e.shiftKey && !e.altKey && matchKey(e, 'KeyK', 'k')) {
         e.preventDefault()
         ui.setPaletteOpen(true)
         return
@@ -75,29 +75,39 @@ export function useHotkeys(): { dragging: boolean } {
       if (e.defaultPrevented || e.isComposing) return
       const plain = !mod && !e.altKey && !e.shiftKey
 
-      if (e.code === 'Escape') {
-        if (!ui.selectedId || isEditable(e.target) || overlayOpen()) return
+      if (matchKey(e, 'Escape', 'Escape')) {
+        if (!ui.selectedId || overlayOpen()) return
+        if (isEditable(e.target)) {
+          // Первый Esc мог закрыть подсказки поля (defaultPrevented уже отсёк). Иначе снимаем фокус,
+          // чтобы следующий Esc закрыл панель.
+          if (e.target instanceof HTMLElement) e.target.blur()
+          return
+        }
+        // preventDefault: список по тому же Esc не должен ещё и снимать отметки.
+        e.preventDefault()
         ui.select(null)
         return
       }
 
       if (!plain || isEditable(e.target) || overlayOpen()) return
 
-      if (e.code === 'KeyN') {
+      const digitView = viewByDigit(e)
+      if (matchKey(e, 'KeyN', 'n')) {
         e.preventDefault()
         ui.openCapture()
-      } else if (e.code === 'Slash') {
+      } else if (matchKey(e, 'Slash', '/')) {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('[data-search-input]')?.focus()
-      } else if (VIEW_BY_DIGIT[e.code]) {
+      } else if (digitView) {
         e.preventDefault()
-        ui.setView(VIEW_BY_DIGIT[e.code])
+        ui.setView(digitView)
       }
     }
 
     const onPaste = (e: ClipboardEvent) => {
       if (e.defaultPrevented || isEditable(e.target) || overlayOpen() || !e.clipboardData) return
-      const files = filesFromClipboard(e.clipboardData)
+      // Текст + растровая копия из офисной программы — это текст (см. isRichTextPaste).
+      const files = pastedFiles(e.clipboardData)
       if (files.length) {
         e.preventDefault()
         useUi.getState().openCapture({ files })
@@ -146,7 +156,8 @@ export function useHotkeys(): { dragging: boolean } {
       if (files.length) {
         // Файл на странице не должен открываться браузером; панель сама разберёт drop.
         e.preventDefault()
-        if (!useUi.getState().captureOpen) useUi.getState().openCapture({ files })
+        // Открытая форма дополняет список файлов по captureDraft; drop мимо формы не должен теряться.
+        useUi.getState().openCapture({ files })
         return
       }
       if (internal || isEditable(e.target) || useUi.getState().captureOpen) return
@@ -172,25 +183,8 @@ export function useHotkeys(): { dragging: boolean } {
     document.addEventListener('dragstart', onDragStart)
     document.addEventListener('dragend', onDragEnd)
 
-    // Глобальная клавиша Tauri: окно уже поднято Rust-стороной.
-    let unlisten: (() => void) | undefined
-    let disposed = false
-    if (isTauri()) {
-      void (async () => {
-        try {
-          const { listen } = await import('@tauri-apps/api/event')
-          const off = await listen('quick-add', () => useUi.getState().openCapture())
-          if (disposed) off()
-          else unlisten = off
-        } catch (err) {
-          console.warn('QuickDrop: не удалось подписаться на quick-add', err)
-        }
-      })()
-    }
-
+    // Глобальную клавишу Tauri целиком обрабатывает src/lib/desktop.ts (register → raiseWindow → openCapture).
     return () => {
-      disposed = true
-      unlisten?.()
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('paste', onPaste)
       document.removeEventListener('dragenter', onDragEnter)

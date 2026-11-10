@@ -5,6 +5,7 @@ import { TypeIcon } from '@/components/items/TypeIcon'
 import { Button } from '@/components/ui/button'
 import { linkItems, unlinkItems } from '@/db/repo'
 import { useAllItems, useLinkedItems } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { useUi } from '@/store/ui'
 import type { Item } from '@/types'
@@ -14,7 +15,7 @@ async function run(fn: () => Promise<void>, fallback: string) {
   try {
     await fn()
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : fallback)
+    toast.error(describeError(e, fallback))
   }
 }
 

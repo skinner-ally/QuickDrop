@@ -1,6 +1,7 @@
 import { db } from '@/db/db'
+import { readableError } from '@/lib/errors'
 import { categoryNameKey, normalizeTags } from '@/lib/normalize'
-import type { Category, CategoryColor, Item, ItemStatus, ItemType, StoredFile } from '@/types'
+import type { Category, CategoryColor, Item, ItemStatus, ItemType, Settings, StoredFile } from '@/types'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -233,7 +234,7 @@ export async function seedDemoData(force = false): Promise<boolean> {
   const builtFiles = buildFiles(now, created)
   const categories = buildCategories(now)
 
-  await db.transaction('rw', db.items, db.files, db.categories, db.meta, async () => {
+  const write = db.transaction('rw', db.items, db.files, db.categories, db.meta, async () => {
     // ── категории: существующие по id или по имени не трогаем ──
     const local = await db.categories.toArray()
     const localIds = new Set(local.map((c) => c.id))
@@ -289,14 +290,33 @@ export async function seedDemoData(force = false): Promise<boolean> {
     if (files.length) await db.files.bulkPut(files)
     await db.meta.put({ key: 'seeded', value: true })
   })
+  try {
+    await write
+  } catch (e) {
+    throw readableError(e)
+  }
   return true
 }
+
+/**
+ * Настройки, которые «Удалить все данные» стирает вместе с записями: ключ API хранится открытым
+ * текстом, а в адресе ИИ и шаблоне прокси может быть токен — следующему пользователю устройства
+ * они не должны достаться. Оформление и горячая клавиша остаются.
+ */
+const CLEARED_SETTINGS: ReadonlyArray<keyof Settings> = [
+  'aiApiKey',
+  'aiBaseUrl',
+  'aiModel',
+  'aiEnabled',
+  'linkProxyUrl',
+]
 
 export async function clearAllData(): Promise<void> {
   await db.transaction('rw', db.items, db.files, db.categories, db.meta, async () => {
     await db.items.clear()
     await db.files.clear()
     await db.categories.clear()
+    await db.meta.bulkDelete([...CLEARED_SETTINGS])
     // seeded остаётся true, чтобы демо не вернулись сами
     await db.meta.put({ key: 'seeded', value: true })
   })

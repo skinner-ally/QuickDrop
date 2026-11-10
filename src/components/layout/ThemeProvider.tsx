@@ -5,7 +5,7 @@ export type Theme = 'system' | 'light' | 'dark'
 export type ResolvedTheme = 'light' | 'dark'
 
 const STORAGE_KEY = 'qd-theme'
-const THEME_COLOR = { light: '#f7f5f1', dark: '#1a1816' } as const
+const THEME_COLOR = { light: '#FBFAF8', dark: '#1a1816' } as const
 
 function isTheme(v: unknown): v is Theme {
   return v === 'system' || v === 'light' || v === 'dark'

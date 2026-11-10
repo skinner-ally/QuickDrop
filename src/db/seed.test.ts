@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '@/db/db'
 import { clearAllData, seedDemoData } from '@/db/seed'
-import { ITEM_TYPES, type Item } from '@/types'
+import { getSettings, setSettings } from '@/db/settings'
+import { DEFAULT_SETTINGS, ITEM_TYPES, type Item } from '@/types'
 
 async function reset() {
   await db.items.clear()
@@ -120,5 +121,27 @@ describe('seedDemoData', () => {
     expect(await db.files.count()).toBe(0)
     expect(await db.categories.count()).toBe(0)
     expect(await seedDemoData()).toBe(false)
+  })
+
+  it('clearAllData стирает ключ API и сетевые настройки, оформление оставляет', async () => {
+    await setSettings({
+      aiApiKey: 'sk-secret',
+      aiBaseUrl: 'https://llm.example/v1?token=t',
+      aiEnabled: true,
+      aiModel: 'm',
+      linkProxyUrl: 'https://proxy.example/?key=k&url={url}',
+      theme: 'dark',
+      autoFetchLinkTitle: false,
+    })
+    await clearAllData()
+    const s = await getSettings()
+    expect(s.aiApiKey).toBe('')
+    expect(s.aiBaseUrl).toBe(DEFAULT_SETTINGS.aiBaseUrl)
+    expect(s.aiEnabled).toBe(false)
+    expect(s.aiModel).toBe(DEFAULT_SETTINGS.aiModel)
+    expect(s.linkProxyUrl).toBe('')
+    expect(s.theme).toBe('dark')
+    expect(s.autoFetchLinkTitle).toBe(false)
+    expect(s.seeded).toBe(true)
   })
 })

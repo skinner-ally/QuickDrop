@@ -51,10 +51,31 @@ export function useAutosave(
     clearTimeout(timer.current)
     const v = valueRef.current
     const n = normalizeRef.current(v)
-    if (n === baseRef.current) return
+    const prev = baseRef.current
+    if (n === prev) return
     baseRef.current = n
-    void Promise.resolve(saveRef.current(v)).catch(() => {})
+    // Неудачная запись (save вернул false или бросил) не должна оставлять правку «сохранённой»:
+    // возвращаем базу, чтобы следующий blur/закрытие повторили попытку. Не трогаем, если база уже сменилась.
+    const rollback = () => {
+      if (baseRef.current === n) baseRef.current = prev
+    }
+    void Promise.resolve(saveRef.current(v)).then((ok) => {
+      if (ok === false) rollback()
+    }, rollback)
   }, [])
+
+  // Уход в фон/закрытие вкладки: сбрасываем отложенную запись, не дожидаясь blur.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', flush)
+    }
+  }, [flush])
 
   const revert = useCallback(() => {
     clearTimeout(timer.current)

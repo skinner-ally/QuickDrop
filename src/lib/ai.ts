@@ -68,6 +68,25 @@ function buildUserPrompt(item: Item): string {
   return parts.join('\n')
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * Ключ и текст записей уходят на этот адрес: открытый http допустим только для локальных моделей.
+ * null — адрес годится, иначе текст ошибки. Хост берётся разбором URL, а не регуляркой:
+ * «http://localhost:80@evil.example» ведёт на evil.example.
+ */
+export function aiBaseUrlError(raw: string): string | null {
+  let url: URL | undefined
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    url = undefined
+  }
+  if (url?.protocol === 'https:') return null
+  if (url?.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname)) return null
+  return 'Адрес должен начинаться с https:// (http:// — только для localhost)'
+}
+
 function httpError(status: number, body: string): Error {
   if (status === 401 || status === 403) return new Error('Неверный API-ключ (401)')
   if (status === 429) return new Error('Превышен лимит запросов к ИИ (429), попробуйте позже')
@@ -82,6 +101,8 @@ export async function suggestForItem(
   if (!settings.aiEnabled || !settings.aiApiKey.trim()) {
     throw new Error('AI-помощник не настроен')
   }
+  const badUrl = aiBaseUrlError(settings.aiBaseUrl)
+  if (badUrl) throw new Error(badUrl)
   const url = `${settings.aiBaseUrl.trim().replace(/\/+$/, '')}/chat/completions`
   const res = await fetch(url, {
     method: 'POST',

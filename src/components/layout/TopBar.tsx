@@ -1,6 +1,7 @@
 import { Menu, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
+import { matchKey } from '@/lib/keys'
 import { modKey } from '@/lib/platform'
 import { useUi } from '@/store/ui'
 
@@ -35,7 +36,7 @@ export function TopBar({ mobile }: { mobile: boolean }) {
           value={query}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key !== 'Escape') return
+            if (!matchKey(e, 'Escape', 'Escape')) return
             e.stopPropagation()
             if (query) setQuery('')
             else e.currentTarget.blur()

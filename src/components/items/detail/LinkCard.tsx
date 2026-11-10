@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Copy, ExternalLink, Globe, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { actOpen, copyText, refreshLinkMeta } from '@/lib/actions'
+import { actOpen, copyText, isLinkMetaLoading, refreshLinkMeta } from '@/lib/actions'
 import { isTauri } from '@/lib/platform'
-import { safeImageUrl, safeLinkUrl } from '@/lib/normalize'
+import { hasLinkContent, safeImageUrl, safeLinkUrl } from '@/lib/normalize'
 import type { Item } from '@/types'
+import { useRemoteImagesAllowed } from '../remoteImages'
 import { useAutosave } from './autosave'
 import { saveItem } from './save'
 
@@ -20,7 +21,8 @@ function domainOf(url: string | undefined): string {
 
 function Favicon({ src }: { src: string | undefined }) {
   const [failed, setFailed] = useState(false)
-  const safe = safeImageUrl(src)
+  const allowed = useRemoteImagesAllowed()
+  const safe = allowed ? safeImageUrl(src) : undefined
   if (!safe || failed) return <Globe size={16} strokeWidth={1.75} className="shrink-0 text-muted-foreground" aria-hidden />
   return (
     <img
@@ -53,22 +55,35 @@ function OgImage({ src }: { src: string }) {
 /** Карточка ссылки: метаданные страницы, действия и редактируемый адрес. */
 export function LinkCard({ item }: { item: Item }) {
   const meta = item.linkMeta
-  const pending = meta?.status === 'pending'
+  // pending, который никто в этой вкладке не ждёт (запрос шёл в закрытой вкладке), — не «загрузка».
+  // Поверх pending лежат прежние данные: пока идёт запрос, показываем их, скелет — только если показать нечего.
+  const pending = meta?.status === 'pending' && isLinkMetaLoading(item.id)
+  const skeleton = pending && !hasLinkContent(meta)
   const failed = meta?.status === 'failed'
   const href = safeLinkUrl(item.url)
-  const image = safeImageUrl(meta?.image)
+  const imagesAllowed = useRemoteImagesAllowed()
+  const image = imagesAllowed ? safeImageUrl(meta?.image) : undefined
 
+  const revertRef = useRef<() => void>(() => {})
   const url = useAutosave(
     item.url ?? '',
     async (v) => {
       const next = v.trim()
-      if (!next || next === item.url) return
+      if (!next || next === item.url) return true
       // Новый адрес — старые заголовок/превью неактуальны: перезапрашиваем (pending заменяет прежние метаданные).
-      if (await saveItem(item.id, { url: next })) await refreshLinkMeta({ ...item, url: next })
+      if (!(await saveItem(item.id, { url: next }))) {
+        // Невалидный адрес не остаётся в поле, будто он сохранён.
+        revertRef.current()
+        return false
+      }
+      await refreshLinkMeta({ ...item, url: next })
+      return true
     },
     undefined,
     (v) => v.trim(),
   )
+
+  revertRef.current = url.revert
 
   // Пустой адрес не сохраняем и не оставляем пустым в поле — возвращаем прежний.
   function commit() {
@@ -79,7 +94,7 @@ export function LinkCard({ item }: { item: Item }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-lg border border-border bg-card">
-        {pending ? (
+        {skeleton ? (
           <div className="flex animate-pulse flex-col gap-2 p-3" aria-busy="true" aria-label="Загрузка данных ссылки">
             <div className="h-3 w-1/3 rounded bg-muted" />
             <div className="h-4 w-4/5 rounded bg-muted" />

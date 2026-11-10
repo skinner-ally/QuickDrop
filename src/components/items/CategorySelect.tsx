@@ -13,6 +13,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { createCategory } from '@/db/repo'
 import { useCategories } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { categoryNameKey } from '@/lib/normalize'
 import { cn } from '@/lib/utils'
 import { CategoryDot } from './CategoryBadge'
@@ -57,7 +58,7 @@ export function CategorySelect({
       const cat = await createCategory(name)
       choose(cat.id)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось создать категорию')
+      toast.error(describeError(e, 'Не удалось создать категорию'))
     }
   }
 

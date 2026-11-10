@@ -5,6 +5,9 @@ import { cn } from '@/lib/utils'
 import { AutoTextarea } from './AutoTextarea'
 import { useAutosave } from './autosave'
 
+/** Пауза набора до автосохранения; blur, Ctrl+Enter и уход со страницы сохраняют сразу. */
+const AUTOSAVE_DELAY = 800
+
 /**
  * Просмотр + режим правки. Клик/кнопка «Изменить» → textarea;
  * Ctrl/⌘+Enter или blur — сохранить, Esc — отменить.
@@ -25,8 +28,10 @@ export function ContentEditor({
   label: string
 }) {
   const [editing, setEditing] = useState(false)
-  const { value, setValue, flush, revert } = useAutosave(saved, onSave)
+  const { value, setValue, flush } = useAutosave(saved, onSave, AUTOSAVE_DELAY)
   const ref = useRef<HTMLTextAreaElement>(null)
+  // Значение на входе в правку: Esc откатывает к нему, даже если таймер уже автосохранил часть набранного.
+  const originRef = useRef(saved)
 
   useEffect(() => {
     if (!editing) return
@@ -39,6 +44,7 @@ export function ContentEditor({
   function startEdit(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest('button, a')) return // кнопка/ссылка внутри просмотра (напр. «Копировать»)
     if (window.getSelection()?.toString()) return // выделяют текст — не переходим в правку
+    originRef.current = value
     setEditing(true)
   }
 
@@ -59,7 +65,8 @@ export function ContentEditor({
           if (e.key === 'Escape') {
             e.preventDefault()
             e.stopPropagation()
-            revert()
+            setValue(originRef.current)
+            flush()
             setEditing(false)
           } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault()
@@ -87,7 +94,10 @@ export function ContentEditor({
       <Button
         variant="ghost"
         size="xs"
-        onClick={() => setEditing(true)}
+        onClick={() => {
+          originRef.current = value
+          setEditing(true)
+        }}
         aria-label={`Изменить: ${label}`}
         className="mt-1 text-muted-foreground"
       >

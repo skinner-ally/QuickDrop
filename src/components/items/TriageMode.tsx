@@ -16,27 +16,28 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { updateItem, setCategory } from '@/db/repo'
+import { addTags, updateItem, setCategory } from '@/db/repo'
 import { useSettings } from '@/db/settings'
 import { useAllItems } from '@/hooks/useItems'
 import { suggestForItem } from '@/lib/ai'
 import { actArchive, actDelete, actOpen, actToLibrary, actToggleFavorite } from '@/lib/actions'
+import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
-import { normalizeTags, safeImageUrl, safeLinkUrl } from '@/lib/normalize'
+import { safeImageUrl, safeLinkUrl } from '@/lib/normalize'
+import { matchKey } from '@/lib/keys'
 import { cn } from '@/lib/utils'
+import { useUi } from '@/store/ui'
 import type { AiMeta, Item } from '@/types'
 import { CategorySelect } from './CategorySelect'
 import { CodeView } from './CodeView'
 import { FilePreview } from './FilePreview'
+import { saveTags } from './detail/save'
+import { useRemoteImagesAllowed } from './remoteImages'
 import { TagChip } from './TagChip'
 import { TagInput } from './TagInput'
 import { TypeIcon } from './TypeIcon'
 
 type Decision = 'library' | 'archive' | 'deleted'
-
-function errMsg(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : 'Что-то пошло не так'
-}
 
 function isTyping(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
@@ -69,7 +70,8 @@ function domainOf(url: string | undefined): string {
 // ───────────────────────── содержимое записи ─────────────────────────
 
 function LinkImage({ src }: { src: string | undefined }) {
-  const safe = safeImageUrl(src)
+  const allowed = useRemoteImagesAllowed()
+  const safe = allowed ? safeImageUrl(src) : undefined
   const [failed, setFailed] = useState(false)
   if (!safe || failed) return null
   return (
@@ -136,11 +138,14 @@ function TitleField({ item }: { item: Item }) {
   const flush = useCallback(async () => {
     const next = draftRef.current.trim()
     if (next === savedRef.current.trim()) return
+    const prev = savedRef.current
     savedRef.current = next
     try {
       await updateItem(item.id, { title: next })
     } catch (e) {
-      toast.error(errMsg(e))
+      // Неудачная запись не считается сохранённой: повторный blur попробует снова.
+      if (savedRef.current === next) savedRef.current = prev
+      toast.error(describeError(e))
     }
   }, [item.id])
 
@@ -195,7 +200,7 @@ function AiSuggest({ item }: { item: Item }) {
       const result = await suggestForItem(item, settings, ctrl.signal)
       if (!ctrl.signal.aborted) setMeta(result)
     } catch (e) {
-      if (!ctrl.signal.aborted) toast.error(errMsg(e))
+      if (!ctrl.signal.aborted) toast.error(describeError(e))
     } finally {
       if (!ctrl.signal.aborted) setLoading(false)
     }
@@ -206,16 +211,16 @@ function AiSuggest({ item }: { item: Item }) {
       await updateItem(item.id, { title })
       setMeta((m) => (m ? { ...m, suggestedTitle: undefined } : m))
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(describeError(e))
     }
   }
 
   async function acceptTag(tag: string) {
     try {
-      await updateItem(item.id, { tags: normalizeTags([...item.tags, tag]) })
+      await addTags(item.id, [tag])
       setMeta((m) => (m ? { ...m, suggestedTags: m.suggestedTags?.filter((t) => t !== tag) } : m))
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(describeError(e))
     }
   }
 
@@ -348,50 +353,45 @@ function TriageBody({ onClose }: { onClose: () => void }) {
       if (!cur) return
 
       // Ctrl/⌘+Enter работает и из полей ввода.
-      if ((e.ctrlKey || e.metaKey) && e.code === 'Enter') {
+      if ((e.ctrlKey || e.metaKey) && (matchKey(e, 'Enter', 'Enter') || e.code === 'NumpadEnter')) {
         e.preventDefault()
         act('library')
         return
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
       if (isTyping(e.target)) return
+      // Поверх разбора открыта панель добавления/палитра: их клавиши не должны задевать запись под ними.
+      const ui = useUi.getState()
+      if (ui.captureOpen || ui.paletteOpen) return
       // Пока открыт выпадающий список или меню, клавиши принадлежат им.
       if (document.querySelector('[role="listbox"][data-open], [role="menu"][data-open], [data-slot="popover-content"][data-open]'))
         return
 
-      if (e.repeat && ['KeyE', 'KeyA', 'KeyF', 'Delete', 'Backspace'].includes(e.code)) {
+      const is = (code: string, key?: string) => matchKey(e, code, key)
+      const isAct = is('KeyE', 'e') || is('KeyA', 'a') || is('KeyF', 'f') || is('Delete', 'Delete') || is('Backspace', 'Backspace')
+      if (e.repeat && isAct) {
         e.preventDefault()
         return
       }
 
-      switch (e.code) {
-        case 'KeyE':
-          e.preventDefault()
-          act('library')
-          break
-        case 'KeyA':
-          e.preventDefault()
-          act('archive')
-          break
-        case 'Delete':
-        case 'Backspace':
-          e.preventDefault()
-          act('deleted')
-          break
-        case 'ArrowRight':
-        case 'KeyS':
-          e.preventDefault()
-          go(1)
-          break
-        case 'ArrowLeft':
-          e.preventDefault()
-          go(-1)
-          break
-        case 'KeyF':
-          e.preventDefault()
-          void actToggleFavorite(cur)
-          break
-        default:
+      if (is('KeyE', 'e')) {
+        e.preventDefault()
+        act('library')
+      } else if (is('KeyA', 'a')) {
+        e.preventDefault()
+        act('archive')
+      } else if (is('Delete', 'Delete') || is('Backspace', 'Backspace')) {
+        e.preventDefault()
+        act('deleted')
+      } else if (is('ArrowRight', 'ArrowRight') || is('KeyS', 's')) {
+        e.preventDefault()
+        go(1)
+      } else if (is('ArrowLeft', 'ArrowLeft')) {
+        e.preventDefault()
+        go(-1)
+      } else if (is('KeyF', 'f')) {
+        e.preventDefault()
+        void actToggleFavorite(cur)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -473,13 +473,14 @@ function TriageBody({ onClose }: { onClose: () => void }) {
                 value={item.categoryId}
                 allowCreate
                 onChange={(id) => {
-                  setCategory([item.id], id).catch((e: unknown) => toast.error(errMsg(e)))
+                  setCategory([item.id], id).catch((e: unknown) => toast.error(describeError(e)))
                 }}
               />
               <TagInput
                 value={item.tags}
                 onChange={(tags) => {
-                  updateItem(item.id, { tags }).catch((e: unknown) => toast.error(errMsg(e)))
+                  // Дельта вместо записи массива: быстрые правки из устаревшего снимка не затирают друг друга.
+                  void saveTags(item.id, item.tags, tags)
                 }}
               />
             </div>

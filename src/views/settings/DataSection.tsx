@@ -6,11 +6,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { clearAllData, seedDemoData } from '@/db/seed'
 import { useAllItems } from '@/hooks/useItems'
+import { saveBlob } from '@/lib/actions'
+import { describeError } from '@/lib/errors'
 import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from '@/lib/exportImport'
 import { formatBytes } from '@/lib/itemTitle'
 import { Row, Section } from './Section'
 
-const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e))
+const fail = (e: unknown) => toast.error(describeError(e))
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -90,14 +92,7 @@ export function DataSection() {
   const doExport = () =>
     run('export', async () => {
       const blob = await exportBackup()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = backupFileName()
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      saveBlob(blob, backupFileName())
       toast.success('Резервная копия сохранена', { duration: 2000 })
     })
 
@@ -240,8 +235,9 @@ export function DataSection() {
           <DialogHeader>
             <DialogTitle>Удалить все данные?</DialogTitle>
             <DialogDescription>
-              Все записи, файлы и категории будут удалены с этого устройства без возможности восстановления. Сначала
-              сделайте экспорт, если данные нужны. Для подтверждения введите слово «удалить».
+              Все записи, файлы и категории, а также ключ API, настройки ИИ-помощника и адрес прокси будут удалены с
+              этого устройства без возможности восстановления. Сначала сделайте экспорт, если данные нужны. Для
+              подтверждения введите слово «удалить».
             </DialogDescription>
           </DialogHeader>
           <form

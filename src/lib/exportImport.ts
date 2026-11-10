@@ -1,6 +1,15 @@
 import { db } from '@/db/db'
 import { normalizeUrl } from '@/lib/detect'
-import { categoryNameKey, hasForeignScheme, normalizeTags, safeImageUrl, safeLinkUrl } from '@/lib/normalize'
+import { readableError } from '@/lib/errors'
+import {
+  categoryNameKey,
+  hasForeignScheme,
+  normalizeTags,
+  safeBlobType,
+  safeLinkUrl,
+  safeThumbType,
+  settleLinkMeta,
+} from '@/lib/normalize'
 import {
   CATEGORY_COLORS,
   DEFAULT_SETTINGS,
@@ -192,7 +201,10 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
     exportedAt: Date.now(),
     settings: settingsFromMeta(snapshot.meta),
     categories: snapshot.categories,
-    items: snapshot.items,
+    // Незавершённая загрузка метаданных в копию не попадает: восстановленная, она висела бы вечно.
+    items: snapshot.items.map((it) =>
+      it.linkMeta?.status === 'pending' ? { ...it, linkMeta: settleLinkMeta(it.linkMeta) } : it,
+    ),
   }
   const tooBig = (bytes?: number) =>
     new Error(
@@ -249,6 +261,18 @@ function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
+const DAY_MS = 86_400_000
+
+/**
+ * Отметка времени из копии: от 1970 года до «завтра». Дата за пределами диапазона Date
+ * (|v| > 8.64e15) роняла бы форматирование при каждом показе записи, а дата из далёкого
+ * будущего навсегда вставала бы первой в списке и выигрывала бы любое слияние.
+ */
+function ts(v: unknown, now: number): number | undefined {
+  const n = num(v)
+  return n !== undefined && n >= 0 && n <= now + DAY_MS ? n : undefined
+}
+
 // Те же правила уникальности имени, что в repo.createCategory/updateCategory и cat: в поиске.
 const nameKey = categoryNameKey
 
@@ -282,24 +306,22 @@ function sanitizeLinks(v: unknown, selfId: string): string[] {
   return [...new Set(v.filter((l): l is string => idStr(l) !== undefined && l !== selfId))]
 }
 
-function sanitizeLinkMeta(v: unknown): LinkMeta | undefined {
+function sanitizeLinkMeta(v: unknown, now: number): LinkMeta | undefined {
   if (!isRec(v)) return undefined
   const meta: LinkMeta = { status: isOneOf(LINK_META_STATUSES, v.status) ? v.status : 'failed' }
   for (const key of ['title', 'description', 'siteName'] as const) {
     const s = str(v[key])
     if (s !== undefined) meta[key] = s
   }
-  // Картинка и иконка грузятся в <img> при показе карточки — только http(s).
-  for (const key of ['image', 'favicon'] as const) {
-    const s = safeImageUrl(v[key])
-    if (s !== undefined) meta[key] = s
-  }
-  const fetchedAt = num(v.fetchedAt)
+  // image/favicon из копии не переносим: картинка грузится с чужого адреса при каждом показе
+  // карточки, а адрес в чужой копии может быть пикселем слежения. «Обновить данные» вернёт их.
+  const fetchedAt = ts(v.fetchedAt, now)
   if (fetchedAt !== undefined) meta.fetchedAt = fetchedAt
-  return meta
+  // Загрузку, начатую на другом устройстве, здесь никто не завершит.
+  return settleLinkMeta(meta)
 }
 
-function sanitizeAi(v: unknown): AiMeta | undefined {
+function sanitizeAi(v: unknown, now: number): AiMeta | undefined {
   if (!isRec(v)) return undefined
   const ai: AiMeta = {}
   for (const key of ['summary', 'suggestedTitle', 'model'] as const) {
@@ -307,7 +329,7 @@ function sanitizeAi(v: unknown): AiMeta | undefined {
     if (s !== undefined) ai[key] = s
   }
   if (Array.isArray(v.suggestedTags)) ai.suggestedTags = sanitizeTags(v.suggestedTags)
-  const generatedAt = num(v.generatedAt)
+  const generatedAt = ts(v.generatedAt, now)
   if (generatedAt !== undefined) ai.generatedAt = generatedAt
   return ai
 }
@@ -318,7 +340,7 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   const id = idStr(raw.id)
   if (!id || !isOneOf(ITEM_TYPES, raw.type) || !isOneOf(ITEM_STATUSES, raw.status)) return null
 
-  const createdAt = num(raw.createdAt) ?? now
+  const createdAt = ts(raw.createdAt, now) ?? now
   const item: Item = {
     id,
     type: raw.type,
@@ -331,7 +353,7 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
     favorite: raw.favorite === 1 || raw.favorite === true ? 1 : 0,
     source: isOneOf(ITEM_SOURCES, raw.source) ? raw.source : 'import',
     createdAt,
-    updatedAt: num(raw.updatedAt) ?? createdAt,
+    updatedAt: ts(raw.updatedAt, now) ?? createdAt,
   }
 
   const url = str(raw.url)?.trim()
@@ -345,7 +367,7 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
       item.content = item.content ? `${item.content}\n\n${url}` : url
     }
   }
-  const linkMeta = sanitizeLinkMeta(raw.linkMeta)
+  const linkMeta = sanitizeLinkMeta(raw.linkMeta, now)
   if (linkMeta) item.linkMeta = linkMeta
   const language = str(raw.language)
   if (language !== undefined) item.language = language
@@ -358,9 +380,9 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   const mimeType = str(raw.mimeType)
   if (mimeType !== undefined) item.mimeType = mimeType
   if (raw.prevStatus === 'inbox' || raw.prevStatus === 'library') item.prevStatus = raw.prevStatus
-  const processedAt = num(raw.processedAt)
+  const processedAt = ts(raw.processedAt, now)
   if (processedAt !== undefined) item.processedAt = processedAt
-  const ai = sanitizeAi(raw.ai)
+  const ai = sanitizeAi(raw.ai, now)
   if (ai) item.ai = ai
   return item
 }
@@ -375,11 +397,11 @@ function sanitizeCategory(raw: unknown, index: number, now: number): Category | 
     name,
     color: isOneOf(CATEGORY_COLORS, raw.color) ? raw.color : 'slate',
     order: num(raw.order) ?? index,
-    createdAt: num(raw.createdAt) ?? now,
+    createdAt: ts(raw.createdAt, now) ?? now,
   }
 }
 
-/** Тип превью по сигнатуре — для копий без thumbType. */
+/** Тип превью по сигнатуре — для копий без thumbType или с недопустимым thumbType. */
 function sniffImageType(b: Uint8Array): string {
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
   if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg'
@@ -398,18 +420,19 @@ function decodeFile(raw: unknown, now: number): StoredFile | null {
     const file: StoredFile = {
       id,
       itemId,
-      blob: new Blob([bytes], { type: mimeType }),
+      // Тип Blob — из белого списка: HTML/XML из чужой копии по blob:-адресу исполнился бы в origin приложения.
+      blob: new Blob([bytes], { type: safeBlobType(mimeType) }),
       name: str(raw.name) || 'file',
       mimeType,
       // реальный размер важнее заявленного
       size: bytes.length,
-      createdAt: num(raw.createdAt) ?? now,
+      createdAt: ts(raw.createdAt, now) ?? now,
     }
     // битое превью не повод терять сам файл
     if (typeof raw.thumb === 'string') {
       try {
         const thumb = base64ToBytes(raw.thumb)
-        file.thumb = new Blob([thumb], { type: str(raw.thumbType) || sniffImageType(thumb) })
+        file.thumb = new Blob([thumb], { type: safeThumbType(raw.thumbType) ?? sniffImageType(thumb) })
       } catch {
         /* без превью */
       }
@@ -587,7 +610,7 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
 
   const settings = sanitizeSettings(backup.settings)
 
-  return db.transaction('rw', [db.items, db.files, db.categories, db.meta], async () => {
+  const write = db.transaction('rw', [db.items, db.files, db.categories, db.meta], async () => {
     const report: ImportReport = { items: 0, files: 0, categories: 0, skipped }
 
     if (mode === 'replace') {
@@ -671,4 +694,10 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
 
     return report
   })
+  try {
+    return await write
+  } catch (e) {
+    // Крупная копия на почти заполненном хранилище: вместо «AbortError» — что делать.
+    throw readableError(e)
+  }
 }

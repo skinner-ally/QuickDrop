@@ -12,14 +12,17 @@ import {
   type StoredFile,
 } from '@/types'
 import { normalizeUrl } from '@/lib/detect'
+import { readableError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import {
   categoryNameKey,
   hasForeignScheme,
   normalizeTag,
   normalizeTags,
+  safeBlobType,
   safeImageUrl,
   safeLinkUrl,
+  settleLinkMeta,
 } from '@/lib/normalize'
 
 // Чистые правила живут в lib (единый источник для поиска, импорта и UI); репозиторий их реэкспортирует.
@@ -221,8 +224,9 @@ export async function createItem(input: NewItemInput): Promise<Item> {
     const src = input.file
     const name = fileNameOf(src, input.fileName)
     const mimeType = src.type || 'application/octet-stream'
-    // slice() превращает File в обычный Blob без копирования данных.
-    const blob = src.slice(0, src.size, mimeType)
+    // slice() превращает File в обычный Blob без копирования данных. Тип Blob — из белого списка
+    // (HTML/XML по blob:-адресу исполнился бы в origin приложения); объявленный тип остаётся в mimeType.
+    const blob = src.slice(0, src.size, safeBlobType(mimeType))
     // Превью строим ДО транзакции: await не-Dexie промиса внутри транзакции её закрывает.
     const uncertain = UNCERTAIN_IMAGE_MIME.test(mimeType) || UNCERTAIN_IMAGE_EXT.test(name)
     const { thumb, decoded } =
@@ -249,10 +253,15 @@ export async function createItem(input: NewItemInput): Promise<Item> {
     item.mimeType = mimeType
   }
 
-  await db.transaction('rw', db.items, db.files, async () => {
-    if (stored) await db.files.add(stored)
-    await db.items.add(item)
-  })
+  try {
+    await db.transaction('rw', db.items, db.files, async () => {
+      if (stored) await db.files.add(stored)
+      await db.items.add(item)
+    })
+  } catch (e) {
+    // Крупный файл на почти заполненном хранилище: понятный текст вместо «AbortError».
+    throw readableError(e)
+  }
   return item
 }
 
@@ -273,7 +282,34 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<void> {
   if (typeof patch.url === 'string') changes.url = checkedLinkUrl(patch.url)
   if (patch.linkMeta) changes.linkMeta = cleanLinkMeta(patch.linkMeta)
   changes.updatedAt = Date.now()
-  await db.items.update(id, changes as Partial<Item>)
+  try {
+    if (typeof changes.url !== 'string' || Object.hasOwn(patch, 'linkMeta')) {
+      await db.items.update(id, changes as Partial<Item>)
+      return
+    }
+    await db.transaction('rw', db.items, async () => {
+      const current = await db.items.get(id)
+      // Метаданные описывали прежнюю страницу: с новым адресом её заголовок и картинка неверны.
+      if (current && current.url !== changes.url) changes.linkMeta = undefined
+      await db.items.update(id, changes as Partial<Item>)
+    })
+  } catch (e) {
+    throw readableError(e)
+  }
+}
+
+/**
+ * Записывает метаданные, загруженные для адреса url, только если у записи всё ещё этот адрес:
+ * поздний ответ по прежнему адресу не должен затирать данные нового.
+ * false — записи нет (удалена) или адрес сменился.
+ */
+export async function applyLinkMeta(id: string, url: string, meta: LinkMeta): Promise<boolean> {
+  return db.transaction('rw', db.items, async () => {
+    const current = await db.items.get(id)
+    if (!current || current.url !== url) return false
+    await db.items.update(id, { linkMeta: cleanLinkMeta(meta), updatedAt: Date.now() })
+    return true
+  })
 }
 
 export function getItem(id: string): Promise<Item | undefined> {
@@ -345,12 +381,24 @@ export async function restoreItem(snapshot: DeletedSnapshot): Promise<void> {
 }
 
 export async function restoreItems(snapshots: DeletedSnapshot[]): Promise<void> {
+  try {
+    await restoreItemsTx(snapshots)
+  } catch (e) {
+    throw readableError(e)
+  }
+}
+
+async function restoreItemsTx(snapshots: DeletedSnapshot[]): Promise<void> {
   await db.transaction('rw', [db.items, db.files, db.categories], async () => {
     // Сначала кладём все записи, чтобы связи между восстанавливаемыми тоже вернулись.
     for (const { item, file } of snapshots) {
       const categoryId =
         item.categoryId && (await db.categories.get(item.categoryId)) ? item.categoryId : null
-      await db.items.put({ ...item, categoryId, links: [] })
+      const restored: Item = { ...item, categoryId, links: [] }
+      // Ответ загрузки, шедшей во время удаления, мог прийти и пропасть: без этого «загрузка» висела бы
+      // вечно. Если запрос ещё идёт, его результат запишется поверх.
+      if (restored.linkMeta) restored.linkMeta = settleLinkMeta(restored.linkMeta)
+      await db.items.put(restored)
       if (file) await db.files.put(file)
     }
     for (const { item, linkedIds } of snapshots) {

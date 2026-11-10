@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useRef, type ReactNode, type RefObject } from 'react'
+import { Suspense, useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { Upload } from 'lucide-react'
 import { QuickCapture } from '@/components/capture/QuickCapture'
+import { Button } from '@/components/ui/button'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { useIsDesktop, useMediaQuery } from '@/hooks/useMediaQuery'
 import { useUi, type View } from '@/store/ui'
@@ -8,18 +9,22 @@ import { ArchiveView } from '@/views/ArchiveView'
 import { FavoritesView } from '@/views/FavoritesView'
 import { InboxView } from '@/views/InboxView'
 import { LibraryView } from '@/views/LibraryView'
+import { ErrorBoundary, lazyRetry, RetryFallback } from './ErrorBoundary'
 import { MobileNav } from './MobileNav'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 
 // Редко нужные части грузятся отдельными чанками, чтобы основной оставался лёгким.
-const SettingsView = lazy(() => import('@/views/SettingsView').then((m) => ({ default: m.SettingsView })))
-const CommandPalette = lazy(() => import('@/components/palette/CommandPalette').then((m) => ({ default: m.CommandPalette })))
+const settingsLazy = lazyRetry(() => import('@/views/SettingsView'), (m) => m.SettingsView)
+const paletteLazy = lazyRetry(() => import('@/components/palette/CommandPalette'), (m) => m.CommandPalette)
+const SettingsView = settingsLazy.Component
+const CommandPalette = paletteLazy.Component
 
 const loadDetail = () => import('@/components/items/ItemDetail')
-const ItemDetail = lazy(() => loadDetail().then((m) => ({ default: m.ItemDetail })))
+const detailLazy = lazyRetry(() => loadDetail(), (m) => m.ItemDetail)
+const ItemDetail = detailLazy.Component
 // Панель деталей нужна почти сразу — догружаем её в простое, чтобы первое открытие не ждало сети.
-if (typeof window !== 'undefined') window.setTimeout(() => void loadDetail(), 1500)
+if (typeof window !== 'undefined') window.setTimeout(() => void loadDetail().catch(() => undefined), 1500)
 
 const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'settings']
 
@@ -64,11 +69,43 @@ function ActiveView({ view }: { view: View }) {
       return <ArchiveView />
     case 'settings':
       return (
-        <Suspense fallback={null}>
-          <SettingsView />
-        </Suspense>
+        <ErrorBoundary
+          onReset={settingsLazy.reset}
+          fallback={(_e, reset) => <RetryFallback message="Не удалось загрузить настройки. Проверьте соединение." reset={reset} />}
+        >
+          <Suspense fallback={null}>
+            <SettingsView />
+          </Suspense>
+        </ErrorBoundary>
       )
   }
+}
+
+/**
+ * Сбой отрисовки раздела (например, повреждённая запись из чужой копии): боковая панель и настройки
+ * остаются доступны — оттуда можно сделать экспорт или удалить данные.
+ */
+function ViewErrorFallback({ view, reset }: { view: View; reset: () => void }) {
+  const setView = useUi((s) => s.setView)
+  return (
+    <div role="alert" className="flex max-w-md flex-col items-start gap-2 p-6 text-sm">
+      <p className="font-medium">Не удалось показать раздел</p>
+      <p className="text-muted-foreground">
+        Возможно, среди записей есть повреждённая. Попробуйте ещё раз или откройте настройки: там можно сделать
+        экспорт или удалить данные.
+      </p>
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button variant="outline" size="sm" onClick={reset}>
+          Повторить
+        </Button>
+        {view !== 'settings' && (
+          <Button variant="outline" size="sm" onClick={() => setView('settings')}>
+            Открыть настройки
+          </Button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 /** Панель деталей: возвращает фокус на строку при закрытии; в модальном режиме ещё и забирает фокус. */
@@ -81,6 +118,9 @@ function DetailPane({ id, modal, children }: { id: string; modal: boolean; child
       requestAnimationFrame(() => {
         const active = document.activeElement
         if (active && active !== document.body) return // фокус уже где-то осознанно
+        // Открыли другую запись (а не закрыли панель) — старую строку не трогаем.
+        const open = useUi.getState().selectedId
+        if (open !== null && open !== id) return
         const row = document.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
         if (row) row.focus()
         else if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
@@ -125,9 +165,14 @@ export function AppShell() {
 
   const detail = selectedId ? (
     <DetailPane key={selectedId} id={selectedId} modal={modalDetail}>
-      <Suspense fallback={null}>
-        <ItemDetail id={selectedId} onClose={() => select(null)} />
-      </Suspense>
+      <ErrorBoundary
+        onReset={detailLazy.reset}
+        fallback={(_e, reset) => <RetryFallback message="Не удалось загрузить подробности записи. Проверьте соединение." reset={reset} />}
+      >
+        <Suspense fallback={null}>
+          <ItemDetail id={selectedId} onClose={() => select(null)} />
+        </Suspense>
+      </ErrorBoundary>
     </DetailPane>
   ) : null
 
@@ -142,7 +187,10 @@ export function AppShell() {
       <div ref={columnRef} className="flex min-w-0 flex-1 flex-col">
         <TopBar mobile={!desktop} />
         <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] max-md:pb-[calc(env(safe-area-inset-bottom)+5rem)]">
-          <ActiveView view={view} />
+          {/* key: при переходе в другой раздел граница сбрасывается сама. */}
+          <ErrorBoundary key={view} fallback={(_e, reset) => <ViewErrorFallback view={view} reset={reset} />}>
+            <ActiveView view={view} />
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -163,6 +211,7 @@ export function AppShell() {
             role="dialog"
             aria-modal="true"
             aria-label="Подробности записи"
+            data-detail-sheet
             className="fixed inset-0 z-40 overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] md:left-auto md:w-[min(460px,100%)] md:border-l md:shadow-xl"
           >
             {detail}
@@ -171,9 +220,11 @@ export function AppShell() {
       )}
 
       <QuickCapture />
-      <Suspense fallback={null}>
-        <CommandPalette />
-      </Suspense>
+      <ErrorBoundary onReset={paletteLazy.reset} fallback={() => null}>
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
+      </ErrorBoundary>
 
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-6">

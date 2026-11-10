@@ -6,6 +6,8 @@ import { useCategories } from '@/hooks/useItems'
 import { actArchive, actDelete, actToLibrary, actUnarchive } from '@/lib/actions'
 import { setFavorite } from '@/db/repo'
 import { getAllItemsSnapshot } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
+import { matchKey } from '@/lib/keys'
 import { useSelection } from '@/store/selection'
 import { useUi } from '@/store/ui'
 import type { SearchHit } from '@/search'
@@ -48,7 +50,9 @@ function inSection(item: Item, variant: ItemVariant): boolean {
 }
 
 /** Действия, меняющие данные, не повторяем при удержании клавиши. */
-const MUTATING_KEYS = new Set(['KeyE', 'KeyA', 'KeyF', 'Delete', 'Backspace'])
+const MUTATING_KEYS = ['KeyE', 'KeyA', 'KeyF', 'Delete', 'Backspace']
+const MUTATING_FALLBACK = ['e', 'a', 'f', 'Delete', 'Backspace']
+const isMutating = (e: KeyboardEvent) => MUTATING_KEYS.some((c, i) => matchKey(e, c, MUTATING_FALLBACK[i]))
 
 // ───────────────────────── группировка по дате ─────────────────────────
 
@@ -90,6 +94,8 @@ export function ItemList({
   const checkedIds = useSelection((s) => s.ids)
   const cursorId = useSelection((s) => s.cursorId)
   const layoutMode = layout ?? uiLayout
+  const layoutRef = useRef(layoutMode)
+  layoutRef.current = layoutMode
 
   const [shown, setShown] = useState(PAGE)
   const [kbd, setKbd] = useState(false)
@@ -129,8 +135,19 @@ export function ItemList({
 
     if (sameView) {
       if (sel.cursorId && !valid.has(sel.cursorId)) {
-        const next = successor(sel.cursorId)
-        if (next !== undefined) sel.setCursor(next)
+        // Открытая запись выпала из выдачи при правке, но остаётся открытой: курсор не уходит на соседа,
+        // иначе клавиши (Del) подействуют на него, а не на запись в деталях.
+        const keepOpen =
+          ui.selectedId === sel.cursorId &&
+          (() => {
+            const open = getAllItemsSnapshot()?.find((i) => i.id === ui.selectedId)
+            return !!open && inSection(open, variant)
+          })()
+        if (keepOpen) sel.setCursor(null)
+        else {
+          const next = successor(sel.cursorId)
+          if (next !== undefined) sel.setCursor(next)
+        }
       }
       if (ui.selectedId && !valid.has(ui.selectedId)) {
         // Запись, выпавшая из выдачи из-за поиска/фильтра (а не из-за смены статуса или удаления),
@@ -144,6 +161,13 @@ export function ItemList({
     }
     useSelection.getState().prune(valid)
   }, [ids, variant, query, sort, filterKey])
+
+  // Запись открыли извне (Ctrl+K, связанная запись, «Открыть» в toast): курсор следует за ней.
+  useEffect(() => {
+    if (selectedId && ids.includes(selectedId) && useSelection.getState().cursorId !== selectedId) {
+      useSelection.getState().setCursor(selectedId)
+    }
+  }, [selectedId, ids])
 
   // При уходе со страницы выбор не должен «протекать» в другой раздел.
   useEffect(
@@ -165,13 +189,40 @@ export function ItemList({
       return open && list.includes(open) ? open : null
     }
 
+    /** Запись, на которую действуют клавиши: курсор, иначе открытая в деталях (даже если выпала из выдачи). */
+    function activeItem(): Item | undefined {
+      const { hits: list, variant: v } = latest.current
+      const id = activeId()
+      const hit = id ? list.find((h) => h.item.id === id) : undefined
+      if (hit) return hit.item
+      const open = useUi.getState().selectedId
+      if (!open) return undefined
+      const found = getAllItemsSnapshot()?.find((i) => i.id === open)
+      return found && inSection(found, v) ? found : undefined
+    }
+
+    /** Модальный лист деталей: список под ним недоступен, отмеченные записи не трогаем. */
+    const sheetOpen = () => !!document.querySelector('[data-detail-sheet]')
+
     function targets(): Item[] {
       const { hits: list } = latest.current
       const checked = useSelection.getState().ids
-      if (checked.size > 0) return list.filter((h) => checked.has(h.item.id)).map((h) => h.item)
-      const id = activeId()
-      const hit = id ? list.find((h) => h.item.id === id) : undefined
-      return hit ? [hit.item] : []
+      if (checked.size > 0 && !sheetOpen()) return list.filter((h) => checked.has(h.item.id)).map((h) => h.item)
+      const item = activeItem()
+      return item ? [item] : []
+    }
+
+    /** Число колонок сетки — по DOM: сколько карточек лежит в первом ряду. */
+    function gridCols(): number {
+      const els = rootRef.current?.querySelectorAll<HTMLElement>('[data-item-id]')
+      if (!els || els.length < 2) return 1
+      const top = els[0].offsetTop
+      let n = 0
+      for (const el of els) {
+        if (el.offsetTop !== top) break
+        n++
+      }
+      return Math.max(1, n)
     }
 
     function move(delta: number) {
@@ -198,41 +249,67 @@ export function ItemList({
       if (e.defaultPrevented || e.isComposing) return
       if (isTyping(e.target)) return
       if (document.querySelector(OPEN_OVERLAY)) return
+      // Панель добавления/палитра уже открыты, но их диалог ещё не в DOM (ленивый чанк).
+      const ui = useUi.getState()
+      if (ui.captureOpen || ui.paletteOpen || ui.navOpen) return
       const { ids: list } = latest.current
       const mod = e.ctrlKey || e.metaKey
 
-      if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyA') {
-        if (list.length === 0) return
+      if (mod && !e.altKey && !e.shiftKey && matchKey(e, 'KeyA', 'a')) {
+        // В модальном листе деталей Ctrl+A — выделение текста, а не «выбрать все» под затемнением.
+        if (list.length === 0 || sheetOpen()) return
         e.preventDefault()
         useSelection.getState().replace(list)
         return
       }
       if (mod || e.altKey) return
 
-      if (e.code === 'Escape') {
-        useSelection.getState().clear()
+      if (matchKey(e, 'Escape', 'Escape')) {
+        // Если Esc закрыл детали, useHotkeys уже вызвал preventDefault и сюда не дошло; отметки живут.
+        if (!sheetOpen()) useSelection.getState().clear()
         return
       }
       if (list.length === 0) return
-      if (e.repeat && MUTATING_KEYS.has(e.code)) return
+      if (e.repeat && isMutating(e)) return
 
       const handled = () => e.preventDefault()
-      switch (e.code) {
+      const grid = layoutRef.current === 'grid'
+      const cols = grid ? gridCols() : 1
+      const KEYS: [string, string][] = [
+        ['KeyJ', 'j'], ['KeyK', 'k'], ['KeyO', 'o'], ['KeyE', 'e'], ['KeyA', 'a'], ['KeyF', 'f'], ['KeyX', 'x'],
+        ['Enter', 'Enter'], ['NumpadEnter', 'Enter'], ['ArrowDown', 'ArrowDown'], ['ArrowUp', 'ArrowUp'],
+        ['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight'], ['Delete', 'Delete'], ['Backspace', 'Backspace'],
+      ]
+      // Физический код; при пустом e.code — по e.key (matchKey).
+      const code = KEYS.find(([c, k]) => matchKey(e, c, k))?.[0] ?? ''
+      switch (code) {
         case 'KeyJ':
-        case 'ArrowDown':
           handled()
           move(1)
           break
+        case 'ArrowDown':
+          handled()
+          move(cols)
+          break
         case 'KeyK':
-        case 'ArrowUp':
           handled()
           move(-1)
+          break
+        case 'ArrowUp':
+          handled()
+          move(-cols)
+          break
+        case 'ArrowRight':
+        case 'ArrowLeft':
+          if (!grid) return
+          handled()
+          move(code === 'ArrowRight' ? 1 : -1)
           break
         case 'Enter':
         case 'NumpadEnter':
         case 'KeyO': {
           // На кнопке Enter — это её нажатие, а не «открыть».
-          if (e.code !== 'KeyO' && e.target instanceof HTMLElement && e.target.closest('button, a, [role="menuitem"], [role="checkbox"]'))
+          if (code !== 'KeyO' && e.target instanceof HTMLElement && e.target.closest('button, a, [role="menuitem"], [role="checkbox"]'))
             return
           // Единый источник истины — курсор из store (фокус строки его синхронизирует).
           const id = activeId()
@@ -271,7 +348,7 @@ export function ItemList({
           setFavorite(
             items.map((i) => i.id),
             value,
-          ).catch((err: unknown) => toast.error(err instanceof Error && err.message ? err.message : 'Что-то пошло не так'))
+          ).catch((err: unknown) => toast.error(describeError(err)))
           break
         }
         case 'KeyX': {

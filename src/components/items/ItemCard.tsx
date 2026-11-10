@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { actArchive, actDelete, actToLibrary, actToggleFavorite, actUnarchive } from '@/lib/actions'
 import { displayTitle, formatBytes, formatDateTime, formatRelative } from '@/lib/itemTitle'
 import { safeImageUrl } from '@/lib/normalize'
+import { useRemoteImagesAllowed } from './remoteImages'
 import { cn } from '@/lib/utils'
 import { makeSnippet } from '@/search'
 import type { SearchHit } from '@/search'
@@ -58,7 +59,8 @@ function SafeImg({
   className?: string
   fallback?: ReactNode
 }) {
-  const safe = safeImageUrl(src)
+  const allowed = useRemoteImagesAllowed()
+  const safe = allowed ? safeImageUrl(src) : undefined
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [safe])
   if (!safe || failed) return <>{fallback}</>

@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/db/db'
+import { QUOTA_MESSAGE } from '@/lib/errors'
+import { formatDateTime, formatRelative } from '@/lib/itemTitle'
 import {
   backupFileName,
   base64ToBytes,
@@ -86,6 +88,9 @@ async function readExport(): Promise<{ blob: Blob; text: string; data: BackupDat
 }
 
 beforeEach(reset)
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('base64', () => {
   it('кодирует большие данные кусками без потерь', async () => {
@@ -533,10 +538,159 @@ describe('валидация и починка', () => {
     expect((await get('bare')).url).toBe('https://example.com/a')
     expect((await get('ok')).linkMeta).toEqual({ status: 'ok' })
     expect((await get('img')).url).toBe('ftp://files.example.com/x')
-    expect((await get('img')).linkMeta).toMatchObject({
-      image: 'https://cdn.example.com/i.png',
-      favicon: 'http://e.com/f.ico',
+    // Картинка и иконка из копии не переносятся даже с http(s): их адрес мог бы следить за открытием.
+    expect((await get('img')).linkMeta).toEqual({ status: 'ok' })
+  })
+
+  it('тип Blob файла и превью — из белого списка, объявленный тип остаётся в mimeType', async () => {
+    const enc = (bytes: number[]) => btoa(String.fromCharCode(...bytes))
+    const png = [0x89, 0x50, 0x4e, 0x47, 1, 2]
+    const file = (id: string, mimeType: string, thumbType?: string) => ({
+      id,
+      itemId: id,
+      name: `${id}.bin`,
+      mimeType,
+      size: 3,
+      createdAt: 1,
+      data: enc([1, 2, 3]),
+      ...(thumbType !== undefined ? { thumb: enc(png), thumbType } : {}),
     })
+    const cases: Array<[string, string, string]> = [
+      ['html', 'text/html', 'application/octet-stream'],
+      ['xhtml', 'application/xhtml+xml', 'application/octet-stream'],
+      ['xml', 'text/xml', 'application/octet-stream'],
+      ['js', 'text/javascript', 'application/octet-stream'],
+      ['pdf', 'application/pdf', 'application/pdf'],
+      ['txt', 'text/plain; charset=utf-8', 'text/plain'],
+      ['jpg', 'IMAGE/JPEG', 'image/jpeg'],
+      ['svg', 'image/svg+xml', 'image/svg+xml'],
+      ['mp4', 'video/mp4', 'video/mp4'],
+      ['mp3', 'audio/mpeg', 'audio/mpeg'],
+      ['zip', 'application/zip', 'application/octet-stream'],
+    ]
+    await importBackup(
+      backupBlob(
+        backup({
+          items: [
+            ...cases.map(([id]) => makeItem(id, { type: 'file', fileId: id })),
+            makeItem('thumb-html', { type: 'image', fileId: 'thumb-html' }),
+            makeItem('thumb-jpeg', { type: 'image', fileId: 'thumb-jpeg' }),
+          ],
+          files: [
+            ...cases.map(([id, mime]) => file(id, mime)),
+            file('thumb-html', 'image/png', 'text/html'),
+            file('thumb-jpeg', 'image/png', 'image/jpeg'),
+          ],
+        }),
+      ),
+      'replace',
+    )
+    for (const [id, mime, expected] of cases) {
+      const f = (await db.files.get(id))!
+      expect(f.blob.type, id).toBe(expected)
+      expect(f.mimeType, id).toBe(mime)
+    }
+    // недопустимый thumbType заменяется типом по сигнатуре
+    expect((await db.files.get('thumb-html'))!.thumb!.type).toBe('image/png')
+    expect((await db.files.get('thumb-jpeg'))!.thumb!.type).toBe('image/jpeg')
+  })
+
+  it('даты вне допустимого диапазона заменяются, а не ломают показ записи', async () => {
+    const day = 86_400_000
+    const before = Date.now()
+    await importBackup(
+      backupBlob(
+        backup({
+          categories: [{ ...makeCategory('cat', 'К'), createdAt: 9e15 }],
+          items: [
+            makeItem('huge', {
+              type: 'link',
+              url: 'https://example.com',
+              createdAt: 9e15,
+              updatedAt: 9e15,
+              processedAt: 9e15,
+              linkMeta: { status: 'ok', title: 'T', fetchedAt: -9e15 },
+              ai: { summary: 's', generatedAt: 9e15 },
+            }),
+            makeItem('neg', { createdAt: -9e15, updatedAt: -1 }),
+            makeItem('future', { createdAt: before + 365 * day, updatedAt: before + 365 * day }),
+            makeItem('ok', { createdAt: 5_000, updatedAt: 6_000, processedAt: 5_500 }),
+            makeItem('file', { type: 'file', fileId: 'f', fileName: 'a.bin' }),
+          ],
+          files: [
+            {
+              id: 'f',
+              itemId: 'file',
+              name: 'a.bin',
+              mimeType: 'application/octet-stream',
+              size: 1,
+              createdAt: -9e15,
+              data: btoa('x'),
+            },
+          ],
+        }),
+      ),
+      'replace',
+    )
+    const after = Date.now()
+    const isNow = (v: number | undefined) => v !== undefined && v >= before && v <= after
+
+    const huge = (await db.items.get('huge'))!
+    expect(isNow(huge.createdAt)).toBe(true)
+    expect(huge.updatedAt).toBe(huge.createdAt)
+    expect(huge.processedAt).toBeUndefined()
+    expect(huge.linkMeta).toEqual({ status: 'ok', title: 'T' })
+    expect(huge.ai).toEqual({ summary: 's' })
+    for (const id of ['neg', 'future']) {
+      const row = (await db.items.get(id))!
+      expect(isNow(row.createdAt)).toBe(true)
+      expect(row.updatedAt).toBe(row.createdAt)
+    }
+    expect(await db.items.get('ok')).toMatchObject({ createdAt: 5_000, updatedAt: 6_000, processedAt: 5_500 })
+    expect(isNow((await db.categories.get('cat'))!.createdAt)).toBe(true)
+    expect(isNow((await db.files.get('f'))!.createdAt)).toBe(true)
+    // Всё, что показывает запись, теперь форматируется без RangeError.
+    for (const row of await db.items.toArray()) {
+      expect(() => formatDateTime(row.createdAt)).not.toThrow()
+      expect(() => formatRelative(row.updatedAt)).not.toThrow()
+    }
+  })
+
+  it('незавершённая загрузка метаданных не попадает в копию и не висит после импорта', async () => {
+    await db.items.bulkPut([
+      makeItem('p', { type: 'link', url: 'https://a.example', linkMeta: { status: 'pending' } }),
+      makeItem('q', { type: 'link', url: 'https://b.example', linkMeta: { status: 'pending', title: 'B' } }),
+    ])
+    const { data } = await readExport()
+    const exported = new Map(data.items.map((i) => [i.id, i.linkMeta]))
+    expect(exported.get('p')).toEqual({ status: 'failed' })
+    expect(exported.get('q')).toEqual({ status: 'ok', title: 'B' })
+    // экспорт базу не меняет
+    expect((await db.items.get('p'))!.linkMeta).toEqual({ status: 'pending' })
+
+    // Старая копия с pending внутри.
+    await importBackup(
+      backupBlob(
+        backup({
+          items: [
+            makeItem('p', { type: 'link', url: 'https://a.example', linkMeta: { status: 'pending' } }),
+            makeItem('q', { type: 'link', url: 'https://b.example', linkMeta: { status: 'pending', title: 'B' } }),
+          ],
+        }),
+      ),
+      'replace',
+    )
+    expect((await db.items.get('p'))!.linkMeta).toEqual({ status: 'failed' })
+    expect((await db.items.get('q'))!.linkMeta).toEqual({ status: 'ok', title: 'B' })
+  })
+
+  it('переполнение хранилища при импорте — понятная ошибка, база не тронута', async () => {
+    await db.items.put(makeItem('keep'))
+    vi.spyOn(db.items, 'bulkPut').mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+    await expect(importBackup(backupBlob(backup({ items: [makeItem('new')] })), 'replace')).rejects.toThrow(
+      QUOTA_MESSAGE,
+    )
+    expect((await db.items.toArray()).map((i) => i.id)).toEqual(['keep'])
   })
 
   it('пустая копия в режиме merge ничего не ломает', async () => {

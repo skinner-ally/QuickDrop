@@ -9,7 +9,9 @@ import { initDesktop } from './lib/desktop'
 applyInitialHash()
 void initDesktop()
 
-createRoot(document.getElementById('root')!).render(
+createRoot(document.getElementById('root')!, {
+  onUncaughtError: (error) => console.error('QuickDrop: необработанная ошибка', error),
+}).render(
   <StrictMode>
     <App />
   </StrictMode>,

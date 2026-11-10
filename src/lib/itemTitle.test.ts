@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { titleFromUrl } from './linkMeta'
-import { displayTitle, formatBytes, formatDateTime, formatRelative, TYPE_LABEL } from './itemTitle'
+import { displayTitle, formatBytes, formatDateTime, formatRelative, NO_DATE, TYPE_LABEL } from './itemTitle'
 
 const base = { title: '', content: '' }
 
@@ -54,5 +54,16 @@ describe('прочее', () => {
   it('TYPE_LABEL и formatDateTime', () => {
     expect(TYPE_LABEL.link).toBe('Ссылка')
     expect(formatDateTime(new Date(2025, 2, 12, 9, 5).getTime())).toMatch(/12 марта 2025.*09:05/)
+  })
+
+  it('дата вне диапазона Date — заглушка, а не RangeError', () => {
+    const now = new Date(2025, 5, 15, 12, 0).getTime()
+    for (const bad of [9e15, -9e15, Number.NaN, Infinity, undefined as unknown as number]) {
+      expect(formatRelative(bad, now)).toBe(NO_DATE)
+      expect(formatDateTime(bad)).toBe(NO_DATE)
+    }
+    // Крайние допустимые значения форматируются.
+    expect(formatRelative(-8.64e15, now)).not.toBe(NO_DATE)
+    expect(formatDateTime(8.64e15)).not.toBe(NO_DATE)
   })
 })

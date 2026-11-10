@@ -7,6 +7,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { linkItems } from '@/db/repo'
 import { useAllItems, useCategories } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { searchItems } from '@/search'
 import type { Item } from '@/types'
@@ -36,7 +37,7 @@ export function LinkPicker({ item }: { item: Item }) {
     try {
       await linkItems(item.id, other.id)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось связать записи')
+      toast.error(describeError(e, 'Не удалось связать записи'))
     }
   }
 

@@ -48,6 +48,12 @@ src/
   lib/exportImport.ts резервная копия JSON
   lib/ai.ts           необязательная LLM-интеграция
   lib/platform.ts     isTauri / isMac
+  lib/desktop.ts      Tauri: initDesktop, applyGlobalShortcut, openExternal, globalShortcutFailure
+  lib/errors.ts       describeError, isQuotaError
+  lib/clipboard.ts    разбор вставки из буфера (pastedFiles)
+  lib/swReload.ts     отложенная перезагрузка после обновления SW
+  lib/utils.ts        cn (реэкспорт пакета `cn`)
+  pwa.ts              PWA: регистрация SW, ярлык и share_target
   lib/itemTitle.ts    производный заголовок, форматирование
   store/ui.ts         состояние интерфейса (zustand)
   hooks/              useItems, useHotkeys и т.п.
@@ -57,6 +63,8 @@ src/
   components/items/   ItemCard, ItemList, ItemDetail, TagInput, ...
   views/              InboxView, LibraryView, FavoritesView, ArchiveView, SettingsView
 src-tauri/            оболочка Tauri 2
+  src/lib.rs, src/main.rs   команды Rust (в т.ч. fetch_link_meta)
+  capabilities/default.json права главного окна (window, global-shortcut, opener)
 ```
 
 ## Модель данных
@@ -205,7 +213,7 @@ useFileUrl(fileId: string | undefined, kind?: 'thumb' | 'full'): string | undefi
 - Категории: CSS-переменные `--cat-<color>` и `--cat-<color>-soft` (`style={{ background: 'var(--cat-blue-soft)', color: 'var(--cat-blue)' }}`).
 - Шрифт Geist Variable (кириллица есть), моноширинный — `font-mono`. Базовый размер текста интерфейса 13–14px, плотная вёрстка.
 - Без градиентов, свечений, эмодзи в интерфейсе, без КАПСА с разрядкой. Иконки — lucide, 16px, `strokeWidth` 1.75.
-- Тёмная тема обязательна (класс `.dark`, next-themes). Анимации короткие (120–180 мс), уважать `prefers-reduced-motion`.
+- Тёмная тема обязательна (класс `.dark`). Своя реализация: `ThemeProvider` и `useTheme` в `src/components/layout/ThemeProvider.tsx` (пакет next-themes не используется; `ui/sonner.tsx` берёт тему оттуда). Анимации короткие (120–180 мс), уважать `prefers-reduced-motion`.
 - Мобильная версия (< 768px): боковая панель → выезжающее меню, детали записи → полноэкранный лист,
   кнопка «Добавить» — плавающая; учитывать `env(safe-area-inset-*)`.
 
@@ -251,4 +259,22 @@ src/hooks/useHotkeys.ts                глобальные клавиши, вс
 - Веб-клиент — устанавливаемый PWA: `vite-plugin-pwa` (registerType `autoUpdate`, precache всего бандла, `navigateFallback`), настройки в секции `plugins` файла `vite.config.ts`; регистрация и разбор параметров запуска — `src/pwa.ts`.
 - Манифест: shortcut «Быстрая запись» (`/?capture=1`) и `share_target` (GET, `title/text/url`) обрабатываются в `src/pwa.ts` (открывают QuickCapture, адрес очищается). share_target работает на Android; на iOS не поддерживается.
 - В Tauri-сборке (`TAURI_ENV_PLATFORM` задан) плагин отключён (`disable`), `sw.js` не создаётся; `src/pwa.ts` не регистрирует SW и внутри Tauri.
+- Перезагрузка после обновления SW идёт через `src/lib/swReload.ts` (`createReloadGate`, `isUserBusy`): пока открыта панель добавления, фокус в поле или открыт диалог, она откладывается до `visibilitychange=hidden`, toast «Доступна новая версия» с кнопкой «Обновить». QuickCapture пишет черновик в sessionStorage по мере ввода (debounce) и на `pagehide`.
+- CSP веб-сборки — плагин `quickdrop:web-csp` в `vite.config.ts` (meta первым тегом head, только `vite build`, только не Tauri; в dev не вставляется). У Tauri своя политика в `tauri.conf.json`. Inline-скрипты запрещены (`script-src 'self'`): ранняя тема — внешний `public/theme-init.js` (ключ `qd-theme`, та же логика, что в ThemeProvider).
+- Подкаталог размещения: `VITE_BASE=/x/ npm run build` → `base`, `start_url`, `scope`, `id`, ярлык и `share_target` от него; без переменной и в Tauri — `/`.
 - Иконки: `public/icon.svg` → `npm run icons` (`scripts/gen-icons.mjs`, sharp) генерирует `pwa-192/512`, `pwa-maskable-512`, `apple-touch-icon` PNG.
+
+## Платформы → Tauri
+- Оболочка Tauri 2 в `src-tauri/`; права окна и плагинов — `src-tauri/capabilities/default.json` (window show/focus/unminimize, global-shortcut, opener только http/https).
+- `src/lib/desktop.ts`: `initDesktop()` при старте регистрирует глобальное сочетание из настроек; `applyGlobalShortcut()` перерегистрирует его сразу (`unregisterAll` + `register`), при ошибке возвращает прежнее сочетание; `openExternal()` открывает http/https в системном браузере. Вне Tauri все три ничего не делают.
+- Ссылки метаданных тянутся командой Rust `fetch_link_meta` через `invoke` (см. `lib/linkMeta.ts`).
+- PWA-слой (`vite-plugin-pwa`, `src/pwa.ts`) в Tauri-сборке отключён.
+- Главное окно создаётся в `setup` (`lib.rs: create_main_window`, в конфиге `create: false`), чтобы задать обработчик скачиваний: в macOS WKWebView без него отменяет `<a download>`. Файл сохраняется в «Загрузки», итог — событие `download-finished`, toast в `desktop.ts`. В Windows WebView2 скачивает сам. Сохранять Blob файлом в UI — только `saveBlob(blob, name)` из `lib/actions.ts`.
+- `fetch_link_meta` не ходит во внутреннюю сеть с публичной ссылки (фильтр DNS и редиректов). Версия приложения — в трёх файлах (package.json, tauri.conf.json, Cargo.toml), сверяет `scripts/check-version.mjs`.
+
+## Безопасность данных (после финального ревью)
+- Тип Blob в таблице `files` — только из белого списка `safeBlobType` (`lib/normalize.ts`): image/audio/video, PDF, text/plain, иначе `application/octet-stream`; объявленный тип — в `mimeType`. Применяется в `createItem` и при импорте. UI показывает картинки и «Открыть» PDF только по типу самого Blob (`components/items/safeFileUrl.ts`), SVG — растеризованным.
+- Импорт не переносит `linkMeta.image/favicon`; удалённые картинки ссылок показываются только при `autoFetchLinkTitle`.
+- Адрес ИИ — `aiBaseUrlError` (`lib/ai.ts`): https, http только localhost/127.0.0.1/[::1]; проверяется и в настройках, и перед запросом.
+- Ошибки для toast — `describeError(e, запасной текст)` из `lib/errors.ts` (переполнение хранилища → понятный текст).
+- Вставка из буфера — `pastedFiles` (`lib/clipboard.ts`): текст + растровая копия из офисной программы считается текстом.

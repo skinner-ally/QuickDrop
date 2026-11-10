@@ -17,7 +17,7 @@ import { CategorySelect } from './CategorySelect'
 import { AiSuggest, AiSummary } from './detail/AiSuggest'
 import { ItemContent } from './detail/ItemContent'
 import { LinkedItems } from './detail/LinkedItems'
-import { saveItem } from './detail/save'
+import { saveItem, saveTags } from './detail/save'
 import { TitleField } from './detail/TitleField'
 import { ItemMenu } from './ItemMenu'
 import { TagInput } from './TagInput'
@@ -161,7 +161,7 @@ function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
             <TagInput
               value={item.tags}
               placeholder="Добавить теги"
-              onChange={(tags) => void saveItem(item.id, { tags })}
+              onChange={(tags) => void saveTags(item.id, item.tags, tags)}
             />
           </section>
 

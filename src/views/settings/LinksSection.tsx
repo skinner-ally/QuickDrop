@@ -1,6 +1,7 @@
 import { toast } from 'sonner'
 import { Switch } from '@/components/ui/switch'
 import { setSetting } from '@/db/settings'
+import { describeError } from '@/lib/errors'
 import { isTauri } from '@/lib/platform'
 import type { Settings } from '@/types'
 import { CommitInput, Field, Row, Section } from './Section'
@@ -23,7 +24,7 @@ export function LinksSection({ settings }: { settings: Settings }) {
           id="auto-title"
           checked={settings.autoFetchLinkTitle}
           onCheckedChange={(v) =>
-            void setSetting('autoFetchLinkTitle', v).catch((e: Error) => toast.error(e.message))
+            void setSetting('autoFetchLinkTitle', v).catch((e: unknown) => toast.error(describeError(e)))
           }
         />
       </Row>

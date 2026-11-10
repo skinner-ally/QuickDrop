@@ -18,23 +18,70 @@ export type { VisibleResult }
 
 /** Отписка с задержкой: при смене раздела потребители размонтируются и тут же монтируются снова. */
 export const ITEMS_RELEASE_DELAY_MS = 2000
+/** Повтор чтения после ошибки: от 1 с, удваивая до 30 с. */
+export const ITEMS_RETRY_MIN_MS = 1000
+const ITEMS_RETRY_MAX_MS = 30_000
 
 const listeners = new Set<() => void>()
 let snapshot: Item[] | undefined
+let failed = false
 let subscription: Subscription | null = null
 let releaseTimer: ReturnType<typeof setTimeout> | undefined
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+let retryDelay = ITEMS_RETRY_MIN_MS
 
 function emit(): void {
   for (const listener of [...listeners]) listener()
 }
 
+function clearRetry(): void {
+  if (retryTimer !== undefined) clearTimeout(retryTimer)
+  retryTimer = undefined
+}
+
 function releaseIfIdle(): void {
   releaseTimer = undefined
   if (listeners.size > 0) return
+  clearRetry()
   subscription?.unsubscribe()
   subscription = null
   // Без подписки данные устаревают: следующий потребитель дождётся свежего чтения.
   snapshot = undefined
+  failed = false
+  retryDelay = ITEMS_RETRY_MIN_MS
+}
+
+/**
+ * После ошибки liveQuery закрывается навсегда. Боковая панель подписана всегда, поэтому «переподписка
+ * при новом потребителе» не наступила бы, и список застыл бы до перезагрузки — повторяем сами.
+ */
+function scheduleRetry(): void {
+  if (retryTimer !== undefined || listeners.size === 0) return
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined
+    if (listeners.size > 0 && (!subscription || subscription.closed)) subscribeItems()
+  }, retryDelay)
+  retryDelay = Math.min(retryDelay * 2, ITEMS_RETRY_MAX_MS)
+}
+
+function subscribeItems(): void {
+  subscription = liveQuery(() => db.items.toArray()).subscribe({
+    next: (items) => {
+      snapshot = items
+      failed = false
+      retryDelay = ITEMS_RETRY_MIN_MS
+      emit()
+    },
+    error: (err: unknown) => {
+      console.error('QuickDrop: не удалось прочитать записи', err)
+      subscription = null
+      failed = true
+      // Пустой список вместо вечной «загрузки»; уже прочитанные записи остаются на экране.
+      snapshot ??= []
+      emit()
+      scheduleRetry()
+    },
+  })
 }
 
 /** Подписка на общий список записей (для useSyncExternalStore и тестов). */
@@ -45,19 +92,8 @@ export function subscribeAllItems(listener: () => void): () => void {
     releaseTimer = undefined
   }
   if (!subscription || subscription.closed) {
-    subscription = liveQuery(() => db.items.toArray()).subscribe({
-      next: (items) => {
-        snapshot = items
-        emit()
-      },
-      error: (err: unknown) => {
-        console.error('QuickDrop: не удалось прочитать записи', err)
-        subscription = null
-        // Пустой список вместо вечной «загрузки».
-        snapshot ??= []
-        emit()
-      },
-    })
+    clearRetry()
+    subscribeItems()
   }
   return () => {
     listeners.delete(listener)
@@ -74,6 +110,16 @@ export function getAllItemsSnapshot(): Item[] | undefined {
 
 export function useAllItems(): Item[] | undefined {
   return useSyncExternalStore(subscribeAllItems, getAllItemsSnapshot, getAllItemsSnapshot)
+}
+
+/** true — последнее чтение записей завершилось ошибкой (чтение повторяется само). */
+export function getAllItemsFailed(): boolean {
+  return failed
+}
+
+/** Для сообщения в интерфейсе: пустой список при ошибке чтения — не «данные исчезли». */
+export function useAllItemsFailed(): boolean {
+  return useSyncExternalStore(subscribeAllItems, getAllItemsFailed, getAllItemsFailed)
 }
 
 // Производные значения считаются один раз на снимок, сколько бы компонентов их ни читали.

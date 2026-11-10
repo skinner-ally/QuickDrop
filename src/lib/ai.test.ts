@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { suggestForItem } from './ai'
+import { aiBaseUrlError, suggestForItem } from './ai'
 import { DEFAULT_SETTINGS } from '@/types'
 import type { Item, Settings } from '@/types'
 
@@ -67,6 +67,22 @@ describe('suggestForItem', () => {
   it('401', async () => {
     vi.stubGlobal('fetch', reply('no', 401))
     await expect(suggestForItem(item, settings)).rejects.toThrow(/ключ/)
+  })
+  it('открытый http вне localhost — ошибка до запроса', async () => {
+    const f = vi.fn()
+    vi.stubGlobal('fetch', f)
+    for (const aiBaseUrl of ['http://api.example.com/v1', 'http://localhost:80@evil.example/v1', 'ftp://x.test', 'мусор']) {
+      await expect(suggestForItem(item, { ...settings, aiBaseUrl })).rejects.toThrow(/https:\/\//)
+    }
+    expect(f).not.toHaveBeenCalled()
+  })
+  it('http разрешён только для локальной модели', async () => {
+    for (const ok of ['https://x.test/v1', ' https://x.test ', 'http://localhost:11434/v1', 'http://127.0.0.1/v1', 'http://[::1]:8080']) {
+      expect(aiBaseUrlError(ok), ok).toBeNull()
+    }
+    for (const bad of ['http://localhost.evil.example', 'http://192.168.1.5/v1', '', 'localhost:11434']) {
+      expect(aiBaseUrlError(bad), bad).not.toBeNull()
+    }
   })
   it('не настроено', async () => {
     const f = vi.fn()

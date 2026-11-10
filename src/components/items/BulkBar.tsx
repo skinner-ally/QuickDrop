@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { addTags, setCategory } from '@/db/repo'
 import { actArchive, actDelete, actToLibrary, actUnarchive } from '@/lib/actions'
+import { describeError } from '@/lib/errors'
 import { useSelection } from '@/store/selection'
 import { CategorySelect } from './CategorySelect'
 import { TagInput } from './TagInput'
@@ -16,10 +17,6 @@ function plural(n: number): string {
   if (m10 === 1 && m100 !== 11) return 'запись'
   if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'записи'
   return 'записей'
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : 'Что-то пошло не так'
 }
 
 /** Панель массовых действий: показывается, когда выбрана хотя бы одна запись. */
@@ -36,7 +33,7 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
     try {
       await setCategory(ids, categoryId)
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(describeError(e))
     }
   }
 
@@ -47,7 +44,7 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
       setTags([])
       setTagsOpen(false)
     } catch (e) {
-      toast.error(errMsg(e))
+      toast.error(describeError(e))
     }
   }
 

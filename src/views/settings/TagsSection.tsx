@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { deleteTag, normalizeTag, renameTag } from '@/db/repo'
 import { useAllTags } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { Section } from './Section'
 
-const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e))
+const fail = (e: unknown) => toast.error(describeError(e))
 
 export function TagsSection() {
   const tags = useAllTags()

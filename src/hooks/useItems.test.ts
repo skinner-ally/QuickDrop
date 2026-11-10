@@ -4,8 +4,10 @@ import { createItem, toggleFavorite } from '@/db/repo'
 import type { Item } from '@/types'
 import {
   ITEMS_RELEASE_DELAY_MS,
+  ITEMS_RETRY_MIN_MS,
   computeAllTags,
   computeCounts,
+  getAllItemsFailed,
   getAllItemsSnapshot,
   subscribeAllItems,
 } from './useItems'
@@ -74,5 +76,25 @@ describe('общий источник записей', () => {
     expect(computeAllTags(items)).toBe(computeAllTags(items))
     expect(computeCounts(items)).toEqual({ inbox: 1, library: 1, favorites: 1, archive: 1 })
     expect(computeCounts(items)).toBe(computeCounts(items))
+  })
+
+  it('после ошибки чтения подписка повторяется сама, а не застывает до перезагрузки', async () => {
+    await createItem({ type: 'text', content: 'x' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(db.items, 'toArray').mockRejectedValueOnce(new Error('DatabaseClosedError'))
+    const unsub = subscribeAllItems(() => {})
+    await until(() => getAllItemsFailed())
+    expect(getAllItemsSnapshot()).toEqual([])
+
+    await until(() => getAllItemsSnapshot()?.length === 1, ITEMS_RETRY_MIN_MS + 2000)
+    expect(getAllItemsFailed()).toBe(false)
+    // подписка снова живая: изменения доходят
+    await createItem({ type: 'text', content: 'y' })
+    await until(() => getAllItemsSnapshot()?.length === 2)
+
+    vi.useFakeTimers()
+    unsub()
+    vi.advanceTimersByTime(ITEMS_RELEASE_DELAY_MS + 1)
+    expect(getAllItemsSnapshot()).toBeUndefined()
   })
 })

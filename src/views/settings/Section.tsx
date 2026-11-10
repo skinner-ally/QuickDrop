@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
+import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 
 export function Section({
@@ -102,7 +103,7 @@ export function CommitInput({
       await onCommit(v)
       saved()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(describeError(e))
     }
   }
 

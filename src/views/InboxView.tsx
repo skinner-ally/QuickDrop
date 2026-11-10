@@ -1,19 +1,22 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { Suspense, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { InboxIcon, Paperclip, SearchX, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ErrorBoundary, lazyRetry, RetryFallback } from '@/components/layout/ErrorBoundary'
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
 import { ItemList } from '@/components/items/ItemList'
 import { useCounts, useVisibleItems } from '@/hooks/useItems'
 import { createAndEnrich } from '@/lib/actions'
 import { detectInput } from '@/lib/detect'
+import { describeError } from '@/lib/errors'
 import { useUi } from '@/store/ui'
 import type { NewItemInput } from '@/types'
 
 const loadTriage = () => import('@/components/items/TriageMode')
-const TriageMode = lazy(() => loadTriage().then((m) => ({ default: m.TriageMode })))
+const triageLazy = lazyRetry(() => loadTriage(), (m) => m.TriageMode)
+const TriageMode = triageLazy.Component
 
 function waitingText(n: number): string {
   if (n === 0) return 'Всё разобрано'
@@ -47,7 +50,7 @@ function QuickAdd() {
       await createAndEnrich(inputFromText(value))
       setText('')
     } catch (e) {
-      toast.error(e instanceof Error && e.message ? e.message : 'Не удалось сохранить запись')
+      toast.error(describeError(e, 'Не удалось сохранить запись'))
     } finally {
       setBusy(false)
       inputRef.current?.focus()
@@ -118,7 +121,7 @@ export function InboxView() {
 
   // Подгружаем чанк разбора в простое — первое открытие не ждёт сети.
   useEffect(() => {
-    const h = window.setTimeout(() => void loadTriage(), 1500)
+    const h = window.setTimeout(() => void loadTriage().catch(() => undefined), 1500)
     return () => window.clearTimeout(h)
   }, [])
 
@@ -190,20 +193,24 @@ export function InboxView() {
       <QuickAdd />
       <FilterBar />
 
-      {loading ? null : hits.length === 0 ? (
-        narrowed || total > 0 ? (
-          noResults
-        ) : (
-          allClear
-        )
-      ) : (
-        <ItemList hits={hits} variant="inbox" emptyState={noResults} />
+      {loading ? null : (
+        // ItemList остаётся смонтированным и при пустой выдаче: он закрывает детали ушедшей записи.
+        <ItemList
+          hits={hits}
+          variant="inbox"
+          emptyState={hits.length === 0 && !(narrowed || total > 0) ? allClear : noResults}
+        />
       )}
 
       {triageUsed && (
-        <Suspense fallback={null}>
-          <TriageMode open={triage} onClose={() => setTriage(false)} />
-        </Suspense>
+        <ErrorBoundary
+          onReset={triageLazy.reset}
+          fallback={(_e, reset) => <RetryFallback message="Не удалось загрузить режим разбора. Проверьте соединение." reset={reset} />}
+        >
+          <Suspense fallback={null}>
+            <TriageMode open={triage} onClose={() => setTriage(false)} />
+          </Suspense>
+        </ErrorBoundary>
       )}
     </section>
   )

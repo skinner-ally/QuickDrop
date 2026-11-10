@@ -8,6 +8,8 @@ on:
 jobs:
   desktop:
     name: Desktop (${{ matrix.platform }})
+    # Установщики собираются и прикладываются к черновику только после зелёных проверок
+    needs: web
     permissions:
       contents: write
     strategy:
@@ -60,6 +62,12 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+
+      # tauri-action называет релиз по версии из tauri.conf.json, а не по запушенному тегу
+      - name: Проверка версии
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/check-version.mjs "$TAG"
 
       - name: Установка зависимостей
         run: npm ci

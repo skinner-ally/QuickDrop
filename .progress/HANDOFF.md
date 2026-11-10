@@ -3,25 +3,24 @@
 Обновлено: 2026-11-10
 
 ## Текущий этап
-Этап 4 (финальное ревью) — workflow `quickdrop-final`.
+Все этапы 0–4 завершены и закоммичены. MVP готов.
 
-## Сделано
-- Этапы 0–3 закоммичены. typecheck / 432 теста / build (с sw.js и manifest) — зелёные.
-- Этап 3: src-tauri (Tauri 2: fetch_link_meta, global-shortcut, single-instance, opener), PWA (vite-plugin-pwa, иконки,
-  share_target, отключается при TAURI_ENV_PLATFORM), свой ThemeProvider вместо next-themes, ленивые чанки, README, CI.
-- Windows-сборка прошла: src-tauri/target/release/bundle/nsis/QuickDrop_0.1.0_x64-setup.exe и msi/QuickDrop_0.1.0_x64_en-US.msi;
-  дымовой тест exe — окно открывается (см. .progress/agents/build-desktop.md).
-- Основная сессия перепроверила в браузере: курсор списка виден, Enter открывает запись под курсором, «/» фокусирует поиск,
-  ссылка без заголовка показывается как «dexie.org — React».
+## Итоговое состояние
+- `npm run typecheck` — чисто; `npm test` — 17 файлов, 473 теста; `npm run build` — веб-сборка с sw.js и manifest,
+  основной чанк 494 КБ; `cargo check` — чисто.
+- Windows: `npm run tauri build` → src-tauri/target/release/bundle/nsis/QuickDrop_0.1.0_x64-setup.exe и
+  msi/QuickDrop_0.1.0_x64_en-US.msi; дымовой тест exe пройден (окно открывается и закрывается).
+- Финальное ревью: 50 находок, 23 из 24 серьёзных подтверждены и исправлены (см. .progress/agents/review-final-*.md,
+  fix-final-*.md).
+- Проверено основной сессией в браузере: добавление (кнопка, Alt+N, Ctrl+Enter), входящие, курсор J/K/Enter, E,
+  детали, палитра Ctrl+K, настройки, светлая/тёмная тема, 375px.
 
-## В работе прямо сейчас
-Workflow этапа 4: ревью fable по 4 линзам → проверка находок → исправления (opus/sonnet) → проверки (haiku) → пересборка desktop.
+## Не проверено вживую (нужен человек или другая ОС)
+- macOS-сборка (только CI: .github/workflows/release.yml) и скачивание/экспорт файлов в macOS-окне Tauri.
+- Глобальная клавиша Ctrl+Shift+Space, перетаскивание файлов и fetch_link_meta внутри живого окна Tauri.
+- Установка PWA на iPhone, офлайн-режим service worker, share_target на Android.
 
-## Следующий шаг
-Итоговая проверка основной сессией (браузер + команды), коммит «Этап 4», отметить PROGRESS.md, итоговый отчёт пользователю.
-
-## Известные проблемы / ограничения
-- macOS-сборка — только на Mac или через GitHub Actions (.github/workflows/release.yml), не проверялась.
-- Установка PWA на iPhone и глобальная клавиша в живом окне Tauri не проверялись вручную.
-- В вебе заголовки ссылок недоступны из-за CORS (без прокси) — показывается заголовок из адреса.
-- Обработчики клавиш опираются на e.code; добавить запасной вариант по e.key (в этапе 4).
+## Возможные следующие шаги
+- Разместить dist на HTTPS-хостинге для iPhone (VITE_BASE для подкаталога).
+- Синхронизация между устройствами (сейчас только экспорт/импорт JSON).
+- Подпись кода Windows/macOS.

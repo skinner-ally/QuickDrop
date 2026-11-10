@@ -5,9 +5,10 @@ import { TagChip } from '@/components/items/TagChip'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/db/settings'
 import { suggestForItem } from '@/lib/ai'
+import { describeError } from '@/lib/errors'
 import { normalizeTag } from '@/lib/normalize'
 import type { AiMeta, Item } from '@/types'
-import { saveItem } from './save'
+import { saveItem, saveTags } from './save'
 
 /** «Кратко» — уже сохранённое описание; показывается независимо от настроек AI. */
 export function AiSummary({ item }: { item: Item }) {
@@ -43,7 +44,7 @@ export function AiSuggest({ item }: { item: Item }) {
       const meta = await suggestForItem(item, settings, ctrl.signal)
       if (!ctrl.signal.aborted) setResult(meta)
     } catch (e) {
-      if (!ctrl.signal.aborted) toast.error(e instanceof Error ? e.message : 'Не удалось получить подсказку')
+      if (!ctrl.signal.aborted) toast.error(describeError(e, 'Не удалось получить подсказку'))
     } finally {
       if (abortRef.current === ctrl) setPending(false)
     }
@@ -108,7 +109,7 @@ export function AiSuggest({ item }: { item: Item }) {
               <div className="mb-1 text-xs text-muted-foreground">Теги — нажмите, чтобы добавить</div>
               <div className="flex flex-wrap gap-1">
                 {newTags.map((t) => (
-                  <TagChip key={t} tag={t} onClick={() => void saveItem(item.id, { tags: [...item.tags, t] })} />
+                  <TagChip key={t} tag={t} onClick={() => void saveTags(item.id, item.tags, [...item.tags, t])} />
                 ))}
               </div>
             </div>

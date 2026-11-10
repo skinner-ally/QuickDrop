@@ -1,5 +1,6 @@
 import { toast } from 'sonner'
 import {
+  applyLinkMeta,
   createItem,
   deleteItems,
   getFile,
@@ -8,24 +9,20 @@ import {
   setStatus,
   toggleFavorite,
   unarchive,
-  updateItem,
 } from '@/db/repo'
 import { getSettings } from '@/db/settings'
+import { describeError } from '@/lib/errors'
 import { fetchLinkMeta } from '@/lib/linkMeta'
-import { safeLinkUrl } from '@/lib/normalize'
+import { hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
 import { isTauri } from '@/lib/platform'
-import type { Item, ItemStatus, NewItemInput } from '@/types'
-
-function errMsg(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : 'Что-то пошло не так'
-}
+import type { Item, ItemStatus, LinkMeta, NewItemInput } from '@/types'
 
 /** Оборачивает действие: любая ошибка становится toast.error, наружу не бросает. */
 async function safe(run: () => Promise<void>): Promise<void> {
   try {
     await run()
   } catch (e) {
-    toast.error(errMsg(e))
+    toast.error(describeError(e))
   }
 }
 
@@ -33,13 +30,72 @@ const toArray = (ids: string | string[]): string[] => (Array.isArray(ids) ? ids 
 
 // ───────────────────────── ссылки ─────────────────────────
 
-async function loadLinkMeta(id: string, url: string, proxyUrl: string): Promise<void> {
-  const meta = await fetchLinkMeta(url, { proxyUrl: proxyUrl || undefined })
-  // Заголовок страницы остаётся в linkMeta: displayTitle берёт его сам, а title не затираем.
+/**
+ * Последний запрос метаданных по каждой записи. Запрос идёт до 8 с на попытку, и за это время адрес
+ * могут сменить или нажать «Обновить данные»: прежний запрос отменяется, а его поздний ответ
+ * не записывается.
+ */
+type LinkJob = { ctrl: AbortController }
+const linkJobs = new Map<string, LinkJob>()
+
+/** Идёт ли в этой сессии загрузка метаданных для записи (pending из другой вкладки/сессии — нет). */
+export function isLinkMetaLoading(id: string): boolean {
+  return linkJobs.has(id)
+}
+
+function endLinkJob(id: string, job: LinkJob): void {
+  if (linkJobs.get(id) === job) linkJobs.delete(id)
+}
+
+/**
+ * Отменяет прежний запрос по записи и ставит pending для адреса url.
+ * null — записи уже нет или у неё другой адрес.
+ */
+async function beginLinkMeta(id: string, url: string, keep?: LinkMeta): Promise<LinkJob | null> {
+  linkJobs.get(id)?.ctrl.abort()
+  const job: LinkJob = { ctrl: new AbortController() }
+  linkJobs.set(id, job)
   try {
-    await updateItem(id, { linkMeta: meta })
-  } catch {
-    // запись удалили, пока шла загрузка — это нормально
+    // pending — поверх прежних полей: заголовок в списке не пропадает, пока идёт запрос.
+    if (await applyLinkMeta(id, url, { ...keep, status: 'pending' })) return job
+  } catch (e) {
+    endLinkJob(id, job)
+    throw e
+  }
+  endLinkJob(id, job)
+  return null
+}
+
+/** ok/failed — записан результат; kept — обновить не удалось, оставлены прежние данные; stale — ответ устарел. */
+type LinkOutcome = 'ok' | 'failed' | 'kept' | 'stale'
+
+/**
+ * Загружает метаданные и записывает итог, если запрос всё ещё последний и адрес записи не сменился.
+ * keep — прежние метаданные: при неудаче они остаются как были, а не стираются.
+ * Исключение при загрузке тоже даёт итог 'failed' — pending не остаётся висеть.
+ */
+async function finishLinkMeta(
+  id: string,
+  url: string,
+  proxyUrl: string,
+  job: LinkJob,
+  keep?: LinkMeta,
+): Promise<LinkOutcome> {
+  try {
+    let meta: LinkMeta
+    try {
+      meta = await fetchLinkMeta(url, { proxyUrl: proxyUrl || undefined, signal: job.ctrl.signal })
+    } catch {
+      meta = { status: 'failed', fetchedAt: Date.now() }
+    }
+    if (linkJobs.get(id) !== job) return 'stale'
+    const kept = meta.status !== 'ok' && keep !== undefined
+    // Заголовок страницы остаётся в linkMeta: displayTitle берёт его сам, а title не затираем.
+    if (!(await applyLinkMeta(id, url, kept ? keep : meta))) return 'stale'
+    if (kept) return 'kept'
+    return meta.status === 'ok' ? 'ok' : 'failed'
+  } finally {
+    endLinkJob(id, job)
   }
 }
 
@@ -51,21 +107,33 @@ export async function createAndEnrich(input: NewItemInput): Promise<Item> {
     const settings = await getSettings()
     if (!settings.autoFetchLinkTitle) return item
     const url = item.url
-    await updateItem(item.id, { linkMeta: { status: 'pending' } })
+    const job = await beginLinkMeta(item.id, url)
+    if (!job) return item
     item.linkMeta = { status: 'pending' }
-    void loadLinkMeta(item.id, url, settings.linkProxyUrl).catch(() => {})
+    void finishLinkMeta(item.id, url, settings.linkProxyUrl, job).catch(() => {})
   } catch {
     // обогащение необязательно: запись уже создана
   }
   return item
 }
 
+/**
+ * Перезапрашивает метаданные по адресу, который сейчас лежит в базе. Если запрос не удался,
+ * прежние заголовок/описание/картинка остаются (при смене адреса репозиторий их уже сбросил).
+ */
 export async function refreshLinkMeta(item: Item): Promise<void> {
   await safe(async () => {
-    if (!item.url) return
+    // Вызывающий мог передать адрес до нормализации (LinkCard — то, что ввёл пользователь).
+    const current = await getItem(item.id)
+    if (!current?.url) return
+    const url = current.url
     const settings = await getSettings()
-    await updateItem(item.id, { linkMeta: { status: 'pending' } })
-    await loadLinkMeta(item.id, item.url, settings.linkProxyUrl)
+    const prev = current.linkMeta ? settleLinkMeta(current.linkMeta) : undefined
+    const keep = hasLinkContent(prev) ? prev : undefined
+    const job = await beginLinkMeta(item.id, url, keep)
+    if (!job) return
+    const outcome = await finishLinkMeta(item.id, url, settings.linkProxyUrl, job, keep)
+    if (outcome === 'kept') toast.error('Не удалось обновить данные ссылки — оставлены прежние')
   })
 }
 
@@ -178,7 +246,7 @@ export async function openLink(raw: string | undefined): Promise<void> {
     // noopener: страница не получает window.opener.
     window.open(url, '_blank', 'noopener,noreferrer')
   } catch (e) {
-    toast.error(errMsg(e))
+    toast.error(describeError(e))
   }
 }
 
@@ -186,19 +254,28 @@ export function actOpen(item: Item): void {
   void openLink(item.url)
 }
 
+/**
+ * Сохраняет Blob файлом через `<a download>`. В Tauri такое скачивание обрабатывает оболочка:
+ * WebView2 — своей панелью загрузок, macOS — обработчиком в src-tauri/src/lib.rs (без него WKWebView
+ * скачивание отменяет), итог показывает src/lib/desktop.ts.
+ */
+export function saveBlob(blob: Blob, name: string): void {
+  const href = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = name
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(href), 10_000)
+}
+
 export async function actDownload(item: Item): Promise<void> {
   await safe(async () => {
     if (!item.fileId) throw new Error('У записи нет файла')
     const file = await getFile(item.fileId)
     if (!file) throw new Error('Файл не найден')
-    const href = URL.createObjectURL(file.blob)
-    const a = document.createElement('a')
-    a.href = href
-    a.download = file.name || item.fileName || 'file'
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(href), 10_000)
+    saveBlob(file.blob, file.name || item.fileName || 'file')
   })
 }

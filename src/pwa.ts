@@ -1,9 +1,11 @@
 // PWA: регистрация service worker, обработка ярлыка/«Поделиться», тихий persist().
 // В Tauri (TAURI_ENV_PLATFORM) плагин отключён, SW не регистрируется.
 import { toast } from 'sonner'
+import { createReloadGate, isUserBusy } from '@/lib/swReload'
 import { useUi } from '@/store/ui'
 
 const UPDATED_FLAG = 'qd-sw-updated'
+const UPDATE_TOAST_ID = 'qd-sw-update'
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -37,9 +39,13 @@ function handleLaunchParams() {
   else useUi.getState().openCapture()
 }
 
+function reloadPage() {
+  location.reload()
+}
+
 function registerServiceWorker() {
   if (isTauri() || !('serviceWorker' in navigator)) return
-  // Обновление SW перезагружает страницу (autoUpdate): флаг переживёт перезагрузку
+  // Новая версия берёт управление сразу (autoUpdate): флаг переживёт перезагрузку
   if (navigator.serviceWorker.controller) {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       try {
@@ -49,8 +55,22 @@ function registerServiceWorker() {
       }
     })
   }
+  // Без onNeedReload плагин сам вызывает location.reload() и стирает набранный текст
+  const gate = createReloadGate({
+    isBusy: () => isUserBusy(document, useUi.getState().captureOpen),
+    isHidden: () => document.visibilityState === 'hidden',
+    reload: reloadPage,
+    onDeferred: () =>
+      toast('Доступна новая версия', {
+        id: UPDATE_TOAST_ID,
+        description: 'Применится, когда приложение будет свёрнуто',
+        duration: Number.POSITIVE_INFINITY,
+        action: { label: 'Обновить', onClick: reloadPage },
+      }),
+  })
+  document.addEventListener('visibilitychange', () => gate.retry())
   void import('virtual:pwa-register')
-    .then(({ registerSW }) => registerSW({ immediate: true }))
+    .then(({ registerSW }) => registerSW({ immediate: true, onNeedReload: () => gate.request() }))
     .catch(() => {})
 }
 

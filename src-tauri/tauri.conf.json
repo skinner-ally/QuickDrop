@@ -13,16 +13,18 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "QuickDrop",
         "width": 1200,
         "height": 780,
         "minWidth": 720,
         "minHeight": 520,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:; font-src 'self' data:"
+      "csp": "default-src 'self'; img-src 'self' data: blob: https: http:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {

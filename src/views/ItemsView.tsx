@@ -68,10 +68,14 @@ export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsV
 
       <FilterBar />
 
-      {loading ? null : hits.length === 0 ? (
-        narrowed || total > 0 ? noResults : emptyState
-      ) : (
-        <ItemList hits={hits} variant={variant} layout={layout} />
+      {loading ? null : (
+        // ItemList остаётся смонтированным и при пустой выдаче: он закрывает детали ушедшей записи.
+        <ItemList
+          hits={hits}
+          variant={variant}
+          layout={layout}
+          emptyState={hits.length === 0 ? (narrowed || total > 0 ? noResults : emptyState) : undefined}
+        />
       )}
     </section>
   )

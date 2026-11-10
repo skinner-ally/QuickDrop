@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { matchKey } from '@/lib/keys'
 import {
   Archive,
   ChevronDown,
@@ -20,6 +21,7 @@ import { CategoryDot } from '@/components/items/CategoryBadge'
 import { createCategory } from '@/db/repo'
 import { setSetting, useSettings } from '@/db/settings'
 import { computeAllTags, useAllItems, useCategories, useCounts } from '@/hooks/useItems'
+import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useUi, type View } from '@/store/ui'
 import { CATEGORY_COLORS, type Settings } from '@/types'
@@ -116,7 +118,7 @@ function ThemeToggle() {
       title={THEME_LABEL[current]}
       onClick={() => {
         setTheme(next)
-        setSetting('theme', next).catch((e: Error) => toast.error(e.message))
+        setSetting('theme', next).catch((e: unknown) => toast.error(describeError(e)))
       }}
     >
       <Icon strokeWidth={1.75} />
@@ -135,7 +137,7 @@ function NewCategory({ onDone }: { onDone: () => void }) {
       await createCategory(trimmed, CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length])
       onDone()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось создать категорию')
+      toast.error(describeError(e, 'Не удалось создать категорию'))
     }
   }
 
@@ -148,7 +150,7 @@ function NewCategory({ onDone }: { onDone: () => void }) {
         if (e.key === 'Enter') {
           e.preventDefault()
           void submit()
-        } else if (e.key === 'Escape') {
+        } else if (matchKey(e, 'Escape', 'Escape')) {
           e.preventDefault()
           e.stopPropagation()
           onDone()

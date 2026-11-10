@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from './db'
 import {
   addTags,
+  applyLinkMeta,
   createCategory,
   createItem,
   deleteCategory,
@@ -31,7 +32,8 @@ import {
   updateItem,
 } from './repo'
 import { getSettings, setSetting, setSettings } from './settings'
-import { CATEGORY_COLORS, DEFAULT_SETTINGS, type Item } from '@/types'
+import { QUOTA_MESSAGE } from '@/lib/errors'
+import { CATEGORY_COLORS, DEFAULT_SETTINGS, type Item, type LinkMeta } from '@/types'
 
 beforeEach(async () => {
   await Promise.all([db.items.clear(), db.files.clear(), db.categories.clear(), db.meta.clear()])
@@ -142,6 +144,16 @@ describe('createItem', () => {
     expect(item.fileName).toBe('file')
   })
 
+  it('HTML хранится как octet-stream: объявленный тип только в mimeType', async () => {
+    const file = new File(['<script>alert(1)</script>'], 'page.html', { type: 'text/html' })
+    const item = await createItem({ type: 'file', file })
+    expect(item.mimeType).toBe('text/html')
+    const stored = (await getFile(item.fileId!))!
+    expect(stored.mimeType).toBe('text/html')
+    expect(stored.blob.type).toBe('application/octet-stream')
+    expect(await stored.blob.text()).toBe('<script>alert(1)</script>')
+  })
+
   it('makeThumb не падает без API и для svg', async () => {
     expect(await makeThumb(new Blob(['<svg/>'], { type: 'image/svg+xml' }))).toBeUndefined()
     expect(await makeThumb(new Blob(['x'], { type: 'image/png' }))).toBeUndefined()
@@ -190,9 +202,65 @@ describe('updateItem', () => {
     expect(got.updatedAt).toBeGreaterThan(item.updatedAt)
     expect(got.createdAt).toBe(item.createdAt)
   })
+
+  it('новый адрес сбрасывает метаданные прежней страницы, тот же адрес — нет', async () => {
+    const meta: LinkMeta = { status: 'ok', title: 'Страница A', image: 'https://a.example/i.png' }
+    const item = await createItem({ type: 'link', url: 'https://a.example' })
+    await updateItem(item.id, { linkMeta: meta })
+
+    // тот же адрес после нормализации
+    await updateItem(item.id, { url: 'a.example' })
+    expect((await getItem(item.id))!.linkMeta).toEqual(meta)
+
+    await updateItem(item.id, { url: 'b.example' })
+    const got = (await getItem(item.id))!
+    expect(got.url).toBe('https://b.example')
+    expect('linkMeta' in got).toBe(false)
+
+    // явные метаданные в том же патче не теряются
+    await updateItem(item.id, { url: 'c.example', linkMeta: { status: 'ok', title: 'C' } })
+    expect((await getItem(item.id))!.linkMeta).toEqual({ status: 'ok', title: 'C' })
+  })
+
+  it('applyLinkMeta пишет, только пока у записи тот же адрес', async () => {
+    const item = await createItem({ type: 'link', url: 'https://a.example' })
+    expect(await applyLinkMeta(item.id, 'https://a.example', { status: 'ok', title: 'A' })).toBe(true)
+    expect((await getItem(item.id))!.linkMeta).toEqual({ status: 'ok', title: 'A' })
+
+    await updateItem(item.id, { url: 'https://b.example' })
+    expect(await applyLinkMeta(item.id, 'https://a.example', { status: 'ok', title: 'A2' })).toBe(false)
+    expect((await getItem(item.id))!.linkMeta).toBeUndefined()
+    expect(await applyLinkMeta('nope', 'https://a.example', { status: 'failed' })).toBe(false)
+    expect(await getItem('nope')).toBeUndefined()
+  })
+
+  it('переполнение хранилища — понятная ошибка вместо AbortError', async () => {
+    const quota = new DOMException('full', 'QuotaExceededError')
+    vi.spyOn(db.files, 'add').mockRejectedValueOnce(quota)
+    await expect(
+      createItem({ type: 'file', file: new Blob(['data']), fileName: 'big.bin' }),
+    ).rejects.toThrow(QUOTA_MESSAGE)
+    expect(await db.items.count()).toBe(0)
+
+    const item = await createItem({ type: 'text', content: 'a' })
+    vi.spyOn(db.items, 'update').mockRejectedValueOnce(quota)
+    await expect(updateItem(item.id, { content: 'b'.repeat(10) })).rejects.toThrow(QUOTA_MESSAGE)
+    vi.restoreAllMocks()
+  })
 })
 
 describe('deleteItem / restoreItem', () => {
+  it('отмена удаления не возвращает вечную «загрузку» метаданных', async () => {
+    const a = await createItem({ type: 'link', url: 'https://a.example' })
+    const b = await createItem({ type: 'link', url: 'https://b.example' })
+    await applyLinkMeta(a.id, 'https://a.example', { status: 'pending' })
+    await applyLinkMeta(b.id, 'https://b.example', { status: 'pending', title: 'B' })
+    const snaps = await deleteItems([a.id, b.id])
+    await restoreItems(snaps)
+    expect((await getItem(a.id))!.linkMeta).toEqual({ status: 'failed' })
+    expect((await getItem(b.id))!.linkMeta).toEqual({ status: 'ok', title: 'B' })
+  })
+
   it('каскадно удаляет файл и обратные связи, restore всё возвращает', async () => {
     const a = await createItem({ type: 'file', file: new Blob(['data'], { type: 'text/plain' }), fileName: 'a.txt' })
     const b = await createItem({ type: 'text', content: 'b' })

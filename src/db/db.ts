@@ -1,5 +1,28 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
+import { settleLinkMeta } from '@/lib/normalize'
 import type { Category, Item, MetaRecord, StoredFile } from '@/types'
+
+/**
+ * 'pending' осмыслен, пока жива сессия, которая ждёт ответа. Если приложение закрыли или перезагрузили
+ * во время запроса метаданных, при открытии базы превращаем его в итог: иначе «загрузка»
+ * висела бы вечно, а «Обновить данные» оставалась бы заблокированной. Работает до того, как база
+ * станет доступна остальным, — поэтому только через vip-соединение из аргумента.
+ */
+async function settleStaleLinkMeta(vip: Dexie): Promise<void> {
+  try {
+    await vip
+      .table<Item, string>('items')
+      .where('type')
+      .equals('link')
+      .filter((it) => it.linkMeta?.status === 'pending')
+      .modify((it) => {
+        if (it.linkMeta) it.linkMeta = settleLinkMeta(it.linkMeta)
+      })
+  } catch (e) {
+    // Починка необязательна: открыть базу важнее.
+    console.warn('QuickDrop: не удалось завершить прерванные загрузки ссылок', e)
+  }
+}
 
 /**
  * Схема IndexedDB. Версии только добавляются (version(2)...), существующие не правятся.
@@ -27,6 +50,7 @@ export class QuickDropDB extends Dexie {
       categories: 'id, order',
       meta: 'key',
     })
+    this.on('ready', (vip) => settleStaleLinkMeta(vip))
   }
 }
 

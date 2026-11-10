@@ -1,6 +1,18 @@
+import { toast } from 'sonner'
 import { getSettings } from '@/db/settings'
 import { isTauri } from '@/lib/platform'
 import { useUi } from '@/store/ui'
+
+/** Сочетание из настроек, которое не удалось зарегистрировать при запуске (занято другой программой). */
+let failedShortcut: string | null = null
+
+/**
+ * Глобальное сочетание из настроек не действует: при запуске его не удалось зарегистрировать.
+ * Поле в «Настройки → Горячие клавиши» может показать это значение как неприменённое.
+ */
+export function globalShortcutFailure(): string | null {
+  return failedShortcut
+}
 
 /** Показать и сфокусировать главное окно. */
 async function raiseWindow(): Promise<void> {
@@ -22,14 +34,45 @@ async function registerShortcut(shortcut: string): Promise<void> {
   })
 }
 
+/** Итог скачивания из Rust (lib.rs, событие download-finished). */
+interface DownloadFinished {
+  name: string | null
+  success: boolean
+}
+
+/**
+ * В macOS скачивание (экспорт копии, «Скачать») идёт без системного интерфейса прямо в «Загрузки»:
+ * Rust сообщает итог, а мы показываем, куда сохранён файл. В Windows WebView2 показывает свою панель
+ * загрузок, и событие не приходит.
+ */
+async function listenDownloads(): Promise<void> {
+  const { listen } = await import('@tauri-apps/api/event')
+  await listen<DownloadFinished>('download-finished', ({ payload }) => {
+    if (payload.success) {
+      toast.success(payload.name ? `Сохранено в «Загрузки»: ${payload.name}` : 'Файл сохранён в «Загрузки»')
+    } else {
+      toast.error(payload.name ? `Не удалось сохранить ${payload.name}` : 'Не удалось сохранить файл')
+    }
+  })
+}
+
 /** Инициализация desktop-оболочки: глобальное сочетание из настроек. Вне Tauri ничего не делает. */
 export async function initDesktop(): Promise<void> {
   if (!isTauri()) return
+  void listenDownloads().catch((err) => console.warn('[desktop] не удалось подписаться на скачивания', err))
+  let shortcut = ''
   try {
-    const { globalShortcut } = await getSettings()
-    if (globalShortcut) await registerShortcut(globalShortcut)
+    shortcut = (await getSettings()).globalShortcut
+    if (shortcut) await registerShortcut(shortcut)
   } catch (err) {
     console.warn('[desktop] не удалось зарегистрировать глобальное сочетание', err)
+    if (!shortcut) return
+    failedShortcut = shortcut
+    toast.error(`Сочетание ${shortcut} не назначено`, {
+      description: 'Скорее всего, его заняла другая программа. Выберите другое в настройках.',
+      duration: 10_000,
+      action: { label: 'Настройки', onClick: () => useUi.getState().setView('settings') },
+    })
   }
 }
 
@@ -40,13 +83,17 @@ export async function applyGlobalShortcut(shortcut: string): Promise<{ ok: boole
   if (!value) return { ok: false, error: 'Укажите сочетание клавиш' }
   try {
     await registerShortcut(value)
+    failedShortcut = null
     return { ok: true }
   } catch (err) {
     console.warn('[desktop] сочетание не зарегистрировано', err)
     // Не оставляем приложение без сочетания: пробуем вернуть прежнее
     try {
       const { globalShortcut } = await getSettings()
-      if (globalShortcut && globalShortcut !== value) await registerShortcut(globalShortcut)
+      if (globalShortcut && globalShortcut !== value) {
+        await registerShortcut(globalShortcut)
+        failedShortcut = null
+      }
     } catch {
       /* ignore */
     }

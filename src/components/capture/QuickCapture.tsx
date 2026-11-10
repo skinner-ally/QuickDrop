@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import { toast } from 'sonner'
 import { Loader2, Paperclip, Plus, Star, X } from 'lucide-react'
@@ -11,20 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { CategorySelect } from '@/components/items/CategorySelect'
 import { TagInput } from '@/components/items/TagInput'
-import { MAX_FILE_SIZE } from '@/db/repo'
-import { useSettings } from '@/db/settings'
+import { MAX_FILE_SIZE, listCategories } from '@/db/repo'
 import { createAndEnrich } from '@/lib/actions'
+import { pastedFiles } from '@/lib/clipboard'
 import { LANGUAGES, detectFileType, detectInput, isUrl, normalizeUrl } from '@/lib/detect'
+import { describeError } from '@/lib/errors'
 import { formatBytes, TYPE_LABEL } from '@/lib/itemTitle'
-import { fetchLinkMeta } from '@/lib/linkMeta'
-import { isMac, isTauri } from '@/lib/platform'
+import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/ui'
 import type { CaptureDraft } from '@/store/ui'
 import { ITEM_TYPES } from '@/types'
-import type { ItemSource, ItemType, LinkMeta, NewItemInput } from '@/types'
+import type { ItemSource, ItemType, NewItemInput } from '@/types'
 
 const DRAFT_KEY = 'quickdrop:capture-draft'
+/** Пауза ввода, после которой черновик пишется в sessionStorage. */
+const DRAFT_DELAY = 400
 /** Выше этого размера ввод разбирается не чаще раза в 300 мс. */
 const BIG_INPUT = 200 * 1024
 
@@ -71,7 +73,21 @@ function writeDraft(d: DraftSnapshot | null): void {
   }
 }
 
-const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Не удалось сохранить')
+const COARSE_QUERY = '(pointer: coarse)'
+
+/** Сенсорный ввод (телефон): там нет Shift+Enter, поэтому Enter в тексте — всегда перенос строки. */
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+      const mq = window.matchMedia(COARSE_QUERY)
+      mq.addEventListener('change', cb)
+      return () => mq.removeEventListener('change', cb)
+    },
+    () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(COARSE_QUERY).matches,
+    () => false,
+  )
+}
 
 function makeEntry(file: File, source: ItemSource): FileEntry {
   return { id: crypto.randomUUID(), file, source }
@@ -123,10 +139,13 @@ function FileRow({ entry, onRemove }: { entry: FileEntry; onRemove: () => void }
 /** Черновик с необязательным источником (ждёт поля source в CaptureDraft, см. store/ui.ts). */
 type DraftWithSource = CaptureDraft & { source?: ItemSource }
 
-function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | null } }) {
+/** Возвращает false, если закрывать панель сейчас нельзя или пользователь отказался. */
+type SnapshotFn = () => boolean
+
+function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | null } }) {
   const closeCapture = useUi((s) => s.closeCapture)
   const draft = useUi((s) => s.captureDraft)
-  const settings = useSettings()
+  const coarse = useCoarsePointer()
 
   // Начальное состояние берётся один раз при открытии (форма монтируется вместе с диалогом).
   const [initial] = useState(() => {
@@ -134,7 +153,9 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
     const hasDraft = !!d && (!!d.text || !!d.files?.length || !!d.type)
     const restored = hasDraft ? null : readDraft()
     const dType = d?.type && d.type !== 'file' && d.type !== 'image' ? d.type : null
-    return { d, restored, dType }
+    // Открыто с внешним содержимым (вставка, перетаскивание) поверх сохранённого черновика: его не затираем.
+    const preserved = hasDraft && readDraft() !== null
+    return { d, restored, dType, preserved }
   })
 
   const [text, setText] = useState(initial.d?.text ?? initial.restored?.text ?? '')
@@ -149,13 +170,13 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
   const [saving, setSaving] = useState(false)
   const [restored, setRestored] = useState(!!initial.restored)
   const [dragging, setDragging] = useState(false)
-  const [meta, setMeta] = useState<LinkMeta | null>(null)
-  const [metaLoading, setMetaLoading] = useState(false)
 
   const textSource = useRef<ItemSource>(initial.d?.text ? ((initial.d as DraftWithSource).source ?? 'paste') : 'manual')
   const textRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const savingRef = useRef(false)
+  /** Запись сохранена и панель закрывается: черновик уже очищен, писать его снова нельзя. */
+  const doneRef = useRef(false)
   const appliedDraft = useRef(initial.d)
   const mountedRef = useRef(true)
   useEffect(() => {
@@ -189,32 +210,34 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
 
   const fileTypes = useMemo(() => new Set(files.map((f) => detectFileType(f.file))), [files])
 
-  // Предпросмотр заголовка ссылки (только показ, в запись не попадает).
-  const fetchTitle = settings ? settings.autoFetchLinkTitle : false
-  const proxyUrl = settings?.linkProxyUrl || undefined
+  // Черновик пишется по мере ввода и при уходе со страницы, а не только при закрытии панели:
+  // перезагрузка после обновления приложения или закрытие вкладки не теряют набранное.
+  // Открыто с внешним содержимым поверх сохранённого черновика — его не трогаем (как и при закрытии).
+  const draftRef = useRef<DraftSnapshot | null>(null)
+  const persistDraft = useCallback(() => {
+    if (initial.preserved || savingRef.current || doneRef.current) return
+    writeDraft(draftRef.current)
+  }, [initial.preserved])
+
   useEffect(() => {
-    setMeta(null)
-    setMetaLoading(false)
-    // В вебе без прокси запрос почти всегда падает по CORS: ждём createAndEnrich после сохранения.
-    if (!linkUrl || !fetchTitle || (!isTauri() && !proxyUrl)) return
-    const ac = new AbortController()
-    setMetaLoading(true)
-    const t = setTimeout(() => {
-      fetchLinkMeta(linkUrl, { proxyUrl, signal: ac.signal })
-        .then((m) => {
-          if (ac.signal.aborted) return
-          setMeta(m)
-          setMetaLoading(false)
-        })
-        .catch(() => {
-          if (!ac.signal.aborted) setMetaLoading(false)
-        })
-    }, 500)
-    return () => {
-      clearTimeout(t)
-      ac.abort()
+    draftRef.current = text.trim() ? { text, title, tags, categoryId, manualType } : null
+    const t = window.setTimeout(persistDraft, DRAFT_DELAY)
+    return () => window.clearTimeout(t)
+  }, [text, title, tags, categoryId, manualType, persistDraft])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') persistDraft()
     }
-  }, [linkUrl, fetchTitle, proxyUrl])
+    window.addEventListener('pagehide', persistDraft)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', persistDraft)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [persistDraft])
+
+  // Заголовок ссылки подтягивает createAndEnrich после сохранения: до сохранения сетевых запросов нет.
 
   // Повторное openCapture(draft) при уже открытой панели — дополняем содержимое.
   useEffect(() => {
@@ -232,7 +255,12 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
   // Закрытие панели (Esc, клик вне) сохраняет черновик — родитель вызывает это перед closeCapture.
   useEffect(() => {
     snapshotRef.current = () => {
-      writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
+      // Пока идёт сохранение, закрытие дало бы дубль при следующем открытии.
+      if (savingRef.current) return false
+      // Файлы в черновик (sessionStorage) не попадают: не теряем их молча.
+      if (hasFiles && !window.confirm('Прикреплённые файлы не сохранятся. Закрыть?')) return false
+      if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
+      return true
     }
     return () => {
       snapshotRef.current = null
@@ -297,6 +325,11 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
     }
     const createdIds: string[] = []
     try {
+      // Категорию могли удалить, пока форма была закрыта или открыта в другой вкладке.
+      if (categoryId && !(await listCategories()).some((c) => c.id === categoryId)) {
+        base.categoryId = null
+        if (mountedRef.current) setCategoryId(null)
+      }
       if (hasFiles) {
         const done = new Set<string>()
         try {
@@ -322,7 +355,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
         createdIds.push(item.id)
       }
     } catch (e) {
-      toast.error(errText(e))
+      toast.error(describeError(e, 'Не удалось сохранить'))
       if (createdIds.length) notifySaved(createdIds, toLibrary)
       savingRef.current = false
       setSaving(false)
@@ -330,9 +363,10 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
     }
 
     notifySaved(createdIds, toLibrary)
+    // Черновик очищаем до проверки монтирования: панель могли закрыть во время сохранения.
+    if (!initial.preserved) writeDraft(null)
     // Панель могли закрыть (и открыть заново), пока шло сохранение: новую форму не трогаем.
     if (!mountedRef.current) return
-    writeDraft(null)
     savingRef.current = false
     setSaving(false)
     if (keepOpen) {
@@ -346,16 +380,17 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
       textSource.current = 'manual'
       textRef.current?.focus()
     } else {
+      doneRef.current = true
       closeCapture()
     }
   }
 
   function cancel() {
-    snapshotRef.current?.()
+    if (snapshotRef.current?.() === false) return
     closeCapture()
   }
 
-  const plainEnterSaves = !isCode && !text.includes('\n')
+  const plainEnterSaves = !coarse && !isCode && !text.includes('\n')
 
   function onTextKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
@@ -379,7 +414,8 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
   }
 
   function onPaste(e: ClipboardEvent<HTMLDivElement>) {
-    const pasted = Array.from(e.clipboardData?.files ?? [])
+    // Текст + растровая копия из офисной программы — текст: такую вставку отдаём полю как есть.
+    const pasted = e.clipboardData ? pastedFiles(e.clipboardData) : []
     if (pasted.length) {
       e.preventDefault()
       e.stopPropagation()
@@ -420,7 +456,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
   }
 
   const mod = isMac() ? '⌘' : 'Ctrl'
-  const saveHint = plainEnterSaves && !hasFiles ? '↵' : `${mod}↵`
+  const saveHint = coarse ? null : plainEnterSaves && !hasFiles ? '↵' : `${mod}↵`
   return (
     <div
       className="relative flex flex-col gap-2.5"
@@ -445,6 +481,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
         placeholder="Вставьте ссылку, текст, код или идею…"
         aria-label="Содержимое записи"
         spellCheck={!isCode}
+        enterKeyHint={coarse ? 'enter' : undefined}
         className={cn(
           'max-h-[34dvh] min-h-24 resize-none overflow-y-auto sm:max-h-[45dvh]',
           isCode && 'font-mono text-[13px]',
@@ -455,10 +492,6 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
           <TypeIcon type="link" className="size-3.5" />
           <span className="truncate font-mono">{linkUrl}</span>
-          {metaLoading && <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-label="Загрузка заголовка" />}
-          {meta?.status === 'ok' && meta.title && (
-            <span className="min-w-0 truncate text-foreground">· {meta.title}</span>
-          )}
         </div>
       )}
 
@@ -608,7 +641,9 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
           >
             {saving && <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden />}
             Сохранить
-            <kbd className="ml-1 rounded bg-brand-foreground/15 px-1 font-sans text-[11px] leading-4">{saveHint}</kbd>
+            {saveHint && (
+              <kbd className="ml-1 rounded bg-brand-foreground/15 px-1 font-sans text-[11px] leading-4">{saveHint}</kbd>
+            )}
           </Button>
         </div>
       </div>
@@ -632,14 +667,14 @@ function notifySaved(ids: string[], toLibrary: boolean) {
 export function QuickCapture() {
   const open = useUi((s) => s.captureOpen)
   const closeCapture = useUi((s) => s.closeCapture)
-  const snapshotRef = useRef<(() => void) | null>(null)
+  const snapshotRef = useRef<SnapshotFn | null>(null)
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         if (next) return
-        snapshotRef.current?.()
+        if (snapshotRef.current?.() === false) return
         closeCapture()
       }}
     >

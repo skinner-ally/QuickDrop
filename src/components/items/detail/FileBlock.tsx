@@ -2,14 +2,14 @@ import { useState } from 'react'
 import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { useFileUrl } from '@/hooks/useItems'
 import { actDownload } from '@/lib/actions'
 import { formatBytes } from '@/lib/itemTitle'
 import type { Item } from '@/types'
 import { FilePreview } from '../FilePreview'
+import { useImageUrl } from '../safeFileUrl'
 
 function Lightbox({ item, open, onOpenChange }: { item: Item; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const url = useFileUrl(open ? item.fileId : undefined, 'full')
+  const url = useImageUrl(open ? item.fileId : undefined, 'full')
   const name = item.fileName || item.title || 'Изображение'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -20,6 +20,7 @@ function Lightbox({ item, open, onOpenChange }: { item: Item; open: boolean; onO
           <img
             src={url}
             alt={name}
+            draggable={false}
             onClick={() => onOpenChange(false)}
             className="max-h-full max-w-full cursor-zoom-out object-contain"
           />

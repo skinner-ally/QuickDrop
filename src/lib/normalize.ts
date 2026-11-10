@@ -3,6 +3,8 @@
  * Модуль ни от чего не зависит, поэтому его можно импортировать откуда угодно без циклов.
  */
 
+import type { LinkMeta } from '@/types'
+
 /** Сворачивает строку для сравнения «как человек»: NFKC, нижний регистр, ё = е. Идемпотентна. */
 export function foldText(s: string): string {
   return s.normalize('NFKC').toLowerCase().replace(/ё/g, 'е')
@@ -77,4 +79,50 @@ export function hasForeignScheme(raw: string): boolean {
 /** Адрес картинки/иконки, которую можно загрузить в <img>: только http/https. */
 export function safeImageUrl(raw: unknown): string | undefined {
   return withProtocol(raw, IMAGE_PROTOCOLS)
+}
+
+// ───────────────────────── файлы ─────────────────────────
+
+const OCTET_STREAM = 'application/octet-stream'
+const INERT_MEDIA = /^(?:image|audio|video)\/[a-z0-9][a-z0-9.+-]*$/
+const THUMB_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+
+function baseMime(raw: unknown): string {
+  return typeof raw === 'string' ? raw.split(';')[0].trim().toLowerCase() : ''
+}
+
+/**
+ * Тип, с которым Blob хранится в базе. Blob, открытый по blob:-адресу, исполнился бы в origin
+ * приложения (text/html, XML и т.п.), поэтому всё, кроме картинок, аудио, видео, PDF и простого
+ * текста, хранится как application/octet-stream; объявленный тип остаётся в поле mimeType.
+ * SVG сохраняет свой тип: UI показывает его только растеризованным (components/items/safeFileUrl.ts),
+ * а с octet-stream картинка не отрисовалась бы совсем.
+ */
+export function safeBlobType(raw: unknown): string {
+  const t = baseMime(raw)
+  if (INERT_MEDIA.test(t) || t === 'application/pdf' || t === 'text/plain') return t
+  return OCTET_STREAM
+}
+
+/** Тип превью: только растры, которые строит репозиторий (png/jpeg/webp); иное → undefined. */
+export function safeThumbType(raw: unknown): string | undefined {
+  const t = baseMime(raw)
+  return THUMB_TYPES.has(t) ? t : undefined
+}
+
+// ───────────────────────── метаданные ссылки ─────────────────────────
+
+/** Есть ли в метаданных что показать: заголовок, описание, сайт, картинка или иконка. */
+export function hasLinkContent(meta: LinkMeta | undefined): boolean {
+  return !!meta && !!(meta.title || meta.description || meta.siteName || meta.image || meta.favicon)
+}
+
+/**
+ * 'pending' осмыслен только в сессии, которая ждёт ответа. Сохранённый в копии, переживший
+ * перезапуск или вернувшийся отменой удаления, он означал бы вечную «загрузку» —
+ * превращаем его в итог по тем данным, что уже есть.
+ */
+export function settleLinkMeta(meta: LinkMeta): LinkMeta {
+  if (meta.status !== 'pending') return meta
+  return { ...meta, status: hasLinkContent(meta) ? 'ok' : 'failed' }
 }

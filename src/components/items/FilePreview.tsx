@@ -14,11 +14,11 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getFile } from '@/db/repo'
-import { useFileUrl } from '@/hooks/useItems'
 import { actDownload } from '@/lib/actions'
 import { formatBytes } from '@/lib/itemTitle'
 import { cn } from '@/lib/utils'
 import type { Item } from '@/types'
+import { useImageUrl, usePdfUrl } from './safeFileUrl'
 
 const TEXT_EXT = new Set(['txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'yaml', 'yml', 'xml', 'ini', 'toml'])
 const MAX_TEXT_BYTES = 200 * 1024
@@ -51,7 +51,7 @@ function isTextual(item: Item, ext: string): boolean {
 }
 
 function ImagePreview({ item, variant }: { item: Item; variant: 'thumb' | 'full' }) {
-  const url = useFileUrl(item.fileId, variant === 'thumb' ? 'thumb' : 'full')
+  const url = useImageUrl(item.fileId, variant === 'thumb' ? 'thumb' : 'full')
   const [loaded, setLoaded] = useState(false)
   useEffect(() => setLoaded(false), [url])
   const thumb = variant === 'thumb'
@@ -110,7 +110,8 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
   const mime = item.mimeType ?? ''
   const Icon = iconFor(ext, mime)
   const isPdf = mime === 'application/pdf' || ext === 'pdf'
-  const pdfUrl = useFileUrl(variant === 'full' && isPdf ? item.fileId : undefined, 'full')
+  // «Открыть» — только если сам Blob является PDF: тип в записи и расширение имени могут быть подделаны.
+  const pdfUrl = usePdfUrl(variant === 'full' && isPdf ? item.fileId : undefined)
 
   if (variant === 'thumb') {
     return (

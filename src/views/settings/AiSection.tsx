@@ -4,7 +4,8 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { setSetting } from '@/db/settings'
-import { suggestForItem } from '@/lib/ai'
+import { aiBaseUrlError, suggestForItem } from '@/lib/ai'
+import { describeError } from '@/lib/errors'
 import type { Item, Settings } from '@/types'
 import { CommitInput, Field, Row, Section } from './Section'
 
@@ -32,7 +33,6 @@ function stubItem(): Item {
 }
 
 const required = (v: string) => (v ? null : 'Поле не может быть пустым')
-const urlCheck = (v: string) => (/^https?:\/\//.test(v) ? null : 'Адрес должен начинаться с http:// или https://')
 
 export function AiSection({ settings }: { settings: Settings }) {
   const [showKey, setShowKey] = useState(false)
@@ -44,7 +44,7 @@ export function AiSection({ settings }: { settings: Settings }) {
       await setSetting('aiBaseUrl', p.baseUrl)
       await setSetting('aiModel', p.model)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(describeError(e))
     }
   }
 
@@ -60,7 +60,7 @@ export function AiSection({ settings }: { settings: Settings }) {
           : 'Подключение работает',
       })
     } catch (e) {
-      setResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+      setResult({ ok: false, text: describeError(e, 'Не удалось подключиться') })
     } finally {
       setTesting(false)
     }
@@ -79,7 +79,7 @@ export function AiSection({ settings }: { settings: Settings }) {
         <Switch
           id="ai-enabled"
           checked={settings.aiEnabled}
-          onCheckedChange={(v) => void setSetting('aiEnabled', v).catch((e: Error) => toast.error(e.message))}
+          onCheckedChange={(v) => void setSetting('aiEnabled', v).catch((e: unknown) => toast.error(describeError(e)))}
         />
       </Row>
 
@@ -96,7 +96,7 @@ export function AiSection({ settings }: { settings: Settings }) {
         <CommitInput
           id="ai-base"
           value={settings.aiBaseUrl}
-          validate={urlCheck}
+          validate={aiBaseUrlError}
           onCommit={(v) => setSetting('aiBaseUrl', v)}
         />
       </Field>

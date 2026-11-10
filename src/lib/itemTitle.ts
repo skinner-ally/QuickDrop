@@ -45,6 +45,17 @@ export function displayTitle(item: TitleSource): string {
   return 'Без названия'
 }
 
+/** Заглушка для даты, которую нельзя показать. */
+export const NO_DATE = '—'
+
+/**
+ * Отметка, которую понимает Date. Intl.DateTimeFormat.format бросает RangeError на
+ * |ts| > 8.64e15 и NaN: одна такая запись (из старой копии) роняла бы весь список.
+ */
+function isValidTs(ts: number): boolean {
+  return typeof ts === 'number' && !Number.isNaN(new Date(ts).getTime())
+}
+
 function dayStart(ts: number): number {
   const d = new Date(ts)
   d.setHours(0, 0, 0, 0)
@@ -53,6 +64,7 @@ function dayStart(ts: number): number {
 
 /** Короткая дата: «12 мар» (год добавляется для другого года). */
 function formatShortDate(ts: number, now: number): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
   const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear()
   const fmt = new Intl.DateTimeFormat('ru', {
     day: 'numeric',
@@ -64,6 +76,7 @@ function formatShortDate(ts: number, now: number): string {
 }
 
 export function formatRelative(ts: number, now: number = Date.now()): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
   const diff = now - ts
   const min = Math.floor(diff / 60_000)
   if (min < 1) return 'только что'
@@ -77,6 +90,7 @@ export function formatRelative(ts: number, now: number = Date.now()): string {
 }
 
 export function formatDateTime(ts: number): string {
+  if (!isValidTs(ts)) return NO_DATE
   return new Intl.DateTimeFormat('ru', {
     day: 'numeric',
     month: 'long',
