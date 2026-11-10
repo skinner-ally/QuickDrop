@@ -195,3 +195,54 @@ useFileUrl(fileId: string | undefined, kind?: 'thumb' | 'full'): string | undefi
 - Никаких сетевых запросов, кроме извлечения метаданных ссылки и явно включённого AI.
 - Комментарии — по-русски и только там, где неочевидно «почему».
 - Перед сдачей работы: `npm run typecheck` и `npm test` должны проходить.
+
+## Дизайн
+
+Минимализм, тёплая «бумажная» нейтраль, один акцент — `brand` (терракота). Токены — в `src/index.css`.
+- `bg-background` — основной фон, `bg-surface`/`bg-sidebar` — боковая панель и вторичные плоскости, `bg-card` — карточки.
+- `brand` (`bg-brand text-brand-foreground`, `bg-brand-soft`, `text-brand`) — ТОЛЬКО главное действие («Добавить»),
+  счётчик входящих, активный фокус, подсветка поиска (`<mark>`). Не раскрашивать всё подряд.
+- Категории: CSS-переменные `--cat-<color>` и `--cat-<color>-soft` (`style={{ background: 'var(--cat-blue-soft)', color: 'var(--cat-blue)' }}`).
+- Шрифт Geist Variable (кириллица есть), моноширинный — `font-mono`. Базовый размер текста интерфейса 13–14px, плотная вёрстка.
+- Без градиентов, свечений, эмодзи в интерфейсе, без КАПСА с разрядкой. Иконки — lucide, 16px, `strokeWidth` 1.75.
+- Тёмная тема обязательна (класс `.dark`, next-themes). Анимации короткие (120–180 мс), уважать `prefers-reduced-motion`.
+- Мобильная версия (< 768px): боковая панель → выезжающее меню, детали записи → полноэкранный лист,
+  кнопка «Добавить» — плавающая; учитывать `env(safe-area-inset-*)`.
+
+## Уточнения по ядру (после этапа 1)
+
+- Общие чистые функции: `src/lib/normalize.ts` (`normalizeTag(s)`, `safeLinkUrl`, `safeImageUrl`, `foldText`) и
+  `src/lib/filter.ts` (`matchesFilter`). repo и search их реэкспортируют.
+- Ссылки в UI открывать и картинки по URL показывать только через `safeLinkUrl` / `safeImageUrl`.
+- `createItem`/`updateItem` бросают `Error` с русским текстом: url не http/https/ftp, файл > 100 МБ (`MAX_FILE_SIZE`).
+  `updateCategory` бросает на имя-дубль. UI обязан ловить и показывать `toast.error(e.message)`.
+- Доп. API repo: `deleteItems`, `restoreItems`, `setFavorite(ids, bool)`.
+- `fetchLinkMeta` никогда не бросает; `exportBackup` бросает, если копия > 480 МБ.
+
+## Контракты UI (этап 2)
+
+Именованные экспорты, пути фиксированы:
+
+```
+src/lib/actions.ts                     действия с toast и «Отменить» (единственное место вызова repo из UI для типовых действий)
+  createAndEnrich(input: NewItemInput): Promise<Item>   // createItem + фоновая подгрузка linkMeta по настройкам
+  refreshLinkMeta(item: Item): Promise<void>
+  actToLibrary(ids) / actToInbox(ids) / actArchive(ids) / actUnarchive(ids)   // toast + отмена
+  actDelete(ids)                        // toast «Удалено» + «Отменить» (restoreItems)
+  actToggleFavorite(item) / actCopy(item) / actOpen(item) / actDownload(item)
+src/components/items/TypeIcon.tsx      TypeIcon({ type, className? })
+src/components/items/CategoryBadge.tsx CategoryBadge({ categoryId, size? }) ; CategoryDot({ color })
+src/components/items/TagChip.tsx       TagChip({ tag, onRemove?, onClick?, active? })
+src/components/items/TagInput.tsx      TagInput({ value, onChange, placeholder?, autoFocus? })  // автодополнение из useAllTags, Enter/запятая/пробел добавляют
+src/components/items/CategorySelect.tsx CategorySelect({ value, onChange, allowCreate? })       // value: string | null
+src/components/items/CodeView.tsx      CodeView({ code, language?, maxLines? })
+src/components/items/FilePreview.tsx   FilePreview({ item, variant: 'thumb' | 'full' })
+src/components/items/Highlighted.tsx   Highlighted({ text, terms })   // <mark> через search.highlight
+src/components/items/ItemList.tsx      ItemList({ hits, variant, layout?, emptyState? })  // variant: 'inbox' | 'library' | 'favorites' | 'archive'
+src/components/items/ItemDetail.tsx    ItemDetail({ id, onClose })
+src/components/capture/QuickCapture.tsx QuickCapture()            // управляется useUi.captureOpen / captureDraft
+src/components/palette/CommandPalette.tsx CommandPalette()        // управляется useUi.paletteOpen
+src/components/layout/AppShell.tsx     AppShell()  (+ Sidebar, TopBar, MobileNav, ThemeProvider рядом)
+src/views/InboxView.tsx | LibraryView.tsx | FavoritesView.tsx | ArchiveView.tsx | SettingsView.tsx   — без пропсов
+src/hooks/useHotkeys.ts                глобальные клавиши, вставка из буфера, drag&drop файлов
+```
