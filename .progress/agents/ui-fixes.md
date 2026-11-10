@@ -1,0 +1,5 @@
+# ui-fixes
+Статус: готово (кроме ручной проверки в браузере)
+Результат: 1) preventDefault для одиночных клавиш уже стоял в useHotkeys; оверлей-селектор исключает закрывающиеся слои (data-ending-style). 2) ItemList: курсор из store/selection — единственный источник; Enter/O открывают курсор; фокус строки и клик ставят курсор; первое J/K — на открытую запись или первую строку; курсор виден всегда (левая полоса brand + bg-accent). 3) displayTitle -> titleFromUrl; LinkCard: веб-текст про заголовок. 4) собственный ThemeProvider/useTheme, next-themes удалён. 5) QuickCapture: без превью-запроса в вебе без прокси. 6) openLink в actions.ts + AutoLinkText. 7) lazy: SettingsView, CommandPalette, TriageMode, ItemDetail; основной чанк 482 КБ.
+Файлы: useHotkeys.ts, ItemList.tsx, ItemCard.tsx, itemTitle.ts(+test), ThemeProvider.tsx, sonner.tsx, Sidebar.tsx, actions.ts, AutoLinkText.tsx, LinkCard.tsx, QuickCapture.tsx, AppShell.tsx, InboxView.tsx, package.json(-next-themes).
+Проверено: tsc (только ожидаемая ошибка про отсутствующий desktop.ts), npm test 432 зелёных, vite build со временной заглушкой desktop.ts (удалена).

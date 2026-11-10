@@ -1,3 +1,4 @@
+import { titleFromUrl } from '@/lib/linkMeta'
 import type { Item, ItemType } from '@/types'
 
 export const TYPE_LABEL: Record<ItemType, string> = {
@@ -27,7 +28,7 @@ function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s
 }
 
-/** Заголовок для показа: явный → из страницы → имя файла → первая строка текста → url. */
+/** Заголовок для показа: явный → из страницы → имя файла → первая строка текста → читаемый вид url. */
 export function displayTitle(item: TitleSource): string {
   const own = item.title?.trim()
   if (own) return own
@@ -40,7 +41,7 @@ export function displayTitle(item: TitleSource): string {
     .map((l) => l.trim())
     .find((l) => l.length > 0)
   if (line) return clip(line, MAX_TITLE)
-  if (item.url?.trim()) return item.url.trim()
+  if (item.url?.trim()) return titleFromUrl(item.url) || item.url.trim()
   return 'Без названия'
 }
 

@@ -17,7 +17,7 @@ import { createAndEnrich } from '@/lib/actions'
 import { LANGUAGES, detectFileType, detectInput, isUrl, normalizeUrl } from '@/lib/detect'
 import { formatBytes, TYPE_LABEL } from '@/lib/itemTitle'
 import { fetchLinkMeta } from '@/lib/linkMeta'
-import { isMac } from '@/lib/platform'
+import { isMac, isTauri } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/ui'
 import type { CaptureDraft } from '@/store/ui'
@@ -195,7 +195,8 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: (() => void) | n
   useEffect(() => {
     setMeta(null)
     setMetaLoading(false)
-    if (!linkUrl || !fetchTitle) return
+    // В вебе без прокси запрос почти всегда падает по CORS: ждём createAndEnrich после сохранения.
+    if (!linkUrl || !fetchTitle || (!isTauri() && !proxyUrl)) return
     const ac = new AbortController()
     setMetaLoading(true)
     const t = setTimeout(() => {

@@ -1,4 +1,6 @@
 import { Fragment } from 'react'
+import { openLink } from '@/lib/actions'
+import { isTauri } from '@/lib/platform'
 import { safeLinkUrl } from '@/lib/normalize'
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"]+/gi
@@ -21,7 +23,13 @@ export function AutoLinkText({ text }: { text: string }) {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (isTauri()) {
+            e.preventDefault()
+            void openLink(href)
+          }
+        }}
         className="text-foreground underline underline-offset-2 hover:opacity-80 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
       >
         {raw}

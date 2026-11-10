@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -20,7 +20,7 @@ const PAGE = 60
 
 // Открытые окна/меню/выпадающие списки: клавиши списка в это время не работают.
 const OPEN_OVERLAY =
-  '[role="dialog"][data-open], [role="alertdialog"][data-open], [role="menu"][data-open], [role="listbox"][data-open], [data-slot="popover-content"][data-open]'
+  '[role="dialog"][data-open]:not([data-ending-style]), [role="alertdialog"][data-open]:not([data-ending-style]), [role="menu"][data-open]:not([data-ending-style]), [role="listbox"][data-open]:not([data-ending-style]), [data-slot="popover-content"][data-open]:not([data-ending-style])'
 
 function isTyping(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
@@ -177,9 +177,15 @@ export function ItemList({
     function move(delta: number) {
       const { ids: list } = latest.current
       if (list.length === 0) return
-      const cur = activeId()
+      // Курсора ещё нет: первое нажатие ставит его на открытую запись или на первую строку.
+      const cur = useSelection.getState().cursorId
       const from = cur ? list.indexOf(cur) : -1
-      const to = from < 0 ? 0 : Math.min(list.length - 1, Math.max(0, from + delta))
+      let to: number
+      if (from < 0) {
+        const open = useUi.getState().selectedId
+        const openIdx = open ? list.indexOf(open) : -1
+        to = openIdx >= 0 ? openIdx : 0
+      } else to = Math.min(list.length - 1, Math.max(0, from + delta))
       const id = list[to]
       useSelection.getState().setCursor(id)
       // Если панель деталей уже открыта, она следует за курсором — так удобно разбирать поток.
@@ -228,12 +234,11 @@ export function ItemList({
           // На кнопке Enter — это её нажатие, а не «открыть».
           if (e.code !== 'KeyO' && e.target instanceof HTMLElement && e.target.closest('button, a, [role="menuitem"], [role="checkbox"]'))
             return
-          // Сфокусированная Tab-ом строка открывается даже без курсора.
-          const focusedRow =
-            e.target instanceof HTMLElement ? e.target.closest<HTMLElement>('[data-item-id]')?.dataset.itemId : undefined
-          const id = focusedRow && list.includes(focusedRow) ? focusedRow : activeId()
+          // Единый источник истины — курсор из store (фокус строки его синхронизирует).
+          const id = activeId()
           if (!id) return
           handled()
+          useSelection.getState().setCursor(id)
           useUi.getState().select(id)
           break
         }
@@ -331,6 +336,14 @@ export function ItemList({
     useUi.getState().select(id)
   }, [])
 
+  // Фокус на строке (Tab, клик, возврат из панели деталей) переносит на неё курсор.
+  const onRowFocus = useCallback((e: FocusEvent<HTMLDivElement>) => {
+    const t = e.target
+    if (!(t instanceof HTMLElement) || !t.hasAttribute('data-item-id')) return
+    const id = t.dataset.itemId
+    if (id && useSelection.getState().cursorId !== id) useSelection.setState({ cursorId: id })
+  }, [])
+
   const onToggle = useCallback((id: string, e: MouseEvent) => {
     const sel = useSelection.getState()
     if (e.shiftKey) {
@@ -368,7 +381,7 @@ export function ItemList({
   return (
     <TooltipProvider delay={400}>
      <CategoriesContext.Provider value={categories}>
-      <div ref={rootRef} onPointerDown={() => setKbd(false)}>
+      <div ref={rootRef} onPointerDown={() => setKbd(false)} onFocus={onRowFocus}>
         <div
           role="list"
           aria-label="Записи"
@@ -394,7 +407,7 @@ export function ItemList({
                   variant={variant}
                   open={selectedId === en.hit.item.id}
                   checked={checkedIds.has(en.hit.item.id)}
-                  cursor={kbd && cursorId === en.hit.item.id}
+                  cursor={cursorId === en.hit.item.id}
                   selecting={selecting}
                   tabbable={tabbableId === en.hit.item.id}
                   onActivate={onActivate}

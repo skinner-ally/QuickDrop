@@ -27,7 +27,7 @@ export interface ItemEntryProps {
   open: boolean
   /** Отмечена чекбоксом. */
   checked: boolean
-  /** На ней клавиатурный курсор (показывается только при навигации с клавиатуры). */
+  /** На ней курсор из store/selection (единый источник для клавиатуры, фокуса и клика). */
   cursor: boolean
   /** Хоть что-то выбрано: чекбоксы видны у всех строк. */
   selecting: boolean
@@ -313,6 +313,7 @@ export const ItemRow = memo(function ItemRow({
     <div
       role="listitem"
       aria-current={open ? 'true' : undefined}
+      data-cursor={cursor ? 'true' : undefined}
       data-item-id={item.id}
       tabIndex={tabbable ? 0 : -1}
       onClick={(e) => onActivate(item.id, e)}
@@ -321,7 +322,7 @@ export const ItemRow = memo(function ItemRow({
         'flex items-start gap-3 rounded-lg px-3 py-2 hover:bg-muted/60',
         open && 'bg-muted',
         checked && 'bg-brand-soft/60 hover:bg-brand-soft/70',
-        cursor && 'ring-2 ring-brand/60 ring-inset',
+        cursor && 'bg-accent before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand',
       )}
     >
       <LeadCell item={item} checked={checked} selecting={selecting} onToggle={onToggle} className="mt-0.5" />
@@ -455,6 +456,7 @@ export const ItemCard = memo(function ItemCard({
     <div
       role="listitem"
       aria-current={open ? 'true' : undefined}
+      data-cursor={cursor ? 'true' : undefined}
       data-item-id={item.id}
       tabIndex={tabbable ? 0 : -1}
       onClick={(e) => onActivate(item.id, e)}
@@ -463,7 +465,7 @@ export const ItemCard = memo(function ItemCard({
         'flex flex-col overflow-hidden rounded-lg border border-border bg-card hover:border-foreground/20',
         open && 'border-foreground/30 bg-muted/60',
         checked && 'border-brand/50 bg-brand-soft/40',
-        cursor && 'ring-2 ring-brand/60',
+        cursor && 'border-brand bg-accent ring-1 ring-brand',
       )}
     >
       <CardPreview item={item} terms={terms} />

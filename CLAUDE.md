@@ -246,3 +246,9 @@ src/components/layout/AppShell.tsx     AppShell()  (+ Sidebar, TopBar, MobileNav
 src/views/InboxView.tsx | LibraryView.tsx | FavoritesView.tsx | ArchiveView.tsx | SettingsView.tsx   — без пропсов
 src/hooks/useHotkeys.ts                глобальные клавиши, вставка из буфера, drag&drop файлов
 ```
+
+## Платформы → PWA
+- Веб-клиент — устанавливаемый PWA: `vite-plugin-pwa` (registerType `autoUpdate`, precache всего бандла, `navigateFallback`), настройки в секции `plugins` файла `vite.config.ts`; регистрация и разбор параметров запуска — `src/pwa.ts`.
+- Манифест: shortcut «Быстрая запись» (`/?capture=1`) и `share_target` (GET, `title/text/url`) обрабатываются в `src/pwa.ts` (открывают QuickCapture, адрес очищается). share_target работает на Android; на iOS не поддерживается.
+- В Tauri-сборке (`TAURI_ENV_PLATFORM` задан) плагин отключён (`disable`), `sw.js` не создаётся; `src/pwa.ts` не регистрирует SW и внутри Tauri.
+- Иконки: `public/icon.svg` → `npm run icons` (`scripts/gen-icons.mjs`, sharp) генерирует `pwa-192/512`, `pwa-maskable-512`, `apple-touch-icon` PNG.

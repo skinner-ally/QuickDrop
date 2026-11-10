@@ -3,6 +3,7 @@ import { Copy, ExternalLink, Globe, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { actOpen, copyText, refreshLinkMeta } from '@/lib/actions'
+import { isTauri } from '@/lib/platform'
 import { safeImageUrl, safeLinkUrl } from '@/lib/normalize'
 import type { Item } from '@/types'
 import { useAutosave } from './autosave'
@@ -96,7 +97,11 @@ export function LinkCard({ item }: { item: Item }) {
               {meta?.description && (
                 <div className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">{meta.description}</div>
               )}
-              {failed && <div className="text-xs text-muted-foreground">Не удалось получить заголовок</div>}
+              {failed && (
+                <div className="text-xs text-muted-foreground">
+                  {isTauri() ? 'Не удалось получить заголовок' : 'Заголовок страницы недоступен в веб-версии — задайте его вручную'}
+                </div>
+              )}
             </div>
           </>
         )}

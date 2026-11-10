@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { titleFromUrl } from './linkMeta'
 import { displayTitle, formatBytes, formatDateTime, formatRelative, TYPE_LABEL } from './itemTitle'
 
 const base = { title: '', content: '' }
@@ -16,7 +17,8 @@ describe('displayTitle', () => {
     expect(r.endsWith('…')).toBe(true)
   })
   it('url и запасной вариант', () => {
-    expect(displayTitle({ ...base, url: 'https://a.io' })).toBe('https://a.io')
+    expect(displayTitle({ ...base, url: 'https://a.io' })).toBe(titleFromUrl('https://a.io'))
+    expect(displayTitle({ ...base, url: 'https://dexie.org/docs/Tutorial/React' })).not.toMatch(/^https?:/)
     expect(displayTitle(base)).toBe('Без названия')
   })
 })

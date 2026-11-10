@@ -12,7 +12,7 @@ import {
   Star,
   Sun,
 } from 'lucide-react'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@/components/layout/ThemeProvider'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'

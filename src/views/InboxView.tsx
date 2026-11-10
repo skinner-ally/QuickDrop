@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { InboxIcon, Paperclip, SearchX, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -6,12 +6,14 @@ import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
 import { ItemList } from '@/components/items/ItemList'
-import { TriageMode } from '@/components/items/TriageMode'
 import { useCounts, useVisibleItems } from '@/hooks/useItems'
 import { createAndEnrich } from '@/lib/actions'
 import { detectInput } from '@/lib/detect'
 import { useUi } from '@/store/ui'
 import type { NewItemInput } from '@/types'
+
+const loadTriage = () => import('@/components/items/TriageMode')
+const TriageMode = lazy(() => loadTriage().then((m) => ({ default: m.TriageMode })))
 
 function waitingText(n: number): string {
   if (n === 0) return 'Всё разобрано'
@@ -110,6 +112,15 @@ export function InboxView() {
   const filter = useUi((s) => s.filter)
   const resetFilter = useUi((s) => s.resetFilter)
   const [triage, setTriage] = useState(false)
+  // После первого открытия остаётся смонтированным — чтобы работала анимация закрытия.
+  const [triageUsed, setTriageUsed] = useState(false)
+  if (triage && !triageUsed) setTriageUsed(true)
+
+  // Подгружаем чанк разбора в простое — первое открытие не ждёт сети.
+  useEffect(() => {
+    const h = window.setTimeout(() => void loadTriage(), 1500)
+    return () => window.clearTimeout(h)
+  }, [])
 
   const narrowed = query.trim() !== '' || Object.values(filter).some((v) => v !== undefined)
 
@@ -189,7 +200,11 @@ export function InboxView() {
         <ItemList hits={hits} variant="inbox" emptyState={noResults} />
       )}
 
-      <TriageMode open={triage} onClose={() => setTriage(false)} />
+      {triageUsed && (
+        <Suspense fallback={null}>
+          <TriageMode open={triage} onClose={() => setTriage(false)} />
+        </Suspense>
+      )}
     </section>
   )
 }

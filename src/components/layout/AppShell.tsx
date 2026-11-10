@@ -1,8 +1,6 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
+import { lazy, Suspense, useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { Upload } from 'lucide-react'
-import { CommandPalette } from '@/components/palette/CommandPalette'
 import { QuickCapture } from '@/components/capture/QuickCapture'
-import { ItemDetail } from '@/components/items/ItemDetail'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { useIsDesktop, useMediaQuery } from '@/hooks/useMediaQuery'
 import { useUi, type View } from '@/store/ui'
@@ -10,10 +8,18 @@ import { ArchiveView } from '@/views/ArchiveView'
 import { FavoritesView } from '@/views/FavoritesView'
 import { InboxView } from '@/views/InboxView'
 import { LibraryView } from '@/views/LibraryView'
-import { SettingsView } from '@/views/SettingsView'
 import { MobileNav } from './MobileNav'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
+
+// Редко нужные части грузятся отдельными чанками, чтобы основной оставался лёгким.
+const SettingsView = lazy(() => import('@/views/SettingsView').then((m) => ({ default: m.SettingsView })))
+const CommandPalette = lazy(() => import('@/components/palette/CommandPalette').then((m) => ({ default: m.CommandPalette })))
+
+const loadDetail = () => import('@/components/items/ItemDetail')
+const ItemDetail = lazy(() => loadDetail().then((m) => ({ default: m.ItemDetail })))
+// Панель деталей нужна почти сразу — догружаем её в простое, чтобы первое открытие не ждало сети.
+if (typeof window !== 'undefined') window.setTimeout(() => void loadDetail(), 1500)
 
 const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'settings']
 
@@ -57,7 +63,11 @@ function ActiveView({ view }: { view: View }) {
     case 'archive':
       return <ArchiveView />
     case 'settings':
-      return <SettingsView />
+      return (
+        <Suspense fallback={null}>
+          <SettingsView />
+        </Suspense>
+      )
   }
 }
 
@@ -115,7 +125,9 @@ export function AppShell() {
 
   const detail = selectedId ? (
     <DetailPane key={selectedId} id={selectedId} modal={modalDetail}>
-      <ItemDetail id={selectedId} onClose={() => select(null)} />
+      <Suspense fallback={null}>
+        <ItemDetail id={selectedId} onClose={() => select(null)} />
+      </Suspense>
     </DetailPane>
   ) : null
 
@@ -159,7 +171,9 @@ export function AppShell() {
       )}
 
       <QuickCapture />
-      <CommandPalette />
+      <Suspense fallback={null}>
+        <CommandPalette />
+      </Suspense>
 
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-6">

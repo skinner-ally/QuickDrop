@@ -13,6 +13,7 @@ import {
 import { getSettings } from '@/db/settings'
 import { fetchLinkMeta } from '@/lib/linkMeta'
 import { safeLinkUrl } from '@/lib/normalize'
+import { isTauri } from '@/lib/platform'
 import type { Item, ItemStatus, NewItemInput } from '@/types'
 
 function errMsg(e: unknown): string {
@@ -162,18 +163,27 @@ export async function actCopy(item: Item): Promise<void> {
   await copyText(text)
 }
 
-export function actOpen(item: Item): void {
-  const url = safeLinkUrl(item.url)
+/** Открывает внешнюю ссылку: в Tauri — системным браузером, в вебе — новой вкладкой. */
+export async function openLink(raw: string | undefined): Promise<void> {
+  const url = safeLinkUrl(raw)
   if (!url) {
     toast.error('Нельзя открыть этот адрес')
     return
   }
   try {
-    // noopener: страница не получает window.opener; в Tauri window.open тоже открывает браузер.
+    if (isTauri()) {
+      const { openExternal } = await import('@/lib/desktop')
+      if (await openExternal(url)) return
+    }
+    // noopener: страница не получает window.opener.
     window.open(url, '_blank', 'noopener,noreferrer')
   } catch (e) {
     toast.error(errMsg(e))
   }
+}
+
+export function actOpen(item: Item): void {
+  void openLink(item.url)
 }
 
 export async function actDownload(item: Item): Promise<void> {

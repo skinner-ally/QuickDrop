@@ -17,7 +17,7 @@ function isEditable(el: EventTarget | null): boolean {
 }
 
 const OPEN_OVERLAY =
-  '[role="dialog"][data-open], [role="alertdialog"][data-open], [role="menu"][data-open], [role="listbox"][data-open], [data-slot="popover-content"][data-open]'
+  '[role="dialog"][data-open]:not([data-ending-style]), [role="alertdialog"][data-open]:not([data-ending-style]), [role="menu"][data-open]:not([data-ending-style]), [role="listbox"][data-open]:not([data-ending-style]), [data-slot="popover-content"][data-open]:not([data-ending-style])'
 
 /** Открыт ли диалог/поповер/меню (Base UI рендерит их с role). */
 function overlayOpen(): boolean {

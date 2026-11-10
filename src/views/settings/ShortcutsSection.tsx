@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
+import { toast } from 'sonner'
 import { setSetting } from '@/db/settings'
+import { applyGlobalShortcut } from '@/lib/desktop'
 import { isTauri, modKey } from '@/lib/platform'
 import type { Settings } from '@/types'
 import { CommitInput, Field, Section } from './Section'
@@ -65,13 +67,21 @@ export function ShortcutsSection({ settings }: { settings: Settings }) {
         <Field
           label="Глобальное сочетание"
           htmlFor="global-shortcut"
-          hint="Поднимает окно и открывает добавление из любого приложения. Изменение применится после перезапуска. Формат: CommandOrControl+Shift+Space."
+          hint="Поднимает окно и открывает добавление из любого приложения. Формат: CommandOrControl+Shift+Space."
         >
           <CommitInput
             id="global-shortcut"
             value={settings.globalShortcut}
             validate={(v) => (v ? null : 'Укажите сочетание клавиш')}
-            onCommit={(v) => setSetting('globalShortcut', v)}
+            onCommit={async (v) => {
+              const res = await applyGlobalShortcut(v)
+              if (res.ok) {
+                await setSetting('globalShortcut', v)
+                toast.success('Глобальное сочетание применено')
+              } else {
+                toast.error(res.error ?? 'Сочетание занято другой программой')
+              }
+            }}
           />
         </Field>
       ) : (
