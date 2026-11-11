@@ -1,3 +1,4 @@
+import { newId } from '@/lib/id'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import { toast } from 'sonner'
@@ -90,7 +91,7 @@ function useCoarsePointer(): boolean {
 }
 
 function makeEntry(file: File, source: ItemSource): FileEntry {
-  return { id: crypto.randomUUID(), file, source }
+  return { id: newId(), file, source }
 }
 
 /** Файлы, которые можно добавить: слишком большие отсеиваются сразу с ошибкой. */

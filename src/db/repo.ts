@@ -1,3 +1,4 @@
+import { newId } from '@/lib/id'
 import { db } from './db'
 import {
   CATEGORY_COLORS,
@@ -55,7 +56,7 @@ export const MAX_FILE_SIZE = 100 * 1024 * 1024
 // ───────────────────────── утилиты ─────────────────────────
 
 function uid(): string {
-  return crypto.randomUUID()
+  return newId()
 }
 
 function unique<T>(list: Iterable<T>): T[] {
