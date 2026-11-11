@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>QuickDrop — пиксельный мокап</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Tiny5&family=Nunito:wght@500..800&family=Handjet:wght@400..700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/node_modules/@fontsource-variable/geist/index.css" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="side panel">
+      <div class="logo"><span class="ic" data-ic="sprout"></span><b>QuickDrop</b></div>
+      <button class="btn brand big" id="add"><span class="ic" data-ic="plus"></span>Добавить<kbd>N</kbd></button>
+
+      <nav id="nav">
+        <a data-view="inbox"><span class="ic" data-ic="inbox"></span>Входящие<em class="count brand" id="c-inbox"></em></a>
+        <a data-view="library"><span class="ic" data-ic="book"></span>База знаний<em class="count" id="c-library"></em></a>
+        <a data-view="fav"><span class="ic" data-ic="star"></span>Избранное<em class="count" id="c-fav"></em></a>
+        <a data-view="archive"><span class="ic" data-ic="archive"></span>Архив<em class="count" id="c-archive"></em></a>
+        <a data-view="graph" class="on"><span class="ic" data-ic="graph"></span>Граф</a>
+      </nav>
+
+      <h4>Грядки (категории)</h4>
+      <div id="cats"></div>
+
+      <h4>Теги</h4>
+      <div id="tags" class="chips"></div>
+
+      <div class="side-foot">
+        <button class="btn" id="theme" title="День / ночь"><span class="ic" data-ic="moon"></span><span id="theme-t">Ночь</span></button>
+        <button class="btn sq" id="settings-btn" title="Настройки"><span class="ic" data-ic="gear"></span></button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="top panel">
+        <button class="btn sq" id="menu-btn" title="Меню"><span class="ic" data-ic="menu"></span></button>
+        <label class="search"><span class="ic" data-ic="search"></span>
+          <input id="q" placeholder="Поиск по записям и тегам…" autocomplete="off" /></label>
+        <div class="seg" id="types"></div>
+        <button class="btn" id="pal-btn" title="Палитра команд">Команды<kbd>Ctrl K</kbd></button>
+        <div class="grow"></div>
+        <div class="seg" id="zoom">
+          <button class="btn sq" data-z="-1" title="Отдалить">−</button>
+          <span id="zl">100%</span>
+          <button class="btn sq" data-z="1" title="Приблизить">+</button>
+          <button class="btn" id="tidy" title="Разложить ноды по связям">Разложить</button>
+          <button class="btn" id="fit">Весь граф</button>
+        </div>
+      </header>
+
+      <section class="stage panel" id="stage">
+        <div id="graph" class="nv-d">
+          <div id="forest" class="layer"></div>
+          <div id="plots" class="layer"></div>
+          <canvas id="wx"></canvas>
+          <canvas id="wires"></canvas>
+          <div id="nodes" class="layer"></div>
+          <canvas id="rays"></canvas>
+          <canvas id="fx"></canvas>
+
+          <details class="legend panel thin">
+            <summary>Как читать ноду</summary>
+            <div class="lg-node">
+              <div class="node demo"><div class="pin in"></div>
+                <div class="body" style="--c:#5b8bd0"><span class="flag fav on"></span><span class="core"></span><span class="flag st library"></span></div>
+                <div class="pin out"></div></div>
+            </div>
+            <ul>
+              <li><i class="sw" style="background:var(--gold)"></i>слева — избранное</li>
+              <li><i class="sw" style="background:#5b8bd0"></i>полоса сверху — категория</li>
+              <li><i class="sw" style="background:var(--leaf)"></i>справа — в базе знаний</li>
+              <li><i class="sw" style="background:var(--brand)"></i>справа — не разобрано</li>
+            </ul>
+            <p>Перетащите ноду на грядку — запись получит категорию. Потяните от нижнего разъёма к другой ноде — появится связь.</p>
+          </details>
+
+        </div>
+
+        <div id="list" hidden></div>
+
+        <div id="settings" hidden>
+          <h3>Настройки</h3>
+          <div class="set panel thin">
+            <h4>Оформление</h4>
+            <div class="srow"><div><b>Сцена</b><p>«Авто» меняет сцену по времени года.</p></div><div class="seg" id="scenes"></div></div>
+            <div class="srow"><div><b>Время суток</b><p>Ночная палитра спокойнее для глаз.</p></div>
+              <div class="seg" id="daynight"><button class="btn" data-night="0">День</button><button class="btn" data-night="1">Ночь</button></div></div>
+            <div class="srow"><div><b>Шрифт текста</b><p>Логотип, заголовки разделов и таблички грядок остаются пиксельными.</p></div><div class="seg" id="fonts"></div></div>
+            <div class="srow"><div><b>Живой фон</b><p>Листопад, лучи, снег, бабочки и светлячки.</p></div><label class="tg"><input type="checkbox" id="ambient" checked /><i></i></label></div>
+          </div>
+          <div class="set panel thin">
+            <h4>Запись и ссылки</h4>
+            <div class="srow"><div><b>Глобальная клавиша</b><p>Поднимает окно и открывает быструю запись.</p></div><input class="field" value="Ctrl+Shift+Space" readonly /></div>
+            <div class="srow"><div><b>Заголовок по ссылке</b><p>Подтягивать название страницы автоматически.</p></div><label class="tg"><input type="checkbox" checked /><i></i></label></div>
+          </div>
+          <div class="set panel thin">
+            <h4>Данные</h4>
+            <div class="srow"><div><b>Резервная копия</b><p>Все записи и файлы одним файлом.</p></div>
+              <div class="seg"><button class="btn" data-stub>Экспорт</button><button class="btn" data-stub>Импорт…</button></div></div>
+          </div>
+        </div>
+
+        <aside class="detail panel" id="detail" hidden></aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal" id="capture" hidden>
+    <div class="panel dialog">
+      <h3><span class="ic" data-ic="sprout"></span>Быстрая запись</h3>
+      <textarea id="cap-text" rows="4" placeholder="Текст, ссылка, код или идея…"></textarea>
+      <div class="row">
+        <span class="hint">Ctrl+Enter — посадить во «Входящие»</span>
+        <div class="grow"></div>
+        <button class="btn" id="cap-cancel">Отмена</button>
+        <button class="btn brand" id="cap-ok">Сохранить</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal" id="palette" hidden>
+    <div class="panel dialog pal">
+      <label class="search"><span class="ic" data-ic="search"></span>
+        <input id="pal-q" placeholder="Команда, запись, грядка или #тег…" autocomplete="off" /></label>
+      <div id="pal-list"></div>
+      <span class="hint">↑↓ — выбор · Enter — выполнить · Esc — закрыть</span>
+    </div>
+  </div>
+  <div id="scrim"></div>
+  <button class="btn brand" id="fab" title="Добавить"><span class="ic" data-ic="plus"></span></button>
+  <div id="toast" class="panel thin" hidden></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
