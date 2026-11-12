@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { linkItems, unlinkItems } from '@/db/repo'
 import { useAllItems, useLinkedItems } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
+import { openItemInSection } from '@/lib/actions'
 import { displayTitle } from '@/lib/itemTitle'
 import { useUi } from '@/store/ui'
 import type { Item } from '@/types'
@@ -26,6 +27,10 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 /** Связанные записи и подсказки «Похожие» (по общим тегам). */
 export function LinkedItems({ item, readOnly }: { item: Item; readOnly?: boolean }) {
   const select = useUi((s) => s.select)
+  const inGraph = useUi((s) => s.view === 'graph')
+  // В «Графе» архивная запись при скрытом архиве не попала бы в сцену: openItemInSection включает его показ.
+  // В списках прежнее поведение: раздел не меняется.
+  const open = (target: Item) => (inGraph ? openItemInSection(target) : select(target.id))
   const linked = useLinkedItems(item)
   const all = useAllItems()
 
@@ -59,7 +64,7 @@ export function LinkedItems({ item, readOnly }: { item: Item; readOnly?: boolean
             <li key={l.id} className="group/link flex items-center gap-1 rounded-md px-nav hover:bg-muted/50">
               <button
                 type="button"
-                onClick={() => select(l.id)}
+                onClick={() => open(l)}
                 className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <TypeIcon type={l.type} className="text-muted-foreground" />
@@ -89,7 +94,7 @@ export function LinkedItems({ item, readOnly }: { item: Item; readOnly?: boolean
               <li key={s.id} className="flex items-center gap-1 rounded-md px-nav hover:bg-muted/50">
                 <button
                   type="button"
-                  onClick={() => select(s.id)}
+                  onClick={() => open(s)}
                   className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 >
                   <TypeIcon type={s.type} />

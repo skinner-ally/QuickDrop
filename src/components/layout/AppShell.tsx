@@ -4,6 +4,7 @@ import { QuickCapture } from '@/components/capture/QuickCapture'
 import { Button } from '@/components/ui/button'
 import { useHotkeys } from '@/hooks/useHotkeys'
 import { useIsDesktop, useMediaQuery } from '@/hooks/useMediaQuery'
+import { DETAIL_ASIDE_PX } from '@/lib/graph/interaction'
 import { useUi, type View } from '@/store/ui'
 import { ArchiveView } from '@/views/ArchiveView'
 import { FavoritesView } from '@/views/FavoritesView'
@@ -18,7 +19,9 @@ import { TopBar } from './TopBar'
 // Редко нужные части грузятся отдельными чанками, чтобы основной оставался лёгким.
 const settingsLazy = lazyRetry(() => import('@/views/SettingsView'), (m) => m.SettingsView)
 const paletteLazy = lazyRetry(() => import('@/components/palette/CommandPalette'), (m) => m.CommandPalette)
+const graphLazy = lazyRetry(() => import('@/views/GraphView'), (m) => m.GraphView)
 const SettingsView = settingsLazy.Component
+const GraphView = graphLazy.Component
 const CommandPalette = paletteLazy.Component
 
 const loadDetail = () => import('@/components/items/ItemDetail')
@@ -27,7 +30,7 @@ const ItemDetail = detailLazy.Component
 // Панель деталей нужна почти сразу — догружаем её в простое, чтобы первое открытие не ждало сети.
 if (typeof window !== 'undefined') window.setTimeout(() => void loadDetail().catch(() => undefined), 1500)
 
-const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'trash', 'settings']
+const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'graph', 'trash', 'settings']
 
 function viewFromHash(): View | null {
   const name = window.location.hash.replace(/^#\/?/, '')
@@ -70,6 +73,17 @@ function ActiveView({ view }: { view: View }) {
       return <ArchiveView />
     case 'trash':
       return <TrashView />
+    case 'graph':
+      return (
+        <ErrorBoundary
+          onReset={graphLazy.reset}
+          fallback={(_e, reset) => <RetryFallback message="Не удалось загрузить граф. Проверьте соединение." reset={reset} />}
+        >
+          <Suspense fallback={null}>
+            <GraphView />
+          </Suspense>
+        </ErrorBoundary>
+      )
     case 'settings':
       return (
         <ErrorBoundary
@@ -82,7 +96,6 @@ function ActiveView({ view }: { view: View }) {
         </ErrorBoundary>
       )
     default:
-      // «Граф» — этап 5.
       return null
   }
 }
@@ -209,7 +222,8 @@ export function AppShell() {
       {sideDetail && detail && (
         <aside
           aria-label="Подробности записи"
-          className="h-full w-[460px] shrink-0 overflow-y-auto border-l bg-background px-panel pixel:overflow-hidden pixel:[--px-pad:8px]"
+          style={{ width: DETAIL_ASIDE_PX }}
+          className="h-full shrink-0 overflow-y-auto border-l bg-background px-panel pixel:overflow-hidden pixel:[--px-pad:8px]"
         >
           {detail}
         </aside>

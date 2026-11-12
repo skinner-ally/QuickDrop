@@ -91,8 +91,10 @@ interface UiState {
   /**
    * Применить запрос целиком (сохранённый поиск): строка поиска заменяется, фильтры и выбор сбрасываются.
    * Запрос запоминается как appliedQuery: смена раздела снимет его, пока его не изменили.
+   * home — раздел, куда запрос можно унести без сброса (appliedView); по умолчанию — view. Нужен «Графу»:
+   * поиск с is:<раздел>, применённый там, при переходе в этот раздел остаётся.
    */
-  applyQuery: (query: string, view?: View) => void
+  applyQuery: (query: string, view?: View, home?: View) => void
   setSort: (sort: SortMode) => void
   setLayout: (layout: 'list' | 'grid') => void
   setMdPreview: (on: boolean) => void
@@ -158,14 +160,14 @@ export const useUi = create<UiState>((set) => ({
       if (next.from === s.filter.from && next.to === s.filter.to) return s
       return { filter: { ...s.filter, ...next } }
     }),
-  applyQuery: (query, view) =>
+  applyQuery: (query, view, home) =>
     set((s) => {
       const target = view ?? s.view
       const applied = query.trim() !== ''
       return {
         query,
         appliedQuery: applied ? query : null,
-        appliedView: applied ? target : null,
+        appliedView: applied ? (home ?? target) : null,
         filter: {},
         customDates: false,
         selectedId: null,

@@ -224,6 +224,18 @@ describe('isSavedSearchActive', () => {
     // Пустые поля фильтра — не отбор.
     expect(isSavedSearchActive(s('react'), on('inbox', 'react', { tags: [], types: [] }))).toBe(true)
   })
+
+  it('в «Графе» раздел запроса не сверяется; строка и фильтры — как везде', () => {
+    expect(isSavedSearchActive(s('is:library date:week'), on('graph', 'is:library date:week'))).toBe(true)
+    expect(isSavedSearchActive(s('is:trash x'), on('graph', 'is:trash x'))).toBe(true)
+    expect(isSavedSearchActive(s('is:fav'), on('graph', 'is:fav'))).toBe(true)
+    expect(isSavedSearchActive(s('react'), on('graph', 'react'))).toBe(true)
+    // Другая строка, пустая строка и фильтры панели — не активен.
+    expect(isSavedSearchActive(s('is:library'), on('graph', 'react'))).toBe(false)
+    expect(isSavedSearchActive(s('is:library'), on('graph', ''))).toBe(false)
+    expect(isSavedSearchActive(s('react'), on('graph', 'react', { tags: ['js'] }))).toBe(false)
+    expect(isSavedSearchActive(s(''), on('graph', ''))).toBe(false)
+  })
 })
 
 describe('suggestSearchName', () => {

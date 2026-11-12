@@ -103,7 +103,8 @@ export function alreadySavedText(name: string): string {
 
 /**
  * Активен ли сохранённый поиск: его запрос стоит в строке, фильтры панели пусты и открыт раздел самого запроса
- * (viewForQuery); поиск без своего раздела активен в любом.
+ * (viewForQuery); поиск без своего раздела активен в любом. В «Графе» раздел не сверяется: поиск применяется там же
+ * и только приглушает ноды, а is:<раздел> в запросе — обычный оператор отбора.
  */
 export function isSavedSearchActive(
   search: Pick<SavedSearch, 'query'>,
@@ -112,6 +113,7 @@ export function isSavedSearchActive(
 ): boolean {
   const current = (screen.query ?? '').trim()
   if (!current || current !== (search.query ?? '').trim() || isNarrowed('', screen.filter)) return false
+  if (screen.view === 'graph') return true
   return (viewForQuery(search.query, now) ?? screen.view) === screen.view
 }
 

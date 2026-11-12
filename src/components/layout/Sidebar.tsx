@@ -8,28 +8,29 @@ import { Kbd } from '@/components/ui/kbd'
 import { CategoryDot } from '@/components/items/CategoryBadge'
 import { createCategory } from '@/db/repo'
 import { setSetting, useSettings } from '@/db/settings'
-import { computeAllTags, useAllItems, useCategories, useCounts, useTrashCount } from '@/hooks/useItems'
+import { useCategories, useCounts, useLegendCounts, useTrashCount } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
 import { NavButton, SectionHeader } from '@/components/layout/NavButton'
 import { SavedSearches } from '@/components/layout/SavedSearches'
+import { useGraph } from '@/store/graph'
 import { useUi, type View } from '@/store/ui'
 import { CATEGORY_COLORS, type Settings } from '@/types'
 
 const TOP_TAGS = 12
 
-// Порядок совпадает с клавишами 1–4 (useHotkeys.VIEW_BY_DIGIT).
+// Порядок совпадает с клавишами 1–5 (useHotkeys.VIEW_BY_DIGIT); «Корзина» последней, без цифры.
 const NAV_ITEMS: Array<{
   view: View
   label: string
   icon: IconName
-  count: 'inbox' | 'library' | 'favorites' | 'archive' | 'trash'
+  count?: 'inbox' | 'library' | 'favorites' | 'archive' | 'trash'
 }> = [
   { view: 'inbox', label: 'Входящие', icon: 'inbox', count: 'inbox' },
   { view: 'library', label: 'База знаний', icon: 'library', count: 'library' },
   { view: 'favorites', label: 'Избранное', icon: 'star', count: 'favorites' },
   { view: 'archive', label: 'Архив', icon: 'archive', count: 'archive' },
-  { view: 'trash', label: 'Корзина', icon: 'trash', count: 'trash' }, // последним, без цифры
-  // этап 5: { view: 'graph', label: 'Граф', icon: 'graph' } (клавиша 5)
+  { view: 'graph', label: 'Граф', icon: 'graph' },
+  { view: 'trash', label: 'Корзина', icon: 'trash', count: 'trash' },
 ]
 
 const THEME_CYCLE: Settings['theme'][] = ['system', 'light', 'dark']
@@ -104,6 +105,7 @@ export function Sidebar() {
   const filter = useUi((s) => s.filter)
   const setView = useUi((s) => s.setView)
   const setFilter = useUi((s) => s.setFilter)
+  const setNavOpen = useUi((s) => s.setNavOpen)
   const resetFilter = useUi((s) => s.resetFilter)
   const openCapture = useUi((s) => s.openCapture)
   const pixel = usePixel()
@@ -112,30 +114,30 @@ export function Sidebar() {
   const trashCount = useTrashCount()
   const counts = useMemo(() => ({ ...baseCounts, trash: trashCount }), [baseCounts, trashCount])
   const categories = useCategories()
-  const items = useAllItems()
 
   const [catsOpen, setCatsOpen] = useState(true)
   const [tagsOpen, setTagsOpen] = useState(true)
   const [allTags, setAllTags] = useState(false)
   const [creating, setCreating] = useState(false)
 
-  // Клик по категории/тегу открывает «Базу знаний», поэтому и считаем только её записи.
-  const libraryItems = useMemo(() => (items ?? []).filter((it) => it.status === 'library'), [items])
-  const tags = useMemo(() => computeAllTags(libraryItems), [libraryItems])
-
-  const perCategory = useMemo(() => {
-    const map = new Map<string | null, number>()
-    for (const it of libraryItems) {
-      map.set(it.categoryId, (map.get(it.categoryId) ?? 0) + 1)
-    }
-    return map
-  }, [libraryItems])
+  // Вне «Графа» клик открывает «Базу знаний» и считается она; в «Графе» панель — легенда его нод (см. computeLegend).
+  const showArchive = useGraph((s) => s.showArchive)
+  const inGraph = view === 'graph'
+  const { tags, perCategory } = useLegendCounts(inGraph, showArchive)
 
   const go = (v: View) => setView(v)
   const inLibrary = view === 'library'
+  // В «Графе» категория и тег — тот же отбор (приглушение), раздел не меняется.
+  const filterable = inLibrary || inGraph
   const plainLibrary = inLibrary && filter.categoryId === undefined && !filter.tags?.length
 
   const toggleCategory = (id: string | null) => {
+    if (inGraph) {
+      setFilter({ categoryId: filter.categoryId === id ? undefined : id })
+      // setView здесь не вызывается, а он закрывает выезжающее меню на телефоне.
+      setNavOpen(false)
+      return
+    }
     if (inLibrary && filter.categoryId === id) {
       resetFilter()
       return
@@ -145,7 +147,13 @@ export function Sidebar() {
   }
 
   const toggleTag = (tag: string) => {
-    if (inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag) {
+    const only = filter.tags?.length === 1 && filter.tags[0] === tag
+    if (inGraph) {
+      setFilter({ tags: only ? undefined : [tag] })
+      setNavOpen(false)
+      return
+    }
+    if (inLibrary && only) {
       resetFilter()
       return
     }
@@ -197,7 +205,7 @@ export function Sidebar() {
               onClick={() => go(item.view)}
               icon={<Icon name={item.icon} className="size-4" />}
               label={item.label}
-              count={counts[item.count]}
+              count={item.count ? counts[item.count] : undefined}
               accent={item.view === 'inbox' && counts.inbox > 0}
             />
           ))}
@@ -230,7 +238,7 @@ export function Sidebar() {
             {categories.map((c) => (
               <NavButton
                 key={c.id}
-                active={inLibrary && filter.categoryId === c.id}
+                active={filterable && filter.categoryId === c.id}
                 onClick={() => toggleCategory(c.id)}
                 icon={<CategoryDot color={c.color} className="size-2.5" />}
                 label={c.name}
@@ -238,7 +246,7 @@ export function Sidebar() {
               />
             ))}
             <NavButton
-              active={inLibrary && filter.categoryId === null}
+              active={filterable && filter.categoryId === null}
               onClick={() => toggleCategory(null)}
               icon={<span aria-hidden className="size-2.5 rounded-full border border-muted-foreground/50 px-sw pixel:bg-(--cat-none)" />}
               label="Без категории"
@@ -259,7 +267,7 @@ export function Sidebar() {
                       <button
                         key={tag}
                         type="button"
-                        aria-pressed={inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag}
+                        aria-pressed={filterable && filter.tags?.length === 1 && filter.tags[0] === tag}
                         title={`Записей: ${count}`}
                         onClick={() => toggleTag(tag)}
                         className="px-chip inline-flex min-h-6 items-center px-1.5 text-xs max-md:min-h-9 max-md:px-2"
@@ -272,7 +280,7 @@ export function Sidebar() {
                   shownTags.map(({ tag, count }) => (
                     <NavButton
                       key={tag}
-                      active={inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag}
+                      active={filterable && filter.tags?.length === 1 && filter.tags[0] === tag}
                       onClick={() => toggleTag(tag)}
                       icon={
                         <span aria-hidden className="text-muted-foreground">

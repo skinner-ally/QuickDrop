@@ -1,0 +1,383 @@
+{
+ "spec": {
+  "summary": "Спецификация этапа 5 написана: .progress\\spec-stage5.md (отчёт — .progress\\agents\\spec-stage5.md). Код, git и зависимости не трогались.\n\nГлавное в спецификации:\n- Оба долга этапа 5 закрыты в §2.2 (переработка src/lib/graphLayout.ts): ров GRAPH_MOAT = 2 клетки между зонами (новая нода не встаёт рядом с нодой чужой зоны — зоны не перемешиваются при росте), разведение двух сохранённых нод в одной клетке (вторая по (createdAt, id) переезжает в ближайшую свободную, попадает в placed/displaced), центр новой зоны проверяется по фактическим нодам; тест постепенного роста (56 → 556 нод по одной) и прежний тест на 2000 записей.\n- Масштаб ступенями 12.5–200 % (шаг сетки × ступень × dpr всегда целый — резкие пиксели), колесо — масштаб к курсору. Один canvas для связей и нод: связи в пиксельных сценах пишутся линией Брезенхэма в буфер ImageData, в «Классике» — stroke; ноды — fillRect в целых пикселях устройства; перерисовка только по запросу. DOM-слой — подписи, подсказка, ручка связи, меню, выбор категории.\n- Отбор (поиск, FilterBar в режиме graph, категория/тег боковой панели, сохранённый поиск) идёт через useUi.query/filter и приглушает ноды и связи; своя функция computeGraphMatch вместо завязанного на раздел useVisibleItems.\n- Заложен контракт живого фона этапа 6 (src/lib/graph/ambient.ts: два canvas, преобразование мира в пиксели, nodeNear).\n- Весь CSS этапа (переменные --ground и --graph-* в index.css и scenes.css, раздел «Граф» в pixel.css) — у одного пакета волны 0.\n\nРазбивка: волна 0 — graph-core (opus), затем graph-base (sonnet); волна 1 — graph-paint (opus), graph-screen (opus), graph-dom (sonnet), graph-chrome (sonnet), graph-nav (sonnet). Волны 2 нет. Каждый файл — ровно у одного пакета. После волны 0 typecheck и тесты проходят, раздел «Граф» ещё пуст (AppShell и GraphView — у graph-screen).\n\nВажно для оркестратора: пакеты волны 1 импортируют файлы друг друга (GraphView ← draw.ts, GraphOverlay, GraphHeader, GraphToolbar, GraphHint, проп mode у FilterBar). При правиле «один файл — один пакет» это неустранимо без волны 2, поэтому в §4.0 задано: каждый пакет первым действием создаёт каркасы своих файлов с итоговыми экспортами; до конца волны typecheck может падать на чужих файлах, итог сводится после волны.",
+  "openQuestions": [
+   "ИЗМЕНЕНО решение этапа 2: архив на графе теперь показывается приглушённо, с переключателем «Архив» на панели графа (раньше — не показывался). По умолчанию — показывать; выбор хранится в localStorage.",
+   "ИЗМЕНЕНО: отдельного «фокуса зоны» (focusZone в store/graph.ts) нет — клик по категории и тегу боковой панели в «Графе» пишет в тот же фильтр, что панель фильтров. По умолчанию — так.",
+   "ИЗМЕНЕНО: сохранённый поиск, применённый в «Графе», остаётся в «Графе» и приглушает ноды (раньше actApplySearch уводил в «Базу знаний»). По умолчанию — так.",
+   "ИЗМЕНЕНО относительно spec-stage3 §1.3: панель графа (масштаб, «Весь граф», «Разложить», «Архив») — плавающая в углу сцены, слот data-topbar-slot в TopBar не используется. По умолчанию — так (один вариант для ПК и телефона).",
+   "Масштаб — ступенями 12.5 / 25 / 50 / 75 / 100 / 150 / 200 % ради резких пикселей; колесо масштабирует к курсору, прокрутка двумя пальцами на тачпаде — тоже масштаб. Вариант: колесо — сдвиг, Ctrl+колесо — масштаб. По умолчанию — колесо масштабирует.",
+   "«Разложить заново» — без подтверждения, с «Отменить» на 10 секунд (ручные и автоматические положения в БД не различаются, спросить «есть ли ручные» нельзя). Вариант: всегда спрашивать. По умолчанию — отмена через toast.",
+   "Двойной клик по ноде приближает её (центр, масштаб не меньше 100 %), а не открывает ссылку; Enter открывает запись под курсором клавиатуры. По умолчанию — так.",
+   "Tab / Shift+Tab ходят по связям текущей ноды; если связей нет, Tab уходит из графа обычным образом (не ловушка). Вариант: Tab по всем нодам подряд. По умолчанию — по связям.",
+   "Телефон: перенос ноды и протяжка связи пальцем не поддерживаются; связь — «значок связи у выбранной записи → вторая запись». По умолчанию — так.",
+   "Подписи при 100 % и выше в плотной зоне показываются только там, где не закрывают соседние ноды (не больше 150); у выбранной ноды и её соседей — всегда, на плашке; остальное — подсказка при наведении. По умолчанию — так.",
+   "Фон графа в пиксельных сценах на этапе 5 — ровный цвет земли сцены (--ground, значения мокапа); плитка с травой и листьями, лес и осадки — этап 6. По умолчанию — так.",
+   "Зона, зажатая соседями, при сильном росте продолжается за ними отдельным участком (ноды разных категорий при этом не смешиваются); порядок наводит «Разложить заново». Принять как есть или на этапе 8 добавить подсказку — по умолчанию принять.",
+   "Записи корзины с сохранённым местом участвуют в раскладке невидимыми (держат клетку и ров), без места — нет. По умолчанию — так.",
+   "Риск исполнения: пакеты волны 1 импортируют файлы друг друга; в спецификации (§4.0) каждому пакету предписано первым действием создать каркасы своих файлов. Если оркестратор предпочитает жёсткую независимость, запасной вариант — вынести GraphView.tsx и AppShell.tsx в отдельный пакет волны 2 «сборка» (тогда пакеты волны 1 не смогут проверяться в браузере по отдельности). По умолчанию — без волны 2."
+  ]
+ },
+ "critic": {
+  "summary": "Спецификация этапа 5 сверена с кодом. Все названные файлы, экспорты, сигнатуры, значки, CSS-переменные и примитивы существуют и совпадают со спецификацией. Покрыты все пункты «Этапа 5» плана, оба долга HANDOFF и решения пользователя (без грядок, квадрат цвета категории, без отметки избранного). Раскладку с рвом проверил моделью вне репозитория (scratchpad: layout-sim.mjs, run-sim.mjs): нод, у которых рядом стоит нода чужой зоны, было 278–414, с рвом 0 во всех прогонах (в том числе 12 зон × 1500 шагов). На каждом шаге раскладка ставит только новую ноду, прежние точки не сдвигаются, клетки уникальны. 2000 нод с нуля считаются примерно за 10 мс, 2000 сохранённых + 1 новая — примерно за 5 мс. У рва есть цена: зажатая зона распадается на острова и тянется тонкими цепочками по середине коридоров между чужими зонами (вынесено в вопросы). Главная правка — разбивка: в версии архитектора пакеты волны 1 импортировали файлы друг друга. Теперь волна 0 идёт по очереди: core → base → look. В волне 1 четыре независимых пакета, `graph-screen` перенесён в волну 2 и собирает экран из файлов волны 1. Поэтому каждый пакет зависит только от предыдущих волн и typecheck проходит после каждого. Спецификация поправлена с пометкой «(уточнено при сверке)», отчёт — .progress\\agents\\spec-stage5-review.md. Код и git не трогал.",
+  "fixed": [
+   "Разбивка (§1.3, §4.0, §7): правило «каркасы первым действием, typecheck может падать на чужих файлах» убрано. Волна 1 (graph-paint, graph-dom, graph-chrome, graph-nav) импортирует только волну 0. graph-screen (GraphView, GraphCanvas, жесты, клавиши, AppShell) перенесён в волну 2, потому что GraphView импортирует draw.ts, GraphOverlay, GraphHeader, GraphToolbar и GraphHint. Сигнатуры этих экспортов закреплены таблицей в §4.0",
+   "graph-dom и graph-chrome сдают работу без браузера: раздел «Граф» до волны 2 не открывается. Их сценарии (§4.3, §4.4) добавлены пунктом 9 в сценарии graph-screen; замечания по чужим файлам он записывает в свой отчёт",
+   "FilterBar.tsx (общий компонент списков) перенесён из graph-chrome в волну 0, новый §3.9",
+   "graph-base разделён на два пакета: graph-base (стор, actions, savedSearch, repo, hotkeyGuards) и graph-look (theme.ts, ambient.ts, index.css, scenes.css, pixel.css, DESIGN.md, FilterBar). Волна 0: graph-core → graph-base → graph-look",
+   "GRAPH_COLOR_KEYS перенесён в lib/graph/types.ts: его использует scene.ts пакета graph-core, а theme.ts пишет более поздний пакет. theme.ts только реэкспортирует его",
+   "Новая функция repo.addPositions (§3.2а) пишет место только записям, у которых его ещё нет. Без неё поздняя запись мест после пересчёта раскладки по отставшему снимку затирала бы «Отменить» у «Разложить заново» и у actSetCategory. GraphView: addPositions для placed без displaced, setPositions для displaced. Добавлен сценарий 10 в §4.2",
+   "GraphView: раскладка пересчитывается по подписи (id, categoryId, createdAt, links, deletedAt, порядок категорий, fixed), а не по массиву записей. Иначе каждая правка текста в панели деталей пересчитывала бы раскладку 2000 нод",
+   "§2.2: соседей для связи с нодой чужой зоны ищем в квадрате радиуса NEIGHBOR_REACH + GRAPH_MOAT. Иначе прежний квадрат 5×5 целиком лежит во рву и правило «связь тянет к чужой ноде» не действует. Тест «связанная нода» переписан так, чтобы его можно было проверить; добавлено обоснование, почему указатель зоны верен и с рвом",
+   "§2.2 дополнен итогами модели раскладки; §8 п. 13 — вопрос о «тропках» зажатой зоны",
+   "§4.5 graph-nav: критерий #/graph уточнён — до волны 2 раздел пуст, а адрес после перезагрузки не сохраняется"
+  ],
+  "openQuestions": [
+   "Ров разделяет зоны, но у зажатой зоны появляются отдельные участки и тонкие цепочки по середине коридоров шириной 5 клеток между чужими зонами. В модели центральная зона распалась на 58 + 5 + 4 + 3 + 2 ноды. Принять как есть (лечится кнопкой «Разложить заново») или добавить правило: новый отдельный участок зоны начинать только там, где в квадрате 9×9 нет чужих нод? В модели это дало 58 + 14. Цена — указатель зоны больше не может пропускать такие клетки навсегда, их придётся перебирать заново (§8 п. 13).",
+   "Волна 2 удлиняет путь: graph-screen (opus, самый крупный пакет) идёт один после волны 1, а graph-dom и graph-chrome пишут DOM без браузера; их сценарии проходит graph-screen, правки — на доводке. Альтернатива — заглушки в волне 0 и наполнение в волне 1, но тогда нарушается правило «один файл — один пакет». Выбор сверки — волна 2. Подтвердить?",
+   "Боковая панель в «Графе»: счётчики категорий и список тегов считаются только по «Базе знаний», как и для списков; как легенда графа они неполны. В спецификации этого нет. Оставить или в разделе «Граф» считать по всем записям графа?",
+   "Палитра в «Графе»: пункт «Искать «…» в базе знаний» уводит из графа — его текст прямо об этом говорит. Оставить или добавить пункт «Искать на графе» (setQuery без смены раздела)?",
+   "Пакет graph-look сдаёт работу без браузера: правки CSS добавочные, у FilterBar по умолчанию прежний режим. Если нужна гарантия, что существующие экраны не изменились, — бегло проверить в браузере на приёмке после волны 0."
+  ]
+ },
+ "packages": [
+  {
+   "key": "graph-core",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/graphLayout.ts",
+    "src/lib/graphLayout.test.ts",
+    "src/lib/graph/types.ts",
+    "src/lib/graph/geometry.ts",
+    "src/lib/graph/geometry.test.ts",
+    "src/lib/graph/scene.ts",
+    "src/lib/graph/scene.test.ts",
+    "src/lib/graph/match.ts",
+    "src/lib/graph/match.test.ts",
+    "src/lib/graph/labels.ts",
+    "src/lib/graph/labels.test.ts",
+    ".progress/agents/stage5-graph-core.md"
+   ],
+   "sections": "§0 (Р1, Р3, Р5, Р6, Р8, Р13, Р19), §1, §2 целиком, включая уточнения при сверке (GRAPH_COLOR_KEYS в types.ts, соседи чужой зоны в квадрате NEIGHBOR_REACH + GRAPH_MOAT, монотонность указателя, итоги модели), §8 п. 12–13. Справочно: .progress/spec-stage2.md §2.6, .progress/agents/data-graph.md, .progress/agents/spec-stage5-review.md, HANDOFF «Долги после ревью этапов 1–2» (два долга этапа 5)",
+   "needsBrowser": false,
+   "summary": "Выполняется первым. Чистые модули с тестами vitest. Переработка graphLayout.ts: ров GRAPH_MOAT между зонами (claim/blocked; соседи по связи из чужой зоны — в квадрате NEIGHBOR_REACH + GRAPH_MOAT), разведение сохранённых нод в одной клетке (displaced), проверка центра новой зоны по фактическим нодам, toLayoutNodes(items, fixed) берёт архив и записи корзины с сохранённым местом. Тесты: коллизии, ров, постепенный рост, новая категория, время на 2000 записей. Новые файлы: lib/graph/types.ts (GraphCamera, Bounds, GraphViewport, GraphScene, GraphTheme, DrawState, GRAPH_COLOR_KEYS, константы альфы), geometry.ts (ступени масштаба, мир↔экран, deviceTransform, zoomAt, fitCamera, ensureVisible, пространственный индекс, hitNode, hitLink, nearestInDirection, sortByAngle, wheelSteps, pinchStep), scene.ts (buildGraphScene), match.ts (computeGraphMatch), labels.ts (pickLabels). src/store/graph.ts не трогать."
+  },
+  {
+   "key": "graph-base",
+   "wave": 0,
+   "model": "sonnet",
+   "files": [
+    "src/store/graph.ts",
+    "src/store/graph.test.ts",
+    "src/lib/actions.ts",
+    "src/lib/actions.test.ts",
+    "src/lib/savedSearch.ts",
+    "src/lib/savedSearch.test.ts",
+    "src/db/repo.ts",
+    "src/db/repo.test.ts",
+    "src/lib/hotkeyGuards.ts",
+    ".progress/agents/stage5-graph-base.md"
+   ],
+   "sections": "§0 (Р9, Р13, Р14, Р20), §1, §2.1 и §2.3 (типы и геометрия, которые использует стор), §3 вводная, §3.1, §3.2, §3.2а, §3.3, §3.6",
+   "needsBrowser": false,
+   "summary": "Выполняется вторым, после graph-core. Стор графа: ступени масштаба, cameraRestored, viewSize, bounds, cursorId, drag, linkFrom, selectedLink, menu, pickerFor, showArchive и hintSeen (localStorage), zoomStep, panBy, fitAll, centerOn, resetTransient, взаимное закрытие всплывающих; focusZone удаляется; тип GraphCamera переезжает в lib/graph/types, экспорт из стора сохраняется. Действия в actions.ts: actMoveNode, actLinkItems, actUnlinkItems, actSetCategory (отмена возвращает категорию и место), actRelayoutGraph (toast с отменой на 10 с); actApplySearch и openItemInSection из «Графа» раздел не меняют. repo.addPositions — места раскладки без затирания существующих, с тестами. savedSearch.isSavedSearchActive в графе. hotkeyGuards.ts — копия проверок из useHotkeys."
+  },
+  {
+   "key": "graph-look",
+   "wave": 0,
+   "model": "sonnet",
+   "files": [
+    "src/lib/graph/theme.ts",
+    "src/lib/graph/theme.test.ts",
+    "src/lib/graph/ambient.ts",
+    "src/index.css",
+    "src/styles/scenes.css",
+    "src/styles/pixel.css",
+    "docs/DESIGN.md",
+    "src/components/items/FilterBar.tsx",
+    ".progress/agents/stage5-graph-look.md"
+   ],
+   "sections": "§0 (Р3, Р4, Р7, Р16), §1.1, §2.1 (GraphTheme, GRAPH_COLOR_KEYS), §3 вводная, §3.4, §3.5, §3.7, §3.8, §3.9",
+   "needsBrowser": false,
+   "summary": "Выполняется третьим (от graph-base не зависит, нужен только lib/graph/types из graph-core). theme.ts: реэкспорт GRAPH_COLOR_KEYS, packRgba, readGraphTheme через пробник цвета и служебный canvas 1×1, subscribeGraphTheme; тесты без DOM. ambient.ts — контракт живого фона для этапа 6. Весь CSS этапа: --ground и --graph-* в index.css («Классика») и scenes.css (восемь блоков сцен + :root.pixel); в pixel.css раздел «6. Граф» (px-graph-stage, px-graph-label с data-plate), «Телефон» становится разделом 7. Раздел «13. Граф» в docs/DESIGN.md плюс строки в §3 и §5. FilterBar: проп mode; в режиме 'graph' нет sortBlock, в режиме 'list' ничего не меняется. Существующие экраны выглядеть иначе не должны."
+  },
+  {
+   "key": "graph-paint",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src/lib/graph/draw.ts",
+    "src/lib/graph/draw.test.ts",
+    ".progress/agents/stage5-graph-paint.md"
+   ],
+   "sections": "§0 (Р1, Р3, Р4, Р5, Р7), §1.1, §2.1, §2.3, §3.4, §3.7 (соответствие полей темы), §4.0, §4.1",
+   "needsBrowser": false,
+   "summary": "Чистые функции «сцена → вызовы canvas» с итоговыми экспортами из таблицы §4.0 (их импортирует GraphCanvas в волне 2). linkUnit; drawLinksPixel — линии Брезенхэма в буфер Uint32Array поверх ImageData, решётка привязана к миру, пунктир между зонами, горячие связи с кромкой, приглушение альфой в байте цвета; drawLinksClassic — три прохода stroke; drawNodes — тень, рамка, заливка цветом категории, метка «Входящие», альфа приглушённых и архивных, рамки выбранной, наведённой и соседей, перетаскиваемая нода, цель протяжки. Невидимое отсекается через пространственный индекс и отсечение отрезков. Все координаты — целые пиксели устройства. Тесты с подставным контекстом, включая 2000 нод и 3000 связей по времени. Импортирует только волну 0."
+  },
+  {
+   "key": "graph-dom",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/graph/GraphOverlay.tsx",
+    "src/components/graph/GraphLabels.tsx",
+    "src/components/graph/GraphTooltip.tsx",
+    "src/components/graph/GraphNodeMenu.tsx",
+    "src/components/graph/GraphCategoryPicker.tsx",
+    "src/components/graph/GraphLinkTools.tsx",
+    "src/components/graph/GraphA11y.tsx",
+    ".progress/agents/stage5-graph-dom.md"
+   ],
+   "sections": "§0 (Р6, Р11, Р12, Р17, Р18), §1.1, §2.1, §2.3 (worldToScreen, visibleBounds), §2.6, §3.1, §3.2, §3.7 (px-graph-label), §4.0, §4.3, §5",
+   "needsBrowser": false,
+   "summary": "DOM-слой поверх canvas, экспорт GraphOverlay и GraphOverlayProps строго по таблице §4.0. Подписи: pickLabels; сдвиг — только transform контейнера через useGraph.subscribe, без перерисовки React на каждый кадр. Подсказка наведённой ноды. Меню ноды: DropdownMenu с якорем в точке клика плюс itemActionList. Выбор категории цифрами 0–9 через actSetCategory, с preventDefault и stopPropagation. Ручка связи с data-graph-handle, строка режима связи, плашка выбранной связи «Убрать связь», строка для экранного диктора. Интерактивные элементы помечены data-graph-ui. Оба стиля через примитивы, зоны нажатия на телефоне ≥ 36 px. Браузер недоступен (раздел открывается после волны 2): сдача по typecheck, тестам и вычитке по образцу ItemMenu.tsx; сценарии проходит graph-screen."
+  },
+  {
+   "key": "graph-chrome",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/graph/GraphHeader.tsx",
+    "src/components/graph/GraphToolbar.tsx",
+    "src/components/graph/GraphHint.tsx",
+    ".progress/agents/stage5-graph-chrome.md"
+   ],
+   "sections": "§0 (Р5, Р9, Р15), §1.1, §3.1, §3.2 (actRelayoutGraph), §4.0, §4.4, §5",
+   "needsBrowser": false,
+   "summary": "Экспорты строго по таблице §4.0 (их импортирует GraphView в волне 2). GraphHeader: заголовок «Граф» по образцу ItemsView, счётчик «подходит N из M» или «M · связей: L», подсказка клавиш. GraphToolbar: плавающая панель в левом нижнем углу сцены — масштаб ±, чип процента, «Весь граф», «Разложить заново», переключатель «Архив»; data-graph-ui, role=toolbar, на телефоне кнопки 36 px. GraphHint: первая подсказка, отдельный текст для мыши и для касания, закрывается навсегда. Браузер недоступен: сдача по typecheck и вычитке; сценарии проходит graph-screen. FilterBar перенесён в graph-look."
+  },
+  {
+   "key": "graph-nav",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/layout/Sidebar.tsx",
+    "src/hooks/useHotkeys.ts",
+    "src/components/palette/CommandPalette.tsx",
+    "src/views/settings/ShortcutsSection.tsx",
+    ".progress/agents/stage5-graph-nav.md"
+   ],
+   "sections": "§0 (Р13, Р14, Р17, Р20), §3.1, §3.2, §4.0, §4.5, §5. Справочно: .progress/spec-stage3.md §1.3",
+   "needsBrowser": true,
+   "summary": "Sidebar: пункт «Граф» пятым (перед «Корзиной»), count необязателен; в разделе «Граф» клик по категории или тегу не меняет раздел, а ставит или снимает фильтр (приглушение). useHotkeys: клавиша 5 открывает граф. CommandPalette: «Перейти: Граф»; в графе — «показать весь», «разложить заново», «показать/скрыть архив»; выбор категории и тега из палитры в графе оставляет в графе. ShortcutsSection: строка разделов 1–5, клавиши графа, дополнение описания секции. Вне графа поведение не меняется. Порт 5193; до волны 2 раздел «Граф» пуст, проверяется только навигация."
+  },
+  {
+   "key": "graph-screen",
+   "wave": 2,
+   "model": "opus",
+   "files": [
+    "src/views/GraphView.tsx",
+    "src/components/graph/GraphCanvas.tsx",
+    "src/components/graph/useGraphGestures.ts",
+    "src/components/graph/useGraphKeys.ts",
+    "src/components/layout/AppShell.tsx",
+    ".progress/agents/stage5-graph-screen.md"
+   ],
+   "sections": "§0 целиком, §1, §2.1–§2.5 (как пользоваться), §3.1, §3.2, §3.2а, §3.4–§3.6, §3.9, §4.0, §4.2, §4.3 и §4.4 (сценарии проверки), §5, §6",
+   "needsBrowser": true,
+   "summary": "Идёт после всей волны 1 и собирает экран из её файлов. GraphView: данные → computeLayout (мемо по подписи раскладки) → addPositions для placed без displaced и setPositions для displaced, без повторов → незаписанные броски → computeGraphMatch → buildGraphScene; первое вписывание, показ выбранной ноды, пустые состояния, разметка §4.2.1 с GraphOverlay, GraphHeader, GraphToolbar, GraphHint и FilterBar mode=graph. GraphCanvas: три canvas, размер в пикселях устройства, ResizeObserver, тема и её перечитывание, перерисовка только по запросу, data-draw-ms. useGraphGestures: сдвиг, колесо, двойной клик, перенос (findFreeSpot → actMoveNode), протяжка связи, клик по связи, правая кнопка, касания и щипок. useGraphKeys: клавиши раздела в фазе перехвата. AppShell: VIEWS, ленивый чанк, case 'graph'. Порт 5190. В браузере проходит свои сценарии, сценарии graph-dom и graph-chrome, отмену «Разложить» и «E» на 2000 записях; замечания по чужим файлам — в отчёт."
+  }
+ ],
+ "results": [
+  {
+   "key": "graph-core",
+   "model": "opus",
+   "status": "готово",
+   "summary": "The graph-core package is done. `npm run typecheck` is clean and `npm test` passes: 53 files, 1692 tests.\n\ngraphLayout.ts rework (spec §2.2):\n- The file header lists the 4 guarantees, and `GRAPH_MOAT = 2` is added.\n- `LayoutResult` gets `displaced`, and `bounds` is now `Bounds | null`.\n- Order of work:\n  - 2a: saved positions in (createdAt, id) order; a node whose cell is taken goes to displacement.\n  - 2b: hidden positions only mark their cell as occupied.\n  - 2c: a displaced node goes to the nearest free cell. This uses a helper shared with `findFreeSpot`.\n- The moat is tracked with occupied + claim (a cell claimed by several zones is closed to all).\n- A new zone's centre is also checked against nodes that already have a place and against hidden records' cells, so its circle plus the moat touches none of them.\n- Placement always goes through blocked(cell, zone). For a linked node of another zone the search square is 9×9; for its own zone it stays 5×5.\n- `toLayoutNodes(items, fixed?)` includes archive; trash items only when `fixed` has a valid position for them.\n\nNew modules in `lib/graph`: `types.ts`, `geometry.ts`, `scene.ts`, `match.ts` and `labels.ts`, as specified in §2.1 and §2.3–2.6.\n\nTests:\n- graphLayout: 64. Every `computeLayout` call goes through a wrapper that checks no two nodes share a cell.\n- Layout cases covered: collisions (2 and 3 nodes in one cell, off-grid point, independence from input order and `fixed` keys), hidden records, the moat, gradual growth (7×8, then 500 nodes one by one; 70 % into one zone; new category at step 150), `toLayoutNodes`, and 2000 saved + 1 new under 300 ms.\n- geometry 27, scene 10, match 9, labels 12.\n\nWith the moat temporarily switched off, the moat and growth tests fail. That edit has been removed.",
+   "deviations": [
+    "pickLabels: ids in `priority` get a plate label even when the node is dimmed (Р6 says «всегда»). The «неприглушённые» filter is applied only in the second pass, as written in §2.6. If dimmed nodes should not get plates, GraphView can leave them out of `priority`.",
+    "When checking a new zone's centre, hidden records (step 2b) count at their grid cell's centre, not at their exact saved point. The spec says «клетки из 2б».",
+    "Fallback when the «подсолнух» search runs out (MAX_CENTER_TRIES): the centre is now placed to the right of every zone and every point that has a place, with an extra moat margin. Previously it was only to the right of the zone circles.",
+    "snapZoom: on a tie it picks the smaller step; ±Infinity map to the edge steps. stepZoom from a zoom that is not on a step goes to the nearest step in that direction.",
+    "zoomAt also snaps the zoom to a step. It computes without rounding ox/oy, so zooming in and back out at the same point returns exactly the same camera. worldToScreen and screenToWorld use the integer ox/oy, so they match what is drawn.",
+    "fitCamera: «размер 0» is read as a scene width or height ≤ 0. padPx applies on each side.",
+    "ensureVisible: the margin is capped at half the scene side. If the camera is already centred on p, it returns null.",
+    "wheelSteps: after a step the accumulator resets to 0; a change of direction starts accumulating from scratch."
+   ],
+   "notVerified": [
+    "No browser check; this package does not need one.",
+    "Timing figures are from this machine under vitest. The test limits are 1500 ms (2000 nodes), 300 ms (2000 + 1), 5 s (growth) and 100 ms (scene)."
+   ],
+   "forMainSession": [
+    "`src/store/graph.ts` was not touched and still declares its own `GraphCamera`. Moving it to `@/lib/graph/types` is graph-base's job.",
+    "The new LayoutResult.displaced field is ready for GraphView: call addPositions for `placed` minus `displaced`, and setPositions for `displaced` (§3.2a).",
+    "The «тропки» question from §8 item 13 is still open; the algorithm follows the spec as written."
+   ]
+  },
+  {
+   "key": "graph-base",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет graph-base готов. Стор графа переписан под ступени масштаба и новые поля; в actions.ts добавлены пять действий графа и поведение «Графа» в actApplySearch и openItemInSection. Добавлены repo.addPositions, ветка графа в isSavedSearchActive и hotkeyGuards.ts. После правок npm run typecheck чист, npm test зелёный: 53 файла, 1722 теста.",
+   "deviations": [
+    "actLinkItems после linkItems перепроверяет связь: запись в корзине или неизвестная даёт toast.error 'Не удалось связать записи' вместо ложного 'Записи связаны' (linkItems в таких случаях молча ничего не делает).",
+    "Toast actSetCategory для нескольких записей: 'Категория: Работа (2)'. Считаются только записи, у которых категория действительно меняется.",
+    "В actions.test.ts из таблицы кейса actApplySearch убрана строка ['graph','library']: по Р14 поиск в графе остаётся в графе. Заменено отдельным describe 'граф: openItemInSection и actApplySearch'.",
+    "NO_LIST_VIEWS в actions.ts теперь {settings, trash}: граф обрабатывается раньше отдельной веткой.",
+    "hotkeyGuards.ts страхуется от окружения без DOM (typeof document / HTMLElement), чтобы импорт был безопасен под vitest в среде node."
+   ],
+   "notVerified": [
+    "Браузер пакету не нужен и не запускался.",
+    "hotkeyGuards.ts тестами не покрыт: в vitest нет DOM.",
+    "cameraRestored ставится только при создании стора и после fitAll остаётся false. Это буквально по спецификации."
+   ],
+   "forMainSession": [
+    "graph-screen: cameraRestored остаётся false и после первого fitAll. Чтобы при повторном открытии графа в той же сессии не вписывать камеру заново, нужен свой флаг или ref в GraphView.",
+    "graph-screen и graph-dom: addPositions пишет только id без положения. Для разведённых нод (displaced), у которых место уже есть, вызывать setPositions. Для остальных placed использовать addPositions.",
+    "graph-nav: useHotkeys.ts на hotkeyGuards не переводился, дубль проверок остаётся (по спецификации это необязательно)."
+   ]
+  },
+  {
+   "key": "graph-look",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет graph-look готов. Добавлены lib/graph/theme.ts (GRAPH_COLOR_KEYS, packRgba, readGraphTheme, subscribeGraphTheme) и ambient.ts. CSS: --ground и --graph-* в index.css, scenes.css (восемь сцен и :root.pixel) и раздел «6. Граф» в pixel.css («Телефон» стал разделом 7). В DESIGN.md раздел «13. Граф» и строки в §3 и §5. FilterBar получил проп mode: в 'graph' нет sortBlock. npm run typecheck чист, npm test зелёный (54 файла, 1737 тестов).",
+   "deviations": [
+    "В theme.ts сверх контракта добавлены экспорты composeGraphTheme и тип GraphColorReader (чистая сборка темы по таблице §3.7), чтобы покрыть соответствие «поле темы ← переменная» тестом без DOM.",
+    "Тесты ambient.ts лежат отдельным describe в theme.test.ts: отдельного тестового файла в списке пакета нет.",
+    "Сверка размера: в spec-stage5 для ширины 1280/390 и браузера проверка не требовалась пакету; CSS проверен только компиляцией через временный dev-сервер (порт 5196, остановлен, порт свободен)."
+   ],
+   "notVerified": [
+    "readGraphTheme и subscribeGraphTheme в настоящем DOM: принимает ли canvas fillStyle со строкой getComputedStyle для oklch и color-mix(), совпадают ли байты с canvas 1×1, даёт ли selEdge в «Классике» null. Тесты идут в node, проверит graph-screen.",
+    "Вид сцены и подписей (px-graph-stage, px-graph-label) в браузере: потребителей до волн 1–2 нет.",
+    "FilterBar mode=\"graph\" в браузере (потребитель — GraphView, волна 2); режим 'list' без пропа изменён только условием показа sortBlock.",
+    "Существующие экраны в «Классике» и пиксельных сценах глазами не сверялись: новые переменные и правила никем не используются."
+   ],
+   "forMainSession": [
+    "Если вы коммитите по пакетам, то файлы graph-look: src/lib/graph/{theme.ts,theme.test.ts,ambient.ts}, src/index.css, src/styles/{scenes.css,pixel.css}, docs/DESIGN.md, src/components/items/FilterBar.tsx, .progress/agents/stage5-graph-look.md.",
+    "Для graph-screen: GraphCanvas должен вызывать readGraphTheme(stage) заново по subscribeGraphTheme и перед первой отрисовкой после смены класса на <html>; readGraphTheme создаёт пробник и canvas на вызов, поэтому кэшировать тему между сменами сцены.",
+    "Для graph-chrome/graph-dom: в «Классике» --graph-sel-edge и --graph-node-edge прозрачны, поэтому у темы nodeEdge/shadow/selEdge равны null; подписи в «Классике» (px-graph-label не действует) берут цвет из токенов утилитами, --label в :root задан как --foreground для запасного варианта."
+   ]
+  },
+  {
+   "key": "graph-paint",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет graph-paint готов. Создан src/lib/graph/draw.ts с экспортами по таблице §4.0: LinkBuffer, linkUnit, drawLinksPixel, drawLinksClassic, drawNodes. Модуль импортирует только волну 0: geometry, types и GRAPH_NODE_SIZE из graphLayout.\n\ndrawLinksPixel рисует линии Брезенхэма по номерам блоков u×u. Решётка привязана к миру: угол (ox mod u, oy mod u). Номер шага считается от начала связи, поэтому после отсечения обход начинается сразу с видимого шага, а чередование цвета и пунктир при сдвиге не ползут. Отсечение Лианга — Барски идёт в номерах блоков с запасом 1.5 блока. Связь между зонами — пунктир (шаги s%8≥5 пропускаются). У приглушённой альфа умножается на 0.2 прямо в байте цвета. Порядок: приглушённые, обычные, горячие. У горячих сначала кромки 3×3 блока всех связей, потом сердцевины; прозрачная кромка не пишется. Запись идёт построчно с отсечением по границам буфера.\n\ndrawLinksClassic делает три прохода, в каждом один beginPath и один stroke; пустой проход пропускается.\n\ndrawNodes отсекает ноды через queryBounds(visibleBounds(v,32)). Проходы: тень, рамка, заливка, метка «Входящие». Альфа 0.2 у приглушённых, 0.45 у архивных; fillStyle и globalAlpha ставятся только при смене значения. Затем рисуются клетка броска, нода в точке указателя с тенью 2b и призрак на прежнем месте (альфа 0.3). Последними идут рамки: соседи, наведённая и курсор, выбранная (золото с зазором и тёмная кромка), цель протяжки. В конце globalAlpha = 1.\n\ndraw.test.ts — 33 теста с подставным контекстом, все пункты §4.1 покрыты. Тест нагрузки (2000 нод и 3000 связей на 0.125, экран 1600×1000) проходит за ~5.7 мс после одного прогрева, без прогрева ~11 мс; предел 60 мс. npm run typecheck и npm test (55 файлов, 1770 тестов) зелёные.",
+   "deviations": [
+    "Рамки выделения ноды, которую тянут, рисуются в точке указателя, а её связи остаются на прежнем месте (в спецификации не задано).",
+    "Нода в точке указателя рисуется с альфой 1, призрак на прежнем месте — с альфой min(своя, 0.3) (альфа ноды в точке указателя в спецификации не задана).",
+    "У горячих связей сначала рисуются кромки всех горячих, затем все сердцевины (в спецификации — кромка, затем сердцевина, без уточнения про несколько связей). Так кромка соседней горячей связи не перекрывает сердцевину.",
+    "Отсечение Лианга — Барски у пиксельных связей идёт в номерах блоков (пиксели устройства / u) с запасом 1.5 блока, а не в самих пикселях устройства.",
+    "Протягиваемая связь (tempLink) входит в число, которое возвращают drawLinksPixel и drawLinksClassic. Пустые проходы «Классики» stroke не вызывают."
+   ],
+   "notVerified": [
+    "Вид на настоящем canvas в браузере не проверялся: браузер по заданию не нужен, вид проверят graph-screen и приёмка.",
+    "Порядок байтов на настоящем ImageData не проверялся: тесты пишут через packRgba из theme.ts, а модуль draw определяет байт альфы той же проверкой little-endian.",
+    "Предел 60 мс в тесте нагрузки замеряется после одного прогрева; без прогрева один прогон занял ~11 мс."
+   ],
+   "forMainSession": [
+    "Пороги рамки, тени и метки «Входящие» считаются по k = zoom·dpr, как в §4.1. При dpr 2 метка видна уже с масштаба 25 %, а Р4 говорит «видна от 50 %». Если нужно строго по масштабу, порог надо считать по zoom.",
+    "Рамка соседей выбранной ноды в пиксельных сценах — золото без внешней тёмной кромки (так в §4.1). Изнутри к ней прилегает тёмная рамка самой ноды. DESIGN §13 говорит «золото без тёмной кромки на земле не используется». Если приёмка сочтёт это нарушением, кромку selEdge можно добавить в одну строку в draw.ts.",
+    "Для graph-screen: drawLinksPixel берёт размер из buf.width и buf.height, drawLinksClassic — из round(v.width·dpr) и round(v.height·dpr); они должны совпадать с размером canvas. lineWidth после drawLinksClassic не восстанавливается, globalAlpha возвращается в 1."
+   ]
+  },
+  {
+   "key": "graph-dom",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет graph-dom сдан: написан DOM-слой графа из семи файлов (GraphOverlay, GraphLabels, GraphTooltip, GraphNodeMenu, GraphCategoryPicker, GraphLinkTools, GraphA11y) и файл прогресса. npm run typecheck чист, npm test зелёный: 54 файла, 1737 тестов. В браузере ничего не проверялось, раздел «Граф» откроется после волны 2. Рендер всех частей проверен временным SSR-прогоном (renderToString), после него тестовый файл удалён.\n\nПодписи:\n- Сдвиг идёт только через transform контейнера: из useGraph.subscribe (срабатывает только при смене камеры или размера сцены) и из useLayoutEffect на каждом коммите.\n- Подписка React — на масштаб, ширину и высоту; координаты камеры в React не подписываются.\n- Набор подписей после сдвига пересчитывается с задержкой 120 мс. Приоритет: выбранная нода и до 24 её соседей на плашке.\n\nВыбор категории: цифры 0–9 (в том числе с цифровой клавиатуры) гасятся через preventDefault и stopPropagation. Тем же способом гасятся стрелки, Tab по кругу, Home, End, Enter, пробел и Esc. Любые клавиши без Ctrl, ⌘ и Alt до горячих клавиш приложения не доходят.\n\nМеню ноды: DropdownMenu с якорем-span 1×1 px в точке клика. Корень смонтирован всегда, иначе закрытие не вернуло бы фокус. После «Категория…» фокус забирает список категорий, иначе фокус уходит на сцену.\n\nРучка связи, строка режима связи и плашка «Убрать связь» сделаны по спецификации. Зоны нажатия на телефоне: ручка, «Отмена», «Убрать связь» — 36 px, строки категорий — min-h-9.",
+   "deviations": [
+    "В GraphNodeMenu подсказка клавиши «E» у пунктов из itemActionList («В базу знаний», «Восстановить») скрыта: в графе E — категория (Р12), подсказка была бы неверной. Остальные подсказки (A, F, Del) показываются.",
+    "Общие помощники пакета (placeBox, useMeasuredSize, focusGraphStage, STATUS_LABEL, overlayViewport) лежат в GraphTooltip.tsx: список файлов пакета закрыт. Циклических импортов во время выполнения нет, GraphOverlay соседи импортируют только как тип. GraphA11y дополнительно экспортирует GRAPH_A11Y_HELP_ID.",
+    "Плашка подписи в «Классике» дополнена bg-popover и тонким кольцом: спецификация описывает для неё только data-plate.",
+    "У пунктов выбора категории разметка одна для обоих стилей: px-pop плюс классы «Классики», строки — px-nav; у текущей категории справа значок check.",
+    "Запас до края сцены для px-pop-коробок (подсказка, список категорий, плашка связи) — 8 px: рама и жёсткая тень px-pop выступают наружу, а слой DOM обрезает по краю сцены."
+   ],
+   "notVerified": [
+    "Вид и поведение в браузере: фактическое положение и обрезка коробок у краёв сцены (placeBox по измеренным размерам), цвета и рамки px-pop, px-nav, px-graph-label в «Осени» и «Классике», 390 px.",
+    "Меню Base UI с якорем-span и возврат фокуса через finalFocus: после «Категория…» и после остальных пунктов.",
+    "Закрытие списка категорий и плашки связи по клику вне (document pointerdown в фазе перехвата).",
+    "Отсутствие перерисовки React при сдвиге: по коду подписка на zoom и размер, но не на камеру; в браузере счётчик перерисовок не снимался.",
+    "Подсказка при наведении: задержка 250 мс и скрытие при жесте проверены только чтением кода, SSR-прогон её не охватывает.",
+    "Сценарии §4.3 целиком: подписи на 100 % и их отсутствие на 75 %, меню, ручка, плашка связи, отмена смены категории. Их проходит graph-screen."
+   ],
+   "forMainSession": [
+    "graph-screen: у выбора категории и плашки связи контейнер помечен data-graph-ui, поэтому useGraphKeys (перехват на document) их клавиши игнорирует. Ручка связи помечена data-graph-handle, а не data-graph-ui, как в §4.0. Кнопка ручки не вызывает stopPropagation: жесты на сцене должны сами пропускать click по [data-graph-handle].",
+    "graph-screen: aria-describedby сцены должен ссылаться на id graph-a11y-help (p.sr-only внутри GraphOverlay).",
+    "graph-screen: GraphOverlay рисует выбор категории, меню и плашку внутри div[data-graph-overlay] с overflow-hidden. Для сцены нужен relative-контейнер (div[data-graph-stage] уже relative по §4.2.1). Координаты menu.x, menu.y — CSS-пиксели сцены, от левого верхнего угла.",
+    "graph-screen: проверить сценарии на реальном браузере: ручка не должна закрываться при pointerdown по ней (gestures пропускают data-graph-handle), правая кнопка на ноде должна давать preventDefault, чтобы контекстное меню браузера не открывалось.",
+    "Если замечания графу-screen по виду потребуют CSS: правило для px-nav[aria-selected] в строках выбора категории и фон строк в «Осени» смотреть вживую, новых правил заранее не запрашивалось."
+   ]
+  },
+  {
+   "key": "graph-chrome",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Реализованы GraphHeader, GraphToolbar и GraphHint по §4.4 и таблице §4.0, с точными сигнатурами экспортов. npm run typecheck чист, npm test зелёный (54 файла, 1737 тестов). Браузер пакету не нужен и не использовался.",
+   "deviations": [
+    "Переключатель архива без видимого слова «Архив»: aria-label и title — «Показывать архив» (§4.4 требует значковую кнопку, title такой же).",
+    "Чип масштаба: вместо aria-label у span — title=\"Масштаб\"; значение выводится с неразрывным пробелом, 12,5 % как «12,5 %» (Math.round дал бы «13 %»).",
+    "К кнопкам панели добавлены max-md:size-9 и aria-pressed:bg-muted aria-pressed:text-foreground (нажатое состояние в «Классике»; в пиксельных сценах золото даёт pixel.css)."
+   ],
+   "notVerified": [
+    "Вид и поведение в браузере (Осень/Классика, день/ночь, 1280 и 390 px): раздел «Граф» открывается только после волны 2, сценарии §4.4 проходит graph-screen.",
+    "Что панель (~260 px) не перекрывается плавающей кнопкой «Добавить» на 390 px: расчёт по размерам, не замер.",
+    "Порядок вариантов Tailwind для max-md:left-[max(...)] против left-2 и поведение pointer-coarse: на реальном касании не проверялись."
+   ],
+   "forMainSession": [
+    "Правок вне файлов пакета нет, git не трогал. GraphView (graph-screen) импортирует: GraphHeader({ total, matched, links, filtered }), GraphToolbar(), GraphHint() — без других пропсов.",
+    "GraphToolbar и GraphHint позиционируются absolute относительно сцены: контейнер div[data-graph-stage] должен быть relative.",
+    "Подсказка клавиш в GraphHeader показывается только при pixel:lg:pointer-fine, как у ItemsView, поэтому в «Классике» её нет."
+   ]
+  },
+  {
+   "key": "graph-nav",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет graph-nav сделан: пункт «Граф» пятым в боковой панели (без счётчика), клавиша 5, команды палитры, строки в горячих клавишах. В графе клик по категории или тегу ставит и снимает фильтр, раздел не меняется. typecheck и npm test зелёные (54 файла, 1737 тестов). В браузере на порту 5187 проверены «Осень», «Зима» и «Классика» днём, а также 390 px.",
+   "deviations": [
+    "В CommandPalette в графе пункт «Искать «…» в базе знаний» теперь не уводит в «Базу знаний» (общая правка toLibrary для категории и тега), поэтому в графе подпись заменена на «Искать «…» на графе»; вне графа без изменений. Спецификация это не оговаривала."
+   ],
+   "notVerified": [
+    "«Классика» ночью и «Осень» ночью, «Луг» и «Бумага» (смотрелись «Осень»/«Зима» и «Классика» днём).",
+    "«Граф: разложить заново» из палитры не запускалось: раздел «Граф» пуст до волны 2.",
+    "#/graph после перезагрузки: проверяет graph-screen.",
+    "Строки «Горячих клавиш» в «Классике» глазами не смотрел; разметка общая с пиксельными сценами."
+   ],
+   "forMainSession": [
+    "Счётчики категорий и список тегов в боковой панели в графе считаются по записям «Базы знаний» (как и вне графа). Записи из «Входящих» и «Архива» в легенду графа не попадают; если нужно считать по всем записям вне корзины, это отдельная правка Sidebar.",
+    "Порт 5187 освобождён: в состоянии Listen нет соединений, остались только TIME_WAIT и FinWait2; вкладка закрыта."
+   ]
+  },
+  {
+   "key": "graph-screen",
+   "model": "opus",
+   "status": "готово",
+   "summary": "The graph screen is built and wired in; `npm run typecheck` is clean and `npm test` passes (55 files, 1770 tests). The graph-screen, graph-dom and graph-chrome scenarios were checked in the browser on my own dev server on port 5188. That server is stopped and the port is free.\n\nWhat the screen does:\n- **GraphView.** The layout is recomputed only when its signature changes: item ids, categories, created dates, links, trash flag, category order and saved positions. New places are saved with `addPositions`; nodes displaced from a taken cell are saved with `setPositions`. Only one write runs at a time, and a set that failed is not retried. A dropped node shows at its new place until the database confirms it, or for at most 3 s. The screen also handles filtering (`computeGraphMatch`), scene building, fit-to-graph once per session, showing the selected node, both empty states, and the markup from §4.2.1.\n- **GraphCanvas.** Three canvases sized in device pixels, resize tracking, and the theme read from CSS variables and re-read on scene or theme change. It draws only on request: one `requestAnimationFrame` per change, and frame time is written to `data-draw-ms`. The shared gesture state lives in `GraphLive`.\n- **useGraphGestures.** Every row of the input table in §4.2.3.\n- **useGraphKeys.** Every row of the key table in §4.2.4, handled in the capture phase.\n- **AppShell.** `#/graph`, a separately loaded chunk, and its own error boundary.\n\nChecked in the browser:\n- **Idle and camera.** No `requestAnimationFrame` calls while the graph is still (0 in 2 s), and 5 pans in a row cost 1 frame. The camera survives a reload and a trip to Inbox and back.\n- **Moving a node.** Dropped on a taken cell, it goes to the nearest free one. The item's `updatedAt` does not change, and Esc during the drag cancels it.\n- **Links.** Linking works with Shift+drag (synthetic events only, see the not-verified list), from the link handle, and in link mode. Clicking a link shows its plate; Del removes it and Undo brings it back.\n- **Keys.** E with a digit, then Undo, restores the category and the node's place. Del, then Undo or restoring from Trash, puts the node back on its old place.\n- **New item.** It lands next to its category's zone and no other point moves.\n- **Filtering.** Search and type filters dim non-matching nodes. The archive toggle hides and restores archived nodes. In the graph the filter bar has no sort or view controls; lists still have them.\n- **Themes.** Autumn and Classic, day and night, recolor the graph without a reload.\n- **390 px.** One-finger pan, pinch and tap open the details sheet; the toolbar and the floating Add button do not overlap.\n- **2031 items.** A full layout takes 10 ms. Frame time while panning (median / max): 12.5 % 5.1 / 6.2 ms, 25 % 8.3 / 8.5 ms (slightly over the 8 ms target), 50 % 7.6 / 7.7 ms, 100 % 5.4 / 5.6 ms. \"Разложить заново\" followed by Undo, either immediately or after 2 s, leaves all 2031 positions as before.\n- No errors in the console.",
+   "deviations": [
+    "The dev server ran on port 5188, as the task said, not 5190 from the spec.",
+    "`useGraphGestures` takes the stage element (`stage: HTMLDivElement | null`) instead of a ref. The stage appears and disappears with the empty states, and an effect bound to a ref would not attach the listeners after it remounts.",
+    "The selected node is also kept visible when the stage size changes. Opening the side details panel narrows the stage, and the spec's selection-change rule alone let the node slide off the edge.",
+    "Fit-to-graph runs once per session through a module-level flag in `GraphView`. Without it, returning to the section would re-fit when `cameraRestored` is false, which breaks scenario 1.",
+    "In link mode (L or the handle), the canvas draws a temporary link from the node to the mouse pointer through the `tempLink` field of `DrawState`. This is an addition.",
+    "Tab moves around the node it started from (by `sortByAngle`, in a circle) for as long as the cursor stays on a neighbour reached by Tab. Without this, Tab would jump on to the neighbour's own links.",
+    "A long touch press (500 ms) on a node opens the menu with its own timer, because iOS does not fire `contextmenu`.",
+    "Handled keys only get `preventDefault()`, without `stopPropagation()`. `useHotkeys` skips them on its own, and events further down the tree, such as `contextmenu` after Shift+F10, still arrive.",
+    "The camera store's `cameraRestored` is not modified; only the module-level flag in `GraphView` is used."
+   ],
+   "notVerified": [
+    "Sharpness at dpr 1.5 (Windows scaling 150 %): the browser tool could not emulate devicePixelRatio. Everything was checked at dpr 1.",
+    "Shift+drag with a real mouse: the browser tool did not pass Shift into pointerdown, so the gesture became a node move. Link drawing with Shift was checked with synthetic PointerEvents only.",
+    "Touch and pinch were checked with synthetic touch PointerEvents, not on a real device.",
+    "The hint's «Понятно» button was not clicked (the hint was closed through the store); after a reload the hint does not reappear.",
+    "Changing the category from the details panel itself (scenario 5) was not checked. The same `setCategory` path was checked through the E key and the picker.",
+    "The Луг, Бумага and Зима scenes were not looked at. The link handle and plates at the stage edges at 390 px were not checked.",
+    "At 25 % zoom with 2031 items, frame time is 8.3–8.5 ms, slightly over the 8 ms target."
+   ],
+   "forMainSession": [
+    "Drawing (graph-paint): with the §6 load data (3000 random links across the whole graph), the pixel links at 12.5 % and 100 % merge into a solid hatching that covers the nodes. Worth showing the user and deciding whether to dim ordinary links at small zoom.",
+    "AppShell/DetailPane (not this package): at 390 px, closing the details sheet sends focus to body instead of the graph stage. Graph keys still work, because focus on body is allowed.",
+    "Most of the frame time at 100 % is the fixed cost of `buf.fill` + `putImageData` over the whole canvas (about 5 ms on a 982×604 canvas). On large windows the fallback in risk 2 of the spec (`putImageData` over a dirty rectangle) may be needed.",
+    "The port 5188 IndexedDB holds 2031 load-test records and test edits («Запись 5» moved to the «Работа» category, demo-19 moved and linked to demo-11/demo-20). They do not affect other ports."
+   ]
+  }
+ ],
+ "css": null,
+ "checks": {
+  "typecheck": "чисто (npm run typecheck, tsc -b, ошибок нет)",
+  "tests": "Файлов: 55 (все прошли), тестов: 1770 (все прошли), упавших нет. Команда: npm test (vitest run), длительность около 3.1 с.",
+  "ports": "свободны. Get-NetTCPConnection -State Listen по диапазону 5174–5199 вернул пустой результат, слушающих портов с PID нет."
+ }
+}

@@ -8,6 +8,7 @@
   --brand: #d2603a; --brand-hi: #ee8f63; --brand-lo: #9a3d20; --brand-foreground: #fff3da;
   --gold: #f2c14e; --leaf: #5fa052; --danger: #a8261d; --shadow: rgb(40 24 10 / .28);
   --label: #fff6dc; --label-edge: #3a2414; --rope-a: #f4e2b0; --rope-b: #c39a5e; --rope-edge: #4a2e1a;
+  --ground: #86ab5e;
 }
 :root.sc-meadow.dark {
   --wood-dark: #14111d; --wood: #3d3554; --wood-hi: #5a4f76; --wood-lo: #29233a;
@@ -16,6 +17,7 @@
   --brand: #e2764e; --brand-hi: #f3a07c; --brand-lo: #a84a2a; --brand-foreground: #24160f;
   --gold: #f6cf62; --leaf: #6fb565; --danger: #ff8f7d; --shadow: rgb(0 0 0 / .4);
   --label: #f5ecd0; --label-edge: #0e0c16; --rope-a: #cfc3e6; --rope-b: #7f76a3; --rope-edge: #14111d;
+  --ground: #1f3038;
 }
 /* ── Осень ── */
 :root.sc-autumn {
@@ -25,6 +27,7 @@
   --brand: #c2452d; --brand-hi: #e2714f; --brand-lo: #8c2c1a; --brand-foreground: #fff3da;
   --gold: #f2c14e; --leaf: #7d9a3c; --danger: #a8261d; --shadow: rgb(40 24 10 / .28);
   --label: #fff6dc; --label-edge: #3a2414; --rope-a: #f4e2b0; --rope-b: #c39a5e; --rope-edge: #4a2e1a;
+  --ground: #c2a55e;
 }
 :root.sc-autumn.dark {
   --wood-dark: #170f18; --wood: #4a3040; --wood-hi: #6b4658; --wood-lo: #33202c;
@@ -33,6 +36,7 @@
   --brand: #e2764e; --brand-hi: #f3a07c; --brand-lo: #a84a2a; --brand-foreground: #24160f;
   --gold: #f6cf62; --leaf: #6fb565; --danger: #ff8f7d; --shadow: rgb(0 0 0 / .4);
   --label: #f5ecd0; --label-edge: #0e0c16; --rope-a: #cfc3e6; --rope-b: #7f76a3; --rope-edge: #14111d;
+  --ground: #2c2132;
 }
 /* ── Бумага ── */
 :root.sc-paper {
@@ -42,6 +46,7 @@
   --brand: #d2603a; --brand-hi: #ee8f63; --brand-lo: #9a3d20; --brand-foreground: #fff3da;
   --gold: #f2c14e; --leaf: #5fa052; --danger: #a8261d; --shadow: rgb(60 40 10 / .18);
   --label: #8a7048; --label-edge: #3a2414; --rope-a: #d8c092; --rope-b: #a98a5c; --rope-edge: #5a4630;
+  --ground: #eadbb4;
 }
 :root.sc-paper.dark {
   --wood-dark: #0f0f16; --wood: #34344a; --wood-hi: #4d4d68; --wood-lo: #242434;
@@ -50,6 +55,7 @@
   --brand: #e2764e; --brand-hi: #f3a07c; --brand-lo: #a84a2a; --brand-foreground: #24160f;
   --gold: #f6cf62; --leaf: #6fb565; --danger: #ff8f7d; --shadow: rgb(0 0 0 / .4);
   --label: #6a6a88; --label-edge: #0e0c16; --rope-a: #c9c3e0; --rope-b: #8a84a8; --rope-edge: #0f0f16;
+  --ground: #23232f;
 }
 /* ── Зима ── */
 :root.sc-winter {
@@ -59,6 +65,7 @@
   --brand: #d2603a; --brand-hi: #ee8f63; --brand-lo: #9a3d20; --brand-foreground: #fff3da;
   --gold: #f2c14e; --leaf: #4f9a78; --danger: #a8261d; --shadow: rgb(40 50 80 / .25);
   --label: #5b6f96; --label-edge: #3a2414; --rope-a: #f4e2b0; --rope-b: #c39a5e; --rope-edge: #4a2e1a;
+  --ground: #dde7ee;
 }
 :root.sc-winter.dark {
   --wood-dark: #0e1220; --wood: #33405e; --wood-hi: #4c5c80; --wood-lo: #222c44;
@@ -67,6 +74,7 @@
   --brand: #e2764e; --brand-hi: #f3a07c; --brand-lo: #a84a2a; --brand-foreground: #24160f;
   --gold: #f6cf62; --leaf: #6fb565; --danger: #ff8f7d; --shadow: rgb(0 0 0 / .4);
   --label: #8fa3cc; --label-edge: #0e0c16; --rope-a: #d6e0f4; --rope-b: #8496bc; --rope-edge: #0e1220;
+  --ground: #1c2740;
 }
 
 /* ── Общее для пиксельных сцен: соответствие токенам shadcn, категории, палитра значков ── */
@@ -90,6 +98,19 @@
 
   --gold-ink: #4a2f1b;  --gold-lo: #c08f25;  --scrim: rgb(30 18 8 / .5);
 
+  /* Граф: цвета читает lib/graph/theme.ts. Земля сцены --ground — в блоках сцен выше. Обычные связи и рамки
+     соседа, наведения и курсора рисуются с тёмной кромкой (--graph-link-edge, --graph-sel-edge): светлые
+     --rope-* и --graph-hover на дневной земле без неё не читаются. --graph-label / --graph-label-edge —
+     подпись ноды (pixel.css: px-graph-label). */
+  --graph-bg: var(--ground);
+  --graph-node-edge: var(--wood-dark);  --graph-shadow: var(--shadow);
+  --graph-inbox: var(--brand);          --graph-inbox-edge: var(--wood-dark);
+  --graph-sel: var(--gold);             --graph-sel-edge: var(--wood-dark);
+  --graph-hover: var(--label);
+  --graph-link: var(--rope-b);  --graph-link-alt: var(--rope-a);  --graph-link-edge: var(--rope-edge);
+  --graph-link-hot: var(--gold);
+  --graph-label: var(--label);  --graph-label-edge: var(--label-edge);
+
   /* Категории: палитра мокапа (work/ideas/read/home = blue/amber/green/pink), остальные подобраны к ней. День = ночь. */
   --cat-none: #a7a294;
   --cat-slate: #7f8a9c;  --cat-red: #cf5a4a;   --cat-orange: #e0823a;
@@ -111,3 +132,11 @@
 }
 /* Ночью коричневый контур сливается с тёмной бумагой — берём почти чёрный. */
 :root.pixel.dark { --pi-k: #0e0a10; }
+
+/* Граф на «Бумаге» и «Зиме»: --label там средний тон (табличка мокапа), а не светлый — подпись тёмным текстом со
+   светлым контуром (контраст текста к контуру ≥ 10:1), рамка наведения и курсора — светлая (между тёмными рамкой
+   ноды и кромкой). Селектор с .pixel: он сильнее общего блока :root.pixel выше. */
+:root.pixel:is(.sc-paper, .sc-winter) {
+  --graph-label: var(--ink);  --graph-label-edge: var(--paper);  --graph-hover: var(--paper);
+}
+:root.pixel.dark:is(.sc-paper, .sc-winter) { --graph-hover: var(--ink); }

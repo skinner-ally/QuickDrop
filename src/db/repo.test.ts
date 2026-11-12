@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from './db'
 import {
+  addPositions,
   addTags,
   applyLinkMeta,
   clearPositions,
@@ -705,6 +706,81 @@ describe('положения нод графа', () => {
     await setPositions({ [a.id]: { x: 0, y: 0 } })
     expect((await getPositions())[a.id]).toEqual({ x: 0, y: 0 })
     expect(await db.positions.count()).toBe(2)
+  })
+
+  it('addPositions: пишет только новые места, существующие не затирает, запись не меняет', async () => {
+    const a = await createItem({ type: 'text', content: 'a' })
+    const b = await createItem({ type: 'text', content: 'b' })
+    const c = await createItem({ type: 'text', content: 'c' })
+    const trashed = await createItem({ type: 'text', content: 't' })
+    await deleteItem(trashed.id)
+    await setPositions({ [a.id]: { x: 1, y: 2 } })
+    const before = await db.items.toArray()
+    await tick()
+
+    await addPositions({
+      [a.id]: { x: 99, y: 99 },
+      [b.id]: { x: 10.4, y: -20.6 },
+      [c.id]: { x: NaN, y: 0 },
+      [trashed.id]: { x: 7, y: 8 },
+      missing: { x: 1, y: 1 },
+      '': { x: 2, y: 2 },
+    } as Record<string, GraphPoint>)
+
+    expect(await getPositions()).toEqual({
+      [a.id]: { x: 1, y: 2 },
+      [b.id]: { x: 10, y: -21 },
+      [trashed.id]: { x: 7, y: 8 },
+    })
+    expect(await db.items.toArray()).toEqual(before)
+
+    // Повтор и пустые вызовы ничего не меняют и не бросают.
+    await addPositions({ [b.id]: { x: 0, y: 0 } })
+    await addPositions({})
+    await addPositions({ [c.id]: 'x' } as unknown as Record<string, GraphPoint>)
+    expect((await getPositions())[b.id]).toEqual({ x: 10, y: -21 })
+    expect(await db.positions.count()).toBe(3)
+  })
+
+  it('addPositions с ожидаемой категорией: место по отставшему снимку записей не пишется', async () => {
+    const catA = await createCategory('А')
+    const catB = await createCategory('Б')
+    const it1 = await createItem({ type: 'text', content: 'x', categoryId: catA.id })
+    const plain = await createItem({ type: 'text', content: 'y' })
+    const other = await createItem({ type: 'text', content: 'z', categoryId: catA.id })
+    await setPositions({ [it1.id]: { x: 1, y: 1 } })
+    await setCategory(it1.id, catB.id)
+    expect((await getPositions())[it1.id]).toBeUndefined()
+
+    // Раскладка считала по старой категории — место в старой зоне отбрасывается.
+    await addPositions({ [it1.id]: { x: 5, y: 5 } }, { [it1.id]: catA.id })
+    expect((await getPositions())[it1.id]).toBeUndefined()
+
+    // Снимок свежий — место пишется.
+    await addPositions({ [it1.id]: { x: 6, y: 6 } }, { [it1.id]: catB.id })
+    expect((await getPositions())[it1.id]).toEqual({ x: 6, y: 6 })
+
+    // Без категории и ожидание null — проходит; id без ожидания проверяется только на существование.
+    await addPositions(
+      { [plain.id]: { x: 7, y: 7 }, [other.id]: { x: 8, y: 8 }, missing: { x: 9, y: 9 } },
+      { [plain.id]: null, missing: null },
+    )
+    expect(await getPositions()).toEqual({
+      [it1.id]: { x: 6, y: 6 },
+      [plain.id]: { x: 7, y: 7 },
+      [other.id]: { x: 8, y: 8 },
+    })
+
+    // Удалённая категория: у записей categoryId = null, ожидание прежней категории не проходит.
+    const gone = await createItem({ type: 'text', content: 'g', categoryId: catA.id })
+    await deleteCategory(catA.id)
+    await addPositions({ [gone.id]: { x: 3, y: 3 } }, { [gone.id]: catA.id })
+    expect((await getPositions())[gone.id]).toBeUndefined()
+
+    // Без второго параметра — прежнее поведение: категория не проверяется.
+    const fresh = await createItem({ type: 'text', content: 'f', categoryId: catB.id })
+    await addPositions({ [fresh.id]: { x: 4, y: 4 } })
+    expect((await getPositions())[fresh.id]).toEqual({ x: 4, y: 4 })
   })
 
   it('getPositions: id «__proto__» — обычный ключ', async () => {

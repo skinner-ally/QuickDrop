@@ -143,6 +143,19 @@
     --brand-lo: color-mix(in oklch, var(--brand), black 22%);
     --shadow: rgb(0 0 0 / .12);  --scrim: rgb(0 0 0 / .2);
     --cat-none: var(--muted-foreground);
+
+    /* Граф («Классика»): без рамок и теней, тонкие линии. Пиксельные сцены — styles/scenes.css.
+       Читает lib/graph/theme.ts: canvas не знает CSS-переменных. */
+    --ground: var(--background);
+    --label: var(--foreground);  --label-edge: var(--background);
+    --graph-bg: var(--background);
+    --graph-node-edge: transparent;  --graph-shadow: transparent;
+    --graph-inbox: var(--brand);     --graph-inbox-edge: var(--background);
+    --graph-sel: var(--brand);       --graph-sel-edge: transparent;
+    --graph-hover: var(--foreground);
+    --graph-link: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+    --graph-link-alt: var(--graph-link);  --graph-link-edge: transparent;
+    --graph-link-hot: var(--brand);
 }
 
 .dark {

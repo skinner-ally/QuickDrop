@@ -9,6 +9,7 @@ const VIEW_BY_DIGIT: Record<string, View> = {
   Digit2: 'library',
   Digit3: 'favorites',
   Digit4: 'archive',
+  Digit5: 'graph',
 }
 
 function viewByDigit(e: KeyboardEvent): View | undefined {

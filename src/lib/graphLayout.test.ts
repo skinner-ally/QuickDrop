@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { GraphPoint, Item } from '@/types'
+import { fitCamera } from './graph/geometry'
+import type { Bounds } from './graph/types'
 import {
   GRAPH_CELL,
+  GRAPH_MOAT,
   GRAPH_NODE_SIZE,
   GRAPH_NONE_ZONE,
   GRAPH_ZONE_GAP,
-  computeLayout,
+  computeLayout as rawComputeLayout,
   findFreeSpot,
   snapToGrid,
   toLayoutNodes,
@@ -98,7 +101,24 @@ function expectNoSharedCells(result: LayoutResult) {
 
 /** Сравнение целиком, включая порядок записей в positions. */
 function snapshot(result: LayoutResult) {
-  return { positions: [...result.positions], placed: result.placed, zones: result.zones, bounds: result.bounds }
+  return {
+    positions: [...result.positions],
+    placed: result.placed,
+    displaced: result.displaced,
+    zones: result.zones,
+    bounds: result.bounds,
+  }
+}
+
+/**
+ * computeLayout с общей проверкой после любого вызова: клетки всех нод различны, разведённые — подмножество placed.
+ */
+function computeLayout(...args: Parameters<typeof rawComputeLayout>): LayoutResult {
+  const result = rawComputeLayout(...args)
+  expectNoSharedCells(result)
+  const placed = new Set(result.placed)
+  for (const id of result.displaced) expect(placed.has(id)).toBe(true)
+  return result
 }
 
 // ───────────────────────── computeLayout ─────────────────────────
@@ -222,13 +242,65 @@ describe('computeLayout: сохранённые положения', () => {
     expectNoSharedCells(result)
   })
 
-  it('две сохранённые ноды в одной клетке остаются как были, новая нода эту клетку не занимает', () => {
+  it('две сохранённые ноды в одной клетке: первая остаётся, вторая разводится в ближайшую свободную клетку', () => {
     const fixed = { a: { x: 0, y: 0 }, b: { x: 5, y: -3 } }
-    const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2), node('c', null, [], 3)], [], fixed)
+    const nodes = [node('a', null, [], 1), node('b', null, [], 2), node('c', null, [], 3)]
+    const result = computeLayout(nodes, [], fixed)
     expect(result.positions.get('a')).toEqual({ x: 0, y: 0 })
-    expect(result.positions.get('b')).toEqual({ x: 5, y: -3 })
-    expect(result.placed).toEqual(['c'])
+    // Ближайшая к (5, −3) свободная клетка — справа: 27² + 3² против 5² + 29² у клетки сверху.
+    expect(result.positions.get('b')).toEqual({ x: 32, y: 0 })
+    expect(result.displaced).toEqual(['b'])
+    expect(result.placed).toEqual(['b', 'c'])
     expect(cellOf(result.positions.get('c')!)).not.toBe(cellOf({ x: 0, y: 0 }))
+
+    // Не зависит от порядка нод на входе и ключей fixed.
+    const reversedFixed = { b: { x: 5, y: -3 }, a: { x: 0, y: 0 } }
+    expect(snapshot(computeLayout([...nodes].reverse(), [], reversedFixed))).toEqual(snapshot(result))
+  })
+
+  it('первой остаётся нода, раньше созданная, а не стоящая раньше по id', () => {
+    const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 } }
+    const result = computeLayout([node('a', null, [], 2), node('b', null, [], 1)], [], fixed)
+    expect(result.positions.get('b')).toEqual({ x: 0, y: 0 })
+    expect(result.displaced).toEqual(['a'])
+    // Ничья по расстоянию — меньший y, затем меньший x.
+    expect(result.positions.get('a')).toEqual({ x: 0, y: -32 })
+  })
+
+  it('три ноды в одной клетке разводятся по порядку в ближайшие клетки', () => {
+    const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, c: { x: 0, y: 0 } }
+    const result = computeLayout([node('c', null, [], 3), node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
+    expect(result.positions.get('a')).toEqual({ x: 0, y: 0 })
+    expect(result.positions.get('b')).toEqual({ x: 0, y: -32 })
+    expect(result.positions.get('c')).toEqual({ x: -32, y: 0 })
+    expect(result.displaced).toEqual(['b', 'c'])
+    expect(result.placed).toEqual(['b', 'c'])
+  })
+
+  it('сохранённая точка не по сетке занимает свою клетку и остаётся как есть', () => {
+    // (20, 3) и (30, 0) — обе в клетке (1, 0).
+    const fixed = { a: { x: 20, y: 3 }, b: { x: 30, y: 0 } }
+    const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
+    expect(result.positions.get('a')).toEqual({ x: 20, y: 3 })
+    expect(result.positions.get('b')).toEqual({ x: 0, y: 0 })
+    expect(result.displaced).toEqual(['b'])
+  })
+
+  it('скрытая запись держит клетку, но видимую ноду с той же клеткой не вытесняет', () => {
+    const fixed = { ghost: { x: 0, y: 0 }, a: { x: 3, y: 2 }, b: { x: 96, y: 0 }, other: { x: 100, y: 5 } }
+    const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2), node('c', null, [], 3)], [], fixed)
+    expect(result.positions.get('a')).toEqual({ x: 3, y: 2 })
+    expect(result.positions.get('b')).toEqual({ x: 96, y: 0 })
+    expect(result.displaced).toEqual([])
+    expect(result.placed).toEqual(['c'])
+    expect(result.positions.has('ghost')).toBe(false)
+  })
+
+  it('разведённая нода не попадает в клетку скрытой записи', () => {
+    // Ближайшая к (0, 0) клетка сверху занята скрытой записью — разведённая нода встаёт слева.
+    const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, ghost: { x: 0, y: -32 } }
+    const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
+    expect(result.positions.get('b')).toEqual({ x: -32, y: 0 })
   })
 
   it('связанная нода тянется и к соседу, и к центру зоны', () => {
@@ -497,7 +569,7 @@ describe('computeLayout: связи', () => {
 
 describe('computeLayout: граничные случаи', () => {
   it('пустой вход', () => {
-    const empty = { positions: new Map(), placed: [], zones: [], bounds: null }
+    const empty = { positions: new Map(), placed: [], displaced: [], zones: [], bounds: null }
     expect(computeLayout([], [], {})).toEqual(empty)
     expect(computeLayout([], ['c1'], { ghost: { x: 0, y: 0 } })).toEqual(empty)
   })
@@ -548,6 +620,287 @@ describe('computeLayout: граничные случаи', () => {
   })
 })
 
+// ───────────────────────── ров между зонами ─────────────────────────
+
+/** Нарушения рва: пары нод разных зон ближе GRAPH_MOAT + 1 клеток по Чебышёву (квадрат (2·MOAT+1)²). */
+function moatViolations(
+  positions: Map<string, GraphPoint>,
+  zoneOf: (id: string) => string,
+  only?: ReadonlySet<string>,
+): string[] {
+  const byCell = new Map<string, string>()
+  for (const [id, p] of positions) byCell.set(cellOf(p), id)
+  const bad: string[] = []
+  for (const [id, p] of positions) {
+    if (only && !only.has(id)) continue
+    const cx = Math.round(p.x / GRAPH_CELL)
+    const cy = Math.round(p.y / GRAPH_CELL)
+    for (let dy = -GRAPH_MOAT; dy <= GRAPH_MOAT; dy++) {
+      for (let dx = -GRAPH_MOAT; dx <= GRAPH_MOAT; dx++) {
+        const other = byCell.get(`${cx + dx},${cy + dy}`)
+        if (other !== undefined && other !== id && zoneOf(other) !== zoneOf(id)) bad.push(`${id}~${other}`)
+      }
+    }
+  }
+  return bad
+}
+
+describe('computeLayout: ров между зонами', () => {
+  // Зона B — сохранённый блок 3×5 клеток справа от центра зоны A; у A одна сохранённая нода в (0, 0).
+  const bFixed: Record<string, GraphPoint> = {}
+  const bNodes: LayoutNode[] = []
+  for (let cy = -2; cy <= 2; cy++) {
+    for (let cx = 2; cx <= 4; cx++) {
+      const id = `b:${cx}:${cy}`
+      bFixed[id] = { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
+      bNodes.push(node(id, 'B', [], 0))
+    }
+  }
+  const zoneOf = (id: string) => (id.startsWith('b:') ? 'B' : 'A')
+
+  it('новые ноды зоны A не встают ближе рва к нодам зоны B', () => {
+    const fresh = Array.from({ length: 30 }, (_, i) => node(`a${String(i).padStart(2, '0')}`, 'A', [], 10 + i))
+    const fixed = { ...bFixed, a0: { x: 0, y: 0 } }
+    const result = computeLayout([...bNodes, node('a0', 'A', [], 1), ...fresh], ['A', 'B'], fixed)
+    expect(result.placed).toEqual(fresh.map((n) => n.id))
+    expect(moatViolations(result.positions, zoneOf, new Set(result.placed))).toEqual([])
+    // Ров не выкидывает ноды далеко: первая встаёт вплотную к сохранённой ноде своей зоны, с дальней от B стороны.
+    expect(result.positions.get('a00')).toEqual({ x: -32, y: 0 })
+  })
+
+  it('связь с нодой чужой зоны тянет, но не ближе рва', () => {
+    const fixed = { ...bFixed, a0: { x: 0, y: 0 } }
+    const base = [...bNodes, node('a0', 'A', [], 1)]
+    const target = 'b:2:2'
+    const linked = computeLayout([...base, node('x', 'A', [target], 10)], ['A', 'B'], fixed)
+    const alone = computeLayout([...base, node('x', 'A', [], 10)], ['A', 'B'], fixed)
+    const t = bFixed[target]
+    const spot = linked.positions.get('x')!
+    expect(moatViolations(linked.positions, zoneOf, new Set(['x']))).toEqual([])
+    expect(dist(spot, t)).toBeLessThanOrEqual(dist(alone.positions.get('x')!, t))
+    // Без связи — (−1, 0); со связью к (2, 2) — (−1, 2): на одной строке с соседом, ровно за рвом.
+    expect(alone.positions.get('x')).toEqual({ x: -32, y: 0 })
+    expect(spot).toEqual({ x: -32, y: 64 })
+  })
+
+  it('сохранённые ноды ров не сдвигает, разведённые встают в ближайшую клетку без рва', () => {
+    // Нода зоны A сохранена вплотную к B — остаётся; нода A в клетке ноды B разводится рядом, пусть и во рву.
+    const fixed = { ...bFixed, near: { x: 32, y: 0 }, clash: { x: 64, y: 0 } }
+    const nodes = [...bNodes, node('near', 'A', [], 1), node('clash', 'A', [], 2)]
+    const result = computeLayout(nodes, ['A', 'B'], fixed)
+    expect(result.positions.get('near')).toEqual({ x: 32, y: 0 })
+    expect(result.displaced).toEqual(['clash'])
+    expect(cellGap(result.positions.get('clash')!, { x: 64, y: 0 })).toBeLessThanOrEqual(3)
+  })
+})
+
+interface GrowthRun {
+  nodes: LayoutNode[]
+  fixed: Record<string, GraphPoint>
+  categories: string[]
+  zoneOf: (id: string) => string
+}
+
+/**
+ * Постепенный рост: 7 зон × 8 нод с нуля (результат — fixed), затем steps нод по одной: категория и 0–2 связи
+ * (в том числе с чужой зоной) — из генератора с зерном. После каждого шага placed — только новая нода, прежние
+ * точки не изменились. newCategoryAt — шаг, с которого появляется восьмая категория; skew — доля нод первой зоны.
+ */
+function grow(steps: number, seed: number, opts: { newCategoryAt?: number; skew?: number } = {}): GrowthRun {
+  const rand = mulberry32(seed)
+  const categories = Array.from({ length: 7 }, (_, i) => `c${i}`)
+  const category = new Map<string, string>()
+  const nodes: LayoutNode[] = []
+  for (let z = 0; z < 7; z++) {
+    for (let k = 0; k < 8; k++) {
+      const id = `s${z}-${k}`
+      nodes.push(node(id, categories[z], [], z * 8 + k))
+      category.set(id, categories[z])
+    }
+  }
+  const first = computeLayout(nodes, categories, {})
+  const fixed = toRecord(first.positions)
+
+  for (let step = 0; step < steps; step++) {
+    if (step === opts.newCategoryAt) categories.push('c-new')
+    const roll = rand()
+    let cat: string
+    if (opts.newCategoryAt !== undefined && step >= opts.newCategoryAt && roll < 0.3) cat = 'c-new'
+    else if (opts.skew !== undefined && rand() < opts.skew) cat = categories[0]
+    else cat = categories[Math.floor(rand() * 7)]
+    const linkCount = Math.floor(rand() * 3)
+    const links: string[] = []
+    for (let k = 0; k < linkCount; k++) links.push(nodes[Math.floor(rand() * nodes.length)].id)
+    const id = `g${String(step).padStart(4, '0')}`
+    nodes.push(node(id, cat, links, 1000 + step))
+    category.set(id, cat)
+
+    const result = computeLayout(nodes, categories, fixed)
+    expect(result.placed).toEqual([id])
+    for (const prev of Object.keys(fixed)) expect(result.positions.get(prev)).toEqual(fixed[prev])
+    fixed[id] = result.positions.get(id)!
+  }
+  return { nodes, fixed, categories, zoneOf: (id) => category.get(id)! }
+}
+
+describe('computeLayout: постепенный рост', () => {
+  it('500 нод по одной: прежние точки не сдвигаются, зоны не перемешиваются', () => {
+    const started = performance.now()
+    const run = grow(500, 101)
+    const positions = new Map(Object.entries(run.fixed))
+    expect(positions.size).toBe(556)
+    expect(new Set([...positions.values()].map(cellOf)).size).toBe(556)
+    expect(moatViolations(positions, run.zoneOf)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(5000)
+  })
+
+  it('перекос: 70 % новых нод в одну зону', () => {
+    const run = grow(300, 7, { skew: 0.7 })
+    const positions = new Map(Object.entries(run.fixed))
+    expect(new Set([...positions.values()].map(cellOf)).size).toBe(positions.size)
+    expect(moatViolations(positions, run.zoneOf)).toEqual([])
+  })
+
+  it('новая категория посреди роста: существующие ноды не сдвигаются, новая зона не ближе рва к чужим', () => {
+    const run = grow(300, 55, { newCategoryAt: 150 })
+    const positions = new Map(Object.entries(run.fixed))
+    const fresh = new Set([...positions.keys()].filter((id) => run.zoneOf(id) === 'c-new'))
+    expect(fresh.size).toBeGreaterThan(10)
+    expect(moatViolations(positions, run.zoneOf, fresh)).toEqual([])
+    expect(moatViolations(positions, run.zoneOf)).toEqual([])
+  })
+})
+
+/** Участки зоны: связность нод своей зоны на расстоянии Чебышёва ≤ GRAPH_MOAT клеток; размеры по убыванию. */
+function fragmentSizes(points: readonly GraphPoint[]): number[] {
+  const seen = new Uint8Array(points.length)
+  const sizes: number[] = []
+  for (let s = 0; s < points.length; s++) {
+    if (seen[s]) continue
+    seen[s] = 1
+    const stack = [s]
+    let size = 0
+    while (stack.length > 0) {
+      const v = stack.pop()!
+      size++
+      for (let u = 0; u < points.length; u++) {
+        if (seen[u] || cellGap(points[v], points[u]) > GRAPH_MOAT) continue
+        seen[u] = 1
+        stack.push(u)
+      }
+    }
+    sizes.push(size)
+  }
+  return sizes.sort((a, b) => b - a)
+}
+
+describe('computeLayout: рост с пустого графа', () => {
+  it('600 записей по одной: зоны не рвутся на острова, прежние точки не сдвигаются', () => {
+    const rand = mulberry32(3)
+    const categories = Array.from({ length: 8 }, (_, i) => `c${i}`)
+    const nodes: LayoutNode[] = []
+    const fixed: Record<string, GraphPoint> = {}
+    for (let step = 0; step < 600; step++) {
+      const roll = Math.floor(rand() * 9)
+      const linkCount = Math.floor(rand() * 3)
+      const links: string[] = []
+      for (let k = 0; k < linkCount && nodes.length > 0; k++) links.push(nodes[Math.floor(rand() * nodes.length)].id)
+      const id = `g${String(step).padStart(4, '0')}`
+      nodes.push(node(id, roll === 8 ? null : categories[roll], links, step))
+      const result = computeLayout(nodes, categories, fixed)
+      expect(result.placed).toEqual([id])
+      for (const prev of Object.keys(fixed)) expect(result.positions.get(prev)).toEqual(fixed[prev])
+      fixed[id] = result.positions.get(id)!
+    }
+    const zoneOf = (id: string) => nodes.find((n) => n.id === id)!.categoryId ?? GRAPH_NONE_ZONE
+    const positions = new Map(Object.entries(fixed))
+    expect(new Set([...positions.values()].map(cellOf)).size).toBe(600)
+    expect(moatViolations(positions, zoneOf)).toEqual([])
+
+    let outside = 0
+    for (const key of [GRAPH_NONE_ZONE, ...categories]) {
+      const points = nodes.filter((n) => (n.categoryId ?? GRAPH_NONE_ZONE) === key).map((n) => fixed[n.id])
+      if (points.length === 0) continue
+      outside += points.length - fragmentSizes(points)[0]
+    }
+    // До запаса места у новой зоны здесь вне основного участка было 6 %.
+    expect(outside / 600).toBeLessThanOrEqual(0.02)
+  })
+
+  it('новая зона рядом с сохранёнными нодами получает место под рост, свежая раскладка — нет', () => {
+    const reserve = 6 * GRAPH_CELL // zoneRadiusCells(GRAPH_ZONE_RESERVE)
+    const grown = computeLayout([node('a', 'A', [], 1), node('b', 'B', [], 2)], ['A', 'B'], { a: { x: 0, y: 0 } })
+    const [za, zb] = grown.zones
+    expect(dist(za, zb)).toBeGreaterThanOrEqual(2 * reserve + GRAPH_ZONE_GAP * GRAPH_CELL)
+    // Свежая раскладка тех же двух нод раздвигает зоны только по их размеру.
+    const fresh = computeLayout([node('a', 'A', [], 1), node('b', 'B', [], 2)], ['A', 'B'], {})
+    expect(dist(fresh.zones[0], fresh.zones[1])).toBeLessThan(2 * reserve)
+  })
+
+  it('рост по одной записи на малой базе не разбрасывает граф: «Весь граф» вписывает не мельче 50 %', () => {
+    const view = { width: 920, height: 640 }
+    const grow = (total: number, cats: number): number => {
+      const categories = Array.from({ length: cats }, (_, i) => `c${i}`)
+      const nodes: LayoutNode[] = []
+      const fixed: Record<string, GraphPoint> = {}
+      let bounds: Bounds | null = null
+      for (let i = 0; i < total; i++) {
+        nodes.push(node(`g${String(i).padStart(3, '0')}`, categories[i % cats], [], i))
+        const r = computeLayout(nodes, categories, fixed)
+        for (const [id, pt] of r.positions) fixed[id] = pt
+        bounds = r.bounds
+      }
+      return fitCamera(bounds, view).zoom
+    }
+    expect(grow(12, 4)).toBeGreaterThanOrEqual(0.5)
+    expect(grow(30, 6)).toBeGreaterThanOrEqual(0.5)
+  })
+
+  it('демоданные (30 записей свежей раскладкой) и три новые категории по две записи: масштаб не мельче 50 %', () => {
+    const view = { width: 920, height: 640 }
+    const cats = Array.from({ length: 6 }, (_, i) => `c${i}`)
+    const base: LayoutNode[] = Array.from({ length: 30 }, (_, i) => node(`d${String(i).padStart(2, '0')}`, cats[i % 6], [], i))
+    const fresh = computeLayout(base, cats, {})
+    const fixed: Record<string, GraphPoint> = Object.fromEntries(fresh.positions)
+    const extraCats = ['x0', 'x1', 'x2']
+    const nodes = [...base]
+    let result = fresh
+    let step = 100
+    for (const c of extraCats) {
+      for (let k = 0; k < 2; k++) {
+        nodes.push(node(`n${step}`, c, [], step++))
+        result = computeLayout(nodes, [...cats, ...extraCats], fixed)
+        for (const [id, pt] of result.positions) fixed[id] = pt
+      }
+    }
+    expect(fitCamera(result.bounds, view).zoom).toBeGreaterThanOrEqual(0.5)
+  })
+
+  it('отдельный участок зоны начинается только вдали от чужих нод', () => {
+    // Сохранённая нода A в (0, 0) окружена кольцом нод B на расстоянии 3 клеток: рядом с ней всё во рву B.
+    const fixed: Record<string, GraphPoint> = { a0: { x: 0, y: 0 } }
+    const nodes: LayoutNode[] = [node('a0', 'A', [], 0)]
+    for (let cy = -3; cy <= 3; cy++) {
+      for (let cx = -3; cx <= 3; cx++) {
+        if (Math.max(Math.abs(cx), Math.abs(cy)) !== 3) continue
+        const id = `b:${cx}:${cy}`
+        fixed[id] = { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
+        nodes.push(node(id, 'B', [], 1))
+      }
+    }
+    const fresh = [node('a1', 'A', [], 10), node('a2', 'A', [], 11), node('a3', 'A', ['b:3:0'], 12)]
+    const result = computeLayout([...nodes, ...fresh], ['A', 'B'], fixed)
+    expect(result.placed).toEqual(['a1', 'a2', 'a3'])
+    const bs = nodes.filter((n) => n.categoryId === 'B').map((n) => fixed[n.id])
+    const p1 = result.positions.get('a1')!
+    // Первая нода начинает участок: в квадрате 9×9 вокруг неё нет нод B.
+    for (const b of bs) expect(cellGap(p1, b)).toBeGreaterThan(4)
+    // Следующие (в том числе связанная с B) продолжают этот участок, а не начинают новые у кольца.
+    expect(fragmentSizes([p1, result.positions.get('a2')!, result.positions.get('a3')!])).toEqual([3])
+    expect(moatViolations(result.positions, (id) => (id.startsWith('b:') ? 'B' : 'A'), new Set(result.placed))).toEqual([])
+  })
+})
+
 describe('computeLayout: производительность', () => {
   it('2000 нод, 12 категорий, 3000 связей — быстрее 1500 мс', () => {
     const { nodes, categories } = makeGraph(2000, 12, 3000, 42)
@@ -573,6 +926,13 @@ describe('computeLayout: производительность', () => {
     expect(performance.now() - startedAgain).toBeLessThan(1500)
     expect(again.placed).toHaveLength(50)
     expectNoSharedCells(again)
+
+    // Обычный шаг роста: 2000 сохранённых + 1 новая.
+    const one = node('one-more', categories[3], [nodes[11].id, nodes[1500].id], 2_000_000_000_000)
+    const startedOne = performance.now()
+    const single = computeLayout([...nodes, one], categories, saved)
+    expect(performance.now() - startedOne).toBeLessThan(300)
+    expect(single.placed).toEqual(['one-more'])
   })
 })
 
@@ -701,21 +1061,41 @@ describe('toLayoutNodes', () => {
     }
   }
 
-  it('берёт входящие и базу знаний, без архива и корзины', () => {
-    const items = [
-      item({ id: 'inbox', status: 'inbox', createdAt: 10 }),
-      item({ id: 'library', status: 'library', categoryId: 'c1', links: ['inbox'], createdAt: 20 }),
-      item({ id: 'archive', status: 'archive', prevStatus: 'library' }),
-      item({ id: 'trashed-inbox', status: 'inbox', deletedAt: 5 }),
-      item({ id: 'trashed-library', status: 'library', deletedAt: 0 }),
-    ]
-    expect(toLayoutNodes(items)).toEqual([
+  const items = [
+    item({ id: 'inbox', status: 'inbox', createdAt: 10 }),
+    item({ id: 'library', status: 'library', categoryId: 'c1', links: ['inbox'], createdAt: 20 }),
+    item({ id: 'archive', status: 'archive', prevStatus: 'library', createdAt: 30 }),
+    item({ id: 'trashed-inbox', status: 'inbox', deletedAt: 5 }),
+    item({ id: 'trashed-library', status: 'library', categoryId: 'c2', deletedAt: 0, createdAt: 40 }),
+    item({ id: 'constructor', status: 'library', deletedAt: 7 }),
+  ]
+
+  it('берёт входящие, базу знаний и архив; без fixed корзина не входит', () => {
+    const expected = [
       { id: 'inbox', categoryId: null, links: [], createdAt: 10 },
       { id: 'library', categoryId: 'c1', links: ['inbox'], createdAt: 20 },
-    ])
+      { id: 'archive', categoryId: null, links: [], createdAt: 30 },
+    ]
+    expect(toLayoutNodes(items)).toEqual(expected)
+    expect(toLayoutNodes(items, {})).toEqual(expected)
+  })
+
+  it('запись корзины входит, только если у неё есть годное сохранённое положение', () => {
+    const fixed = {
+      'trashed-library': { x: 64, y: 0 },
+      'trashed-inbox': { x: Number.NaN, y: 0 },
+      inbox: { x: 0, y: 0 },
+    }
+    expect(toLayoutNodes(items, fixed).map((n) => n.id)).toEqual(['inbox', 'library', 'archive', 'trashed-library'])
+    expect(toLayoutNodes(items, fixed)[3]).toEqual({ id: 'trashed-library', categoryId: 'c2', links: [], createdAt: 40 })
+  })
+
+  it('id записи корзины, совпадающий с именем свойства прототипа, не находит положение', () => {
+    expect(toLayoutNodes(items, {}).map((n) => n.id)).not.toContain('constructor')
   })
 
   it('пустой список', () => {
     expect(toLayoutNodes([])).toEqual([])
+    expect(toLayoutNodes([], { a: { x: 0, y: 0 } })).toEqual([])
   })
 })

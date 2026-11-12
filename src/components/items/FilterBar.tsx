@@ -17,11 +17,12 @@ import { CategoryDot } from '@/components/items/CategoryBadge'
 import { SaveSearchButton } from '@/components/items/SaveSearchButton'
 import { isUnfinishedDate } from '@/components/items/periodInput'
 import { TypeIcon } from '@/components/items/TypeIcon'
-import { useAllTags, useCategories, useDayKey } from '@/hooks/useItems'
+import { useAllTags, useCategories, useDayKey, useLegendCounts } from '@/hooks/useItems'
 import { useIsDesktop } from '@/hooks/useMediaQuery'
 import { customDateRange, DATE_PRESETS, formatDateRange, formatDateToken, presetOf, relativeRange } from '@/lib/dates'
 import { TYPE_LABEL_PLURAL } from '@/lib/itemTitle'
 import { cn } from '@/lib/utils'
+import { useGraph } from '@/store/graph'
 import { useUi } from '@/store/ui'
 import { ITEM_TYPES, type ItemType, type SortMode } from '@/types'
 import { radioGroupKeyDown } from '@/views/settings/radioKeys'
@@ -144,8 +145,12 @@ function CategoryFilter() {
   )
 }
 
-function TagsFilter() {
-  const allTags = useAllTags()
+function TagsFilter({ graph }: { graph: boolean }) {
+  const listTags = useAllTags()
+  const showArchive = useGraph((s) => s.showArchive)
+  // В «Графе» числа те же, что у легенды боковой панели: по записям, из которых построена сцена.
+  const legendTags = useLegendCounts(graph, showArchive).tags
+  const allTags = graph ? legendTags : listTags
   const tags = useUi((s) => s.filter.tags)
   const setFilter = useUi((s) => s.setFilter)
   const [search, setSearch] = useState('')
@@ -388,7 +393,10 @@ function ActiveChip({
   )
 }
 
-export function FilterBar({ className }: { className?: string }) {
+/**
+ * mode: 'list' — списки (сортировка и вид справа); 'graph' — экран графа: сортировки и вида нет, остальное то же.
+ */
+export function FilterBar({ className, mode = 'list' }: { className?: string; mode?: 'list' | 'graph' }) {
   const filter = useUi((s) => s.filter)
   const sort = useUi((s) => s.sort)
   const layout = useUi((s) => s.layout)
@@ -421,6 +429,7 @@ export function FilterBar({ className }: { className?: string }) {
     filter.from !== undefined ||
     filter.to !== undefined
 
+  const showSort = mode === 'list'
   const sortBlock = (
     <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 md:ml-0">
       <Select value={sort} onValueChange={(v) => v && setSort(v as SortMode)} items={SORT_ITEMS}>
@@ -472,7 +481,7 @@ export function FilterBar({ className }: { className?: string }) {
           <TypeChips />
           <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border pixel:w-0.5" />
           <CategoryFilter />
-          <TagsFilter />
+          <TagsFilter graph={mode === 'graph'} />
           <button
             type="button"
             aria-pressed={!!filter.untagged}
@@ -489,9 +498,9 @@ export function FilterBar({ className }: { className?: string }) {
             Без тегов и категории
           </button>
           <PeriodFilter />
-          {!isDesktop && sortBlock}
+          {showSort && !isDesktop && sortBlock}
         </div>
-        {isDesktop && sortBlock}
+        {showSort && isDesktop && sortBlock}
       </div>
 
       {(hasActive || query.trim() !== '') && (

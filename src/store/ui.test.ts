@@ -165,6 +165,17 @@ describe('setView и применённый сохранённый поиск', 
     }
   })
 
+  it('home: применённый в «Графе» поиск со своим разделом переносится в этот раздел, в чужой — снимается', () => {
+    useUi.getState().applyQuery('is:library date:week', 'graph', 'library')
+    expect(useUi.getState()).toMatchObject({ view: 'graph', appliedView: 'library' })
+    useUi.getState().setView('library')
+    expect(useUi.getState()).toMatchObject({ view: 'library', query: 'is:library date:week' })
+
+    useUi.getState().applyQuery('is:library date:week', 'graph', 'library')
+    useUi.getState().setView('inbox')
+    expect(useUi.getState()).toMatchObject({ view: 'inbox', query: '', appliedQuery: null })
+  })
+
   it('тот же раздел — поиск остаётся', () => {
     apply()
     useUi.getState().setView('library')

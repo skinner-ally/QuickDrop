@@ -795,6 +795,48 @@ export async function setPositions(map: Record<string, GraphPoint>): Promise<voi
   })
 }
 
+/**
+ * Места, выданные раскладкой: пишутся только для id, у которых положения ещё нет — существующие не затираются
+ * (снимок, по которому раскладка считала, мог отстать от базы: явное действие — перенос, «Отменить» — выигрывает).
+ * Негодные точки и id, которых нет среди записей, пропускаются, как в setPositions. updatedAt не меняется.
+ *
+ * expectCategory — категория записи, по которой раскладка выдала место (null — без категории). Если в базе
+ * у записи уже другая категория, место пропускается: снимок записей отстал от смены категории, а место
+ * в прежней зоне осталось бы навсегда. Свежий снимок даст новое место, и его запишет следующий вызов.
+ */
+export async function addPositions(
+  map: Record<string, GraphPoint>,
+  expectCategory?: Record<string, string | null>,
+): Promise<void> {
+  const rows: NodePosition[] = []
+  for (const [id, raw] of Object.entries(map)) {
+    const point = sanitizePoint(raw)
+    if (id && point) rows.push({ id, x: point.x, y: point.y })
+  }
+  if (!rows.length) return
+  await db.transaction('rw', db.positions, db.items, async () => {
+    const ids = rows.map((r) => r.id)
+    const existing = await db.positions.bulkGet(ids)
+    let ok: (id: string) => boolean
+    if (expectCategory) {
+      // Записи читаются целиком только при проверке категории: без неё хватает ключей.
+      const items = await db.items.bulkGet(ids)
+      const byId = new Map<string, Item>()
+      for (const it of items) if (it) byId.set(it.id, it)
+      ok = (id) => {
+        const item = byId.get(id)
+        if (!item) return false
+        return !Object.hasOwn(expectCategory, id) || (item.categoryId ?? null) === (expectCategory[id] ?? null)
+      }
+    } else {
+      const known = new Set(await db.items.where('id').anyOf(ids).primaryKeys())
+      ok = (id) => known.has(id)
+    }
+    const fresh = rows.filter((r, i) => !existing[i] && ok(r.id))
+    if (fresh.length) await db.positions.bulkAdd(fresh)
+  })
+}
+
 export async function getPositions(): Promise<Record<string, GraphPoint>> {
   const rows = await db.positions.toArray()
   // fromEntries создаёт собственные свойства: id «__proto__» не подменит прототип объекта.

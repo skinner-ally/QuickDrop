@@ -6,16 +6,19 @@ import {
   createSavedSearch,
   deleteItems,
   getItem,
+  getPositions,
   linkItems,
   listSavedSearches,
   purgeItems,
   restoreFromTrash,
   restoreItems,
+  setPositions,
   updateItem,
 } from '@/db/repo'
 import { relativeRange } from '@/lib/dates'
 import type { PdfTextResult } from '@/lib/pdfText'
 import type { ConfirmOptions } from '@/store/confirm'
+import { useGraph } from '@/store/graph'
 import { useUi, type View } from '@/store/ui'
 import type { Item, LinkMeta, SavedSearch } from '@/types'
 import {
@@ -27,13 +30,18 @@ import {
   actDownloadMarkdown,
   actEmptyTrash,
   actEmptyTrashAsk,
+  actLinkItems,
+  actMoveNode,
   actMoveSearch,
   actPurge,
   actPurgeAsk,
+  actRelayoutGraph,
   actRenameSearch,
   actRestoreFromTrash,
   actSaveCurrentSearch,
   actSaveSearch,
+  actSetCategory,
+  actUnlinkItems,
   applyWikiLinks,
   createAndEnrich,
   openLink,
@@ -113,6 +121,7 @@ const pdfResult = (status: PdfTextResult['status'], text = ''): PdfTextResult =>
 const note = (title: string) => createItem({ type: 'text', title, content: title })
 
 const initialUi = useUi.getState()
+const initialGraph = useGraph.getState()
 
 beforeEach(async () => {
   await Promise.all([
@@ -132,6 +141,7 @@ beforeEach(async () => {
   mocks.allSnapshot.mockReset()
   mocks.trashSnapshot.mockReset()
   useUi.setState(initialUi, true)
+  useGraph.setState(initialGraph, true)
 })
 
 afterEach(() => {
@@ -781,6 +791,222 @@ describe('openItemInSection', () => {
   })
 })
 
+describe('граф: openItemInSection и actApplySearch', () => {
+  const item = (over: Partial<Item>) =>
+    ({ id: 'x', status: 'library', favorite: 0, ...over }) as Pick<Item, 'id' | 'status' | 'deletedAt' | 'favorite'>
+  const search = (query: string): SavedSearch => ({ id: 's', name: 'Поиск', query, order: 0, createdAt: 0 })
+
+  it('обычная запись: раздел остаётся «Граф», запись выбрана', () => {
+    useUi.getState().setView('graph')
+    openItemInSection(item({ id: 'a', status: 'library' }))
+    expect(useUi.getState()).toMatchObject({ view: 'graph', selectedId: 'a' })
+    openItemInSection(item({ id: 'i', status: 'inbox' }))
+    expect(useUi.getState()).toMatchObject({ view: 'graph', selectedId: 'i' })
+    expect(useGraph.getState().showArchive).toBe(true)
+  })
+
+  it('архивная запись: показ архива включается', () => {
+    useUi.getState().setView('graph')
+    useGraph.getState().setShowArchive(false)
+    openItemInSection(item({ id: 'b', status: 'archive' }))
+    expect(useUi.getState()).toMatchObject({ view: 'graph', selectedId: 'b' })
+    expect(useGraph.getState().showArchive).toBe(true)
+  })
+
+  it('запись из корзины: «Корзина»; показ архива не трогается', () => {
+    useUi.getState().setView('graph')
+    useGraph.getState().setShowArchive(false)
+    openItemInSection(item({ id: 't', status: 'archive', deletedAt: 5 }))
+    expect(useUi.getState()).toMatchObject({ view: 'trash', selectedId: 't' })
+    expect(useGraph.getState().showArchive).toBe(false)
+  })
+
+  it('actApplySearch из «Графа»: раздел остаётся, запрос — в строке, фильтры сброшены', () => {
+    useUi.getState().setView('graph')
+    useUi.getState().setFilter({ tags: ['old'] })
+    actApplySearch(search('react'))
+    expect(useUi.getState()).toMatchObject({ view: 'graph', query: 'react', filter: {} })
+
+    // Свой раздел в запросе в «Графе» не уводит в список.
+    actApplySearch(search('is:archive react'))
+    expect(useUi.getState()).toMatchObject({ view: 'graph', query: 'is:archive react' })
+    actApplySearch(search('is:trash'))
+    expect(useUi.getState().view).toBe('graph')
+  })
+
+  it('actApplySearch из «Графа»: поиск со своим разделом не стирается при переходе в этот раздел', () => {
+    useUi.getState().setView('graph')
+    actApplySearch(search('is:archive react'))
+    useUi.getState().setView('archive')
+    expect(useUi.getState()).toMatchObject({ view: 'archive', query: 'is:archive react' })
+
+    // Без раздела в запросе — прежнее правило: в любом списке нетронутый поиск снимается.
+    useUi.getState().setView('graph')
+    actApplySearch(search('react'))
+    useUi.getState().setView('library')
+    expect(useUi.getState()).toMatchObject({ view: 'library', query: '' })
+  })
+})
+
+describe('граф: действия', () => {
+  async function pair() {
+    return [await note('A'), await note('B')] as const
+  }
+
+  it('actMoveNode: пишет положение, не меняет запись и молчит', async () => {
+    const a = await note('A')
+    const before = await getItem(a.id)
+    await actMoveNode(a.id, { x: 64, y: -32 })
+    expect((await getPositions())[a.id]).toEqual({ x: 64, y: -32 })
+    expect(await getItem(a.id)).toEqual(before)
+    expect(mocks.toast).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+
+    // Негодная точка и неизвестный запись пропускаются без ошибки.
+    await actMoveNode(a.id, { x: Number.NaN, y: 0 })
+    await actMoveNode('нет-такой', { x: 1, y: 1 })
+    expect(await getPositions()).toEqual({ [a.id]: { x: 64, y: -32 } })
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('actLinkItems: связывает, toast с «Отменить»; отмена снимает связь', async () => {
+    const [a, b] = await pair()
+    await actLinkItems(a.id, b.id)
+    expect((await getItem(a.id))!.links).toEqual([b.id])
+    expect((await getItem(b.id))!.links).toEqual([a.id])
+    const { text, options } = lastToast()
+    expect(text).toBe('Записи связаны')
+    expect(options?.action?.label).toBe('Отменить')
+
+    options!.action!.onClick()
+    await until(async () => (await getItem(a.id))!.links.length === 0)
+    expect((await getItem(b.id))!.links).toEqual([])
+  })
+
+  it('actLinkItems: те же записи и уже связанные', async () => {
+    const [a, b] = await pair()
+    await actLinkItems(a.id, a.id)
+    expect(mocks.toast).not.toHaveBeenCalled()
+
+    await linkItems(a.id, b.id)
+    await actLinkItems(b.id, a.id)
+    expect(mocks.toast).toHaveBeenCalledExactlyOnceWith('Записи уже связаны')
+    expect((await getItem(a.id))!.links).toEqual([b.id])
+  })
+
+  it('actLinkItems: запись в корзине или неизвестная — toast.error, связи нет', async () => {
+    const [a, b] = await pair()
+    await deleteItems([b.id])
+    await actLinkItems(a.id, b.id)
+    await actLinkItems(a.id, 'нет-такой')
+    expect(mocks.toastError).toHaveBeenCalledTimes(2)
+    expect(mocks.toast).not.toHaveBeenCalled()
+    expect((await getItem(a.id))!.links).toEqual([])
+  })
+
+  it('actUnlinkItems: снимает связь, отмена возвращает; связи не было — ничего', async () => {
+    const [a, b] = await pair()
+    await actUnlinkItems(a.id, b.id)
+    expect(mocks.toast).not.toHaveBeenCalled()
+
+    await linkItems(a.id, b.id)
+    await actUnlinkItems(b.id, a.id)
+    expect((await getItem(a.id))!.links).toEqual([])
+    expect((await getItem(b.id))!.links).toEqual([])
+    const { text, options } = lastToast()
+    expect(text).toBe('Связь убрана')
+
+    options!.action!.onClick()
+    await until(async () => (await getItem(a.id))!.links.length === 1)
+    expect((await getItem(b.id))!.links).toEqual([a.id])
+  })
+
+  it('actSetCategory: меняет категорию и сбрасывает место; отмена возвращает категорию и место', async () => {
+    const work = await createCategory('Работа')
+    const home = await createCategory('Дом')
+    const a = await createItem({ type: 'text', content: 'a', categoryId: home.id })
+    const b = await createItem({ type: 'text', content: 'b' })
+    await setPositions({ [a.id]: { x: 32, y: 64 }, [b.id]: { x: -64, y: 0 } })
+
+    await actSetCategory(a.id, work.id)
+    expect((await getItem(a.id))!.categoryId).toBe(work.id)
+    expect(await getPositions()).toEqual({ [b.id]: { x: -64, y: 0 } })
+    const { text, options } = lastToast()
+    expect(text).toBe('Категория: Работа')
+    expect(options?.action?.label).toBe('Отменить')
+
+    // Граф успел выдать ноде место в новой зоне: «Отменить» его перекрывает.
+    await setPositions({ [a.id]: { x: 999, y: 999 } })
+    options!.action!.onClick()
+    await until(async () => (await getItem(a.id))!.categoryId === home.id)
+    await until(async () => (await getPositions())[a.id]?.x === 32)
+    expect(await getPositions()).toEqual({ [a.id]: { x: 32, y: 64 }, [b.id]: { x: -64, y: 0 } })
+  })
+
+  it('actSetCategory: несколько записей — число в toast, отмена по группам прежних категорий', async () => {
+    const work = await createCategory('Работа')
+    const home = await createCategory('Дом')
+    const a = await createItem({ type: 'text', content: 'a', categoryId: home.id })
+    const b = await createItem({ type: 'text', content: 'b' })
+    const c = await createItem({ type: 'text', content: 'c', categoryId: work.id })
+    await setPositions({ [a.id]: { x: 1, y: 2 }, [b.id]: { x: 3, y: 4 }, [c.id]: { x: 5, y: 6 } })
+
+    // c уже в «Работе»: не меняется, место не трогается.
+    await actSetCategory([a.id, b.id, c.id, a.id], work.id)
+    expect(lastToast().text).toBe('Категория: Работа (2)')
+    expect(await getPositions()).toEqual({ [c.id]: { x: 5, y: 6 } })
+
+    lastToast().options!.action!.onClick()
+    await until(async () => (await getItem(b.id))!.categoryId === null)
+    await until(async () => Object.keys(await getPositions()).length === 3)
+    expect((await getItem(a.id))!.categoryId).toBe(home.id)
+    expect((await getItem(c.id))!.categoryId).toBe(work.id)
+    expect(await getPositions()).toEqual({ [a.id]: { x: 1, y: 2 }, [b.id]: { x: 3, y: 4 }, [c.id]: { x: 5, y: 6 } })
+  })
+
+  it('actSetCategory: «Без категории»; ничего не изменилось — без toast', async () => {
+    const work = await createCategory('Работа')
+    const a = await createItem({ type: 'text', content: 'a', categoryId: work.id })
+    const b = await createItem({ type: 'text', content: 'b' })
+
+    await actSetCategory(b.id, null)
+    await actSetCategory('нет-такой', work.id)
+    await actSetCategory([], work.id)
+    expect(mocks.toast).not.toHaveBeenCalled()
+
+    await actSetCategory(a.id, null)
+    expect((await getItem(a.id))!.categoryId).toBeNull()
+    expect(lastToast().text).toBe('Без категории')
+  })
+
+  it('actRelayoutGraph: стирает положения, toast на 10 с, отмена возвращает прежние', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    const all = { [a.id]: { x: 32, y: 32 }, [b.id]: { x: -32, y: 0 } }
+    await setPositions(all)
+
+    await actRelayoutGraph()
+    expect(await getPositions()).toEqual({})
+    const { text, options } = lastToast()
+    expect(text).toBe('Граф разложен заново')
+    expect(options).toMatchObject({ duration: 10_000, action: { label: 'Отменить' } })
+
+    // Граф успел выдать новое место одной ноде: прежнее побеждает.
+    await setPositions({ [a.id]: { x: 500, y: 500 } })
+    options!.action!.onClick()
+    await until(async () => (await getPositions())[a.id]?.x === 32)
+    expect(await getPositions()).toEqual(all)
+  })
+
+  it('actRelayoutGraph: положений не было — toast без отмены', async () => {
+    await note('A')
+    await actRelayoutGraph()
+    const { text, options } = lastToast()
+    expect(text).toBe('Граф разложен заново')
+    expect(options?.action).toBeUndefined()
+  })
+})
+
 describe('сохранённые поиски: экран', () => {
   const search = (query: string): SavedSearch => ({ id: 's', name: 'Поиск', query, order: 0, createdAt: 0 })
 
@@ -796,13 +1022,12 @@ describe('сохранённые поиски: экран', () => {
     expect(useUi.getState().view).toBe('favorites')
   })
 
-  it('actApplySearch: без раздела в запросе — текущий; из настроек, графа и корзины — «База знаний»', () => {
+  it('actApplySearch: без раздела в запросе — текущий; из настроек и корзины — «База знаний»', () => {
     const cases: Array<[View, View]> = [
       ['inbox', 'inbox'],
       ['favorites', 'favorites'],
       ['archive', 'archive'],
       ['settings', 'library'],
-      ['graph', 'library'],
       ['trash', 'library'],
     ]
     for (const [from, to] of cases) {

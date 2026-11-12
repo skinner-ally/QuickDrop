@@ -252,7 +252,29 @@
 .pixel .px-pop-in { animation: px-pop-in .18s steps(3, end); }
 @keyframes px-pop-in { from { transform: scale(.4); } }
 
-/* ───────── 6. Телефон ───────── */
+/* ───────── 6. Граф ───────── */
+.pixel .px-graph-stage { background-color: var(--graph-bg); border: 2px solid var(--wood-dark); }
+/* Сцена обрезает содержимое, поэтому обводка фокуса — внутрь: золото вплотную к рамке сцены и тёмная кромка изнутри
+   (правило про золото). Обводка brand на земле дневных сцен — 1.5–3:1. Слой ::after — поверх canvas и подписей. */
+.pixel .px-graph-stage:focus-visible { outline: none; }
+.pixel .px-graph-stage:focus-visible::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 0 4px var(--wood-dark);
+}
+.pixel .px-graph-stage canvas { image-rendering: pixelated; }
+/* подпись ноды прямо на земле сцены (mockup .node .label): текст с контуром 2px; цвета — от сцены (scenes.css) */
+.pixel .px-graph-label {
+  background: transparent; color: var(--graph-label); font-weight: var(--fw-m);
+  text-shadow: 2px 0 0 var(--graph-label-edge), -2px 0 0 var(--graph-label-edge), 0 2px 0 var(--graph-label-edge),
+    0 -2px 0 var(--graph-label-edge), 2px 2px 0 var(--graph-label-edge), -2px 2px 0 var(--graph-label-edge),
+    2px -2px 0 var(--graph-label-edge), -2px -2px 0 var(--graph-label-edge);
+}
+/* подпись выбранной ноды и её соседей — на плашке */
+.pixel .px-graph-label[data-plate="true"] {
+  background: var(--paper); color: var(--ink); text-shadow: none; outline: 2px solid var(--wood-dark);
+}
+
+/* ───────── 7. Телефон ───────── */
 @media (max-width: 767px) {
   /* лист на весь экран: без среза углов, отступ с учётом безопасной зоны */
   .pixel .px-sheet {

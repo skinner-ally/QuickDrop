@@ -1,6 +1,7 @@
 import { toast } from 'sonner'
 import {
   applyLinkMeta,
+  clearPositions,
   createItem,
   createSavedSearch,
   deleteItems,
@@ -8,6 +9,7 @@ import {
   emptyTrash,
   getFile,
   getItem,
+  getPositions,
   linkItems,
   listCategories,
   listSavedSearches,
@@ -16,9 +18,12 @@ import {
   restoreFromTrash,
   restoreItems,
   restoreSavedSearch,
+  setCategory,
+  setPositions,
   setStatus,
   toggleFavorite,
   unarchive,
+  unlinkItems,
   updateSavedSearch,
 } from '@/db/repo'
 import { getSettings } from '@/db/settings'
@@ -38,8 +43,9 @@ import {
 } from '@/lib/savedSearch'
 import { mayHaveWikiLinks, wikiLinkTargets } from '@/lib/wikiLinks'
 import { confirmDialog } from '@/store/confirm'
+import { useGraph } from '@/store/graph'
 import { useUi, type View } from '@/store/ui'
-import type { Item, ItemStatus, LinkMeta, NewItemInput, SavedSearch } from '@/types'
+import type { GraphPoint, Item, ItemStatus, LinkMeta, NewItemInput, SavedSearch } from '@/types'
 
 /** Оборачивает действие: любая ошибка становится toast.error, наружу не бросает (итог — undefined). */
 async function safe<T>(run: () => Promise<T>): Promise<T | undefined> {
@@ -377,18 +383,21 @@ export async function actSaveCurrentSearch(name?: string): Promise<SavedSearch |
   return actSaveSearch(prepared.name, prepared.query)
 }
 
-/**
- * Разделы, куда поиск без своего раздела не применяется: у настроек и графа нет списка, а корзина ищет
- * только удалённое.
- */
-const NO_LIST_VIEWS: ReadonlySet<View> = new Set<View>(['settings', 'graph', 'trash'])
+/** Разделы, куда поиск без своего раздела не применяется: у настроек нет списка, а корзина ищет только удалённое. */
+const NO_LIST_VIEWS: ReadonlySet<View> = new Set<View>(['settings', 'trash'])
 
 /**
- * Применяет сохранённый поиск: раздел — из самого запроса (viewForQuery), иначе текущий; из настроек, графа и
- * корзины без своего раздела в запросе — «База знаний».
+ * Применяет сохранённый поиск: раздел — из самого запроса (viewForQuery), иначе текущий; из настроек и корзины
+ * без своего раздела в запросе — «База знаний». В «Графе» поиск остаётся в «Графе» и приглушает ноды: свой
+ * is:<раздел> в запросе — обычный оператор отбора, а не переход.
  */
 export function actApplySearch(search: SavedSearch): void {
   const ui = useUi.getState()
+  if (ui.view === 'graph') {
+    // Раздел запроса запоминается: переход из «Графа» в этот раздел поиск не стирает.
+    ui.applyQuery(search.query, 'graph', viewForQuery(search.query) ?? 'graph')
+    return
+  }
   const fallback: View = NO_LIST_VIEWS.has(ui.view) ? 'library' : ui.view
   ui.applyQuery(search.query, viewForQuery(search.query) ?? fallback)
 }
@@ -463,16 +472,133 @@ export async function actApplyWikiLinks(
 /**
  * Открывает запись в её разделе: корзина → «Корзина», иначе раздел статуса. Раздел меняется, только если
  * запись не видна в текущем: «Избранное» показывает свою запись (не из архива и не из корзины) само.
+ * «Граф» показывает все записи вне корзины: раздел не меняется, архивная запись включает показ архива.
  */
 export function openItemInSection(
   item: Pick<Item, 'id' | 'status' | 'deletedAt'> & Partial<Pick<Item, 'favorite'>>,
 ): void {
   const ui = useUi.getState()
   const trashed = item.deletedAt !== undefined
+  if (ui.view === 'graph' && !trashed) {
+    if (item.status === 'archive') useGraph.getState().setShowArchive(true)
+    ui.select(item.id)
+    return
+  }
   const target: View = trashed ? 'trash' : item.status
   const inFavorites = ui.view === 'favorites' && item.favorite === 1 && item.status !== 'archive' && !trashed
   if (ui.view !== target && !inFavorites) ui.setView(target)
   useUi.getState().select(item.id)
+}
+
+// ───────────────────────── граф ─────────────────────────
+
+/** Сохраняет положение ноды после перетаскивания (updatedAt записи не меняется). Успех — молча. */
+export async function actMoveNode(id: string, point: GraphPoint): Promise<void> {
+  await safe(() => setPositions({ [id]: point }))
+}
+
+const isLinked = (a: Item | undefined, b: Item | undefined): boolean =>
+  !!a && !!b && a.links.includes(b.id) && b.links.includes(a.id)
+
+/** Связывает записи; уже связаны — сообщение без изменений. Отмена снимает связь. */
+export async function actLinkItems(a: string, b: string): Promise<void> {
+  if (a === b) return
+  await safe(async () => {
+    if (isLinked(await getItem(a), await getItem(b))) {
+      toast('Записи уже связаны')
+      return
+    }
+    await linkItems(a, b)
+    // linkItems молча пропускает запись, которой уже нет или которая в корзине.
+    if (!isLinked(await getItem(a), await getItem(b))) {
+      toast.error('Не удалось связать записи')
+      return
+    }
+    toast('Записи связаны', {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => unlinkItems(a, b))
+        },
+      },
+    })
+  })
+}
+
+/** Снимает связь; связи не было — ничего. Отмена возвращает связь. */
+export async function actUnlinkItems(a: string, b: string): Promise<void> {
+  if (a === b) return
+  await safe(async () => {
+    const [ia, ib] = [await getItem(a), await getItem(b)]
+    if (!ia?.links.includes(b) && !ib?.links.includes(a)) return
+    await unlinkItems(a, b)
+    toast('Связь убрана', {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => linkItems(a, b))
+        },
+      },
+    })
+  })
+}
+
+/**
+ * Категория записей (граф: клавиша E, меню). Ничего не изменилось — без toast. Иначе toast с «Отменить»:
+ * возвращает прежние категории и прежние положения нод (setCategory сбрасывает место ноды).
+ */
+export async function actSetCategory(ids: string | string[], categoryId: string | null): Promise<void> {
+  await safe(async () => {
+    const before = new Map<string, string | null>()
+    for (const id of new Set(toArray(ids))) {
+      const it = await getItem(id)
+      if (it && it.categoryId !== categoryId) before.set(id, it.categoryId)
+    }
+    if (before.size === 0) return
+    const changed = [...before.keys()]
+    const places = await getPositions()
+    await setCategory(changed, categoryId)
+
+    const name = categoryId ? (await listCategories()).find((c) => c.id === categoryId)?.name : undefined
+    const base = categoryId ? `Категория: ${name ?? 'без названия'}` : 'Без категории'
+    toast(before.size > 1 ? `${base} (${before.size})` : base, {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(async () => {
+            const groups = new Map<string | null, string[]>()
+            for (const [id, prev] of before) groups.set(prev, [...(groups.get(prev) ?? []), id])
+            for (const [prev, group] of groups) await setCategory(group, prev)
+            // setCategory стёр места; setPositions (а не addPositions): явное возвращение побеждает
+            // место в новой зоне, которое граф мог успеть выдать.
+            const back: Record<string, GraphPoint> = {}
+            for (const id of changed) if (places[id]) back[id] = places[id]
+            await setPositions(back)
+          })
+        },
+      },
+    })
+  })
+}
+
+/** «Разложить»: все положения стираются, граф раскладывается заново. Отмена возвращает прежние места. */
+export async function actRelayoutGraph(): Promise<void> {
+  await safe(async () => {
+    const previous = await clearPositions()
+    if (Object.keys(previous).length === 0) {
+      toast('Граф разложен заново')
+      return
+    }
+    toast('Граф разложен заново', {
+      duration: 10_000,
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => setPositions(previous))
+        },
+      },
+    })
+  })
 }
 
 // ───────────────────────── буфер, открытие, скачивание ─────────────────────────

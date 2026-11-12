@@ -219,6 +219,53 @@ export function computeAllTags(items: Item[]): TagCount[] {
   return out
 }
 
+/** Числа боковой панели у категорий (ключ null — без категории) и тегов. */
+export type LegendCounts = { tags: TagCount[]; perCategory: ReadonlyMap<string | null, number> }
+
+/**
+ * Числа у категорий и тегов боковой панели. Вне «Графа» клик открывает «Базу знаний» — считаются её записи.
+ * В «Графе» панель — легенда видимых нод: все записи вне корзины, архив — только при showArchive.
+ * items — записи вне корзины (useAllItems). Теги — как computeAllTags: по убыванию числа, затем по алфавиту.
+ */
+export function computeLegend(items: readonly Item[], inGraph: boolean, showArchive: boolean): LegendCounts {
+  const tagCounts = new Map<string, number>()
+  const perCategory = new Map<string | null, number>()
+  for (const it of items) {
+    if (it.deletedAt !== undefined) continue
+    if (inGraph ? !showArchive && it.status === 'archive' : it.status !== 'library') continue
+    const cat = it.categoryId ?? null
+    perCategory.set(cat, (perCategory.get(cat) ?? 0) + 1)
+    if (!Array.isArray(it.tags)) continue
+    for (const t of it.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1)
+  }
+  const tags = [...tagCounts]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+  return { tags, perCategory }
+}
+
+const legendCache = new WeakMap<Item[], Map<string, LegendCounts>>()
+const NO_LEGEND: LegendCounts = { tags: NO_TAGS, perCategory: new Map() }
+
+/** computeLegend по общему снимку: один расчёт на снимок и режим, ссылка стабильна между рендерами. */
+export function useLegendCounts(inGraph: boolean, showArchive: boolean): LegendCounts {
+  const items = useAllItems()
+  if (!items) return NO_LEGEND
+  // Вне «Графа» показ архива не влияет: ключ один, лишних пересчётов нет.
+  const key = inGraph ? (showArchive ? 'graph+archive' : 'graph') : 'library'
+  let byKey = legendCache.get(items)
+  if (!byKey) {
+    byKey = new Map()
+    legendCache.set(items, byKey)
+  }
+  let out = byKey.get(key)
+  if (!out) {
+    out = computeLegend(items, inGraph, showArchive)
+    byKey.set(key, out)
+  }
+  return out
+}
+
 export function computeCounts(items: Item[]): typeof NO_COUNTS {
   const cached = countsCache.get(items)
   if (cached) return cached
@@ -233,8 +280,16 @@ export function computeCounts(items: Item[]): typeof NO_COUNTS {
   return c
 }
 
+const NO_CATEGORIES: Category[] = []
+
+/** Категории по order; undefined — первое чтение ещё не завершилось (в отличие от «категорий нет»). */
+export function useCategoryList(): Category[] | undefined {
+  return useLiveQuery(() => db.categories.orderBy('order').toArray(), [])
+}
+
 export function useCategories(): Category[] {
-  return useLiveQuery(() => db.categories.orderBy('order').toArray(), []) ?? []
+  // Общий пустой массив: пока идёт чтение, ссылка не меняется на каждом рендере.
+  return useCategoryList() ?? NO_CATEGORIES
 }
 
 export function usePositions(): Record<string, GraphPoint> | undefined {

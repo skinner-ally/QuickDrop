@@ -1,10 +1,27 @@
 /**
  * Автораскладка графа: ноды одной категории собираются в цветовую зону, связанные ноды встают рядом.
- * Чистый модуль: один и тот же вход всегда даёт один и тот же результат (без Math.random, все сортировки
- * добиты до полного порядка). Сохранённые положения не пересчитываются — раскладка только дополняет их.
+ * Сохранённые положения не пересчитываются — раскладка только дополняет их.
+ *
+ * Гарантии (покрыты тестами):
+ *  1. Детерминированность. Один и тот же вход всегда даёт один и тот же результат: без Math.random, все
+ *     сортировки добиты до полного порядка, порядок нод на входе и ключей fixed не важен.
+ *  2. Устойчивость. Нода с годным сохранённым положением, клетку которого не занимает нода, стоящая раньше по
+ *     (createdAt, id), возвращается как есть. Добавление записи или категории не меняет ни одного такого положения.
+ *  3. Одна нода — одна клетка. В positions нет двух нод в одной клетке, в том числе сохранённых: из совпавших
+ *     остаётся первая по (createdAt, id), остальные разводятся в ближайшие свободные клетки (displaced).
+ *  4. Зоны не перемешиваются. Нода, получившая место в этом вызове (кроме разведённых), стоит не ближе GRAPH_MOAT
+ *     клеток по Чебышёву к любой ноде другой зоны, у которой уже есть место (ров между зонами).
+ *
+ * Цена рва: зона, окружённая соседями, растёт в обход них и может продолжиться «островом» за ними — но не внутри
+ * чужой зоны. Чтобы это было редкостью, при дополнении сохранённой раскладки новая зона получает место под
+ * GRAPH_ZONE_RESERVE нод, а отдельный участок зоны начинается только вдали от чужих нод (без «тропок» по
+ * коридорам). Порядок наводит «Разложить»: при пустом fixed зоны раздвинуты по своим размерам. Запас — компромисс
+ * между островами на больших базах и масштабом «Весь граф» на малых; на 2000 записях / 12 категориях при росте
+ * по одной вне основного участка остаётся порядка 8 % нод.
  */
 
 import type { GraphPoint, Item } from '@/types'
+import type { Bounds } from './graph/types'
 import { MAX_GRAPH_COORD } from './normalize'
 
 /** Сторона квадрата ноды, px при 100 %. */
@@ -15,6 +32,8 @@ export const GRAPH_CELL = 32
 export const GRAPH_ZONE_GAP = 3
 /** Ключ зоны записей без категории. */
 export const GRAPH_NONE_ZONE = 'none'
+/** Ров между зонами, клеток: новая нода не встаёт ближе (по Чебышёву) к ноде чужой зоны. */
+export const GRAPH_MOAT = 2
 
 export interface LayoutNode {
   id: string
@@ -32,12 +51,14 @@ export interface LayoutZone {
 }
 
 export interface LayoutResult {
-  /** Положения всех нод из nodes: сохранённые — как были, новые — рассчитанные. */
+  /** Положения всех нод из nodes: сохранённые — как были, новые и разведённые — рассчитанные. */
   positions: Map<string, GraphPoint>
-  /** id нод, получивших место в этом вызове (их нужно сохранить через setPositions). */
+  /** id нод, получивших место в этом вызове: новые и разведённые (их нужно сохранить). */
   placed: string[]
+  /** Подмножество placed: ноды, чьё сохранённое место было занято другой нодой. */
+  displaced: string[]
   zones: LayoutZone[]
-  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null
+  bounds: Bounds | null
 }
 
 const GOLDEN_ANGLE = 2.399963229728653
@@ -46,9 +67,33 @@ const MAX_CENTER_TRIES = 50_000
 const CENTER_CANDIDATES = 8
 /** Вокруг скольких связанных нод ищется место. */
 const NEIGHBOR_LIMIT = 6
-/** Половина стороны квадрата клеток вокруг связанной ноды (2 → 5×5). */
+/** Половина стороны квадрата клеток вокруг связанной ноды своей зоны (2 → 5×5). */
 const NEIGHBOR_REACH = 2
+/**
+ * То же для связанной ноды чужой зоны (→ 9×9): клетки ближе рва к ней заблокированы, и при прежнем квадрате
+ * 5×5 связь с чужой нодой не тянула бы вовсе.
+ */
+const FOREIGN_REACH = NEIGHBOR_REACH + GRAPH_MOAT
 const CENTER_WEIGHT = 0.25
+/** Сторона корзины (в клетках) для проверки центра новой зоны по нодам с местом. */
+const POINT_BUCKET_CELLS = 8
+/** Значение claim: клетка во рву двух и более зон — закрыта для всех. */
+const MIXED = -1
+/**
+ * Ёмкость (в нодах), под которую оставляется место у новой зоны, если на графе уже есть ноды с местом.
+ * При росте с пустого графа центры ранних зон иначе встают «по одной ноде» (9 клеток друг от друга), зоны
+ * упираются во рвы соседей уже на десятках нод и дальше растут островами. 24 → радиус 6 клеток. Это компромисс:
+ * запас 48 (радиус 8) убирал острова и на 2000 записях, но на малых базах разбрасывал граф так, что «Весь граф»
+ * вписывал его на 25 % вместо 75 % (30 записей в 6 категориях). С 24 на 2000 записях / 12 категориях при росте
+ * по одной вне основного участка остаётся порядка 8 % нод; порядок наводит «Разложить заново».
+ */
+export const GRAPH_ZONE_RESERVE = 24
+/**
+ * Отдельный участок зоны (клетка, у которой в пределах рва нет нод своей зоны) начинается только там, где в
+ * квадрате (2·FRAGMENT_CLEAR + 1)² нет нод чужих зон: иначе зажатая зона продолжается одиночными «тропками»
+ * по середине коридоров между соседями.
+ */
+const FRAGMENT_CLEAR = 4
 
 // Клетка → одно число (ключ Set): строки-ключи на 2000 нодах заметно медленнее.
 const KEY_OFFSET = 2 ** 21
@@ -123,6 +168,47 @@ function lowerMedian(values: number[]): number {
   return values[(values.length - 1) >> 1]
 }
 
+/**
+ * Ближайшая к точке (tx, ty) клетка, для которой taken — false. Ничья — меньший y, затем меньший x.
+ * Общий помощник броска ноды (findFreeSpot) и разведения совпавших сохранённых нод.
+ */
+function nearestFreeCell(tx: number, ty: number, taken: (cx: number, cy: number) => boolean): [number, number] {
+  const baseX = toCell(tx)
+  const baseY = toCell(ty)
+  if (!taken(baseX, baseY)) return [baseX, baseY]
+
+  let bestX = 0
+  let bestY = 0
+  let bestDist = Infinity
+  const consider = (cx: number, cy: number) => {
+    if (taken(cx, cy)) return
+    const dx = cx * GRAPH_CELL - tx
+    const dy = cy * GRAPH_CELL - ty
+    const dist = dx * dx + dy * dy
+    if (dist > bestDist) return
+    if (dist === bestDist && (cy > bestY || (cy === bestY && cx >= bestX))) return
+    bestDist = dist
+    bestX = cx
+    bestY = cy
+  }
+  // Кольца клеток вокруг исходной. Занятых клеток конечное число, поэтому свободная найдётся.
+  for (let k = 1; ; k++) {
+    for (let d = -k; d <= k; d++) {
+      consider(baseX + d, baseY - k)
+      consider(baseX + d, baseY + k)
+    }
+    for (let d = -k + 1; d <= k - 1; d++) {
+      consider(baseX - k, baseY + d)
+      consider(baseX + k, baseY + d)
+    }
+    // Цель лежит не дальше полклетки от центра исходной клетки, значит до любой клетки следующего
+    // кольца не меньше (k + 0.5) клетки: ближе найденной там уже не будет.
+    const reach = (k + 0.5) * GRAPH_CELL
+    if (bestDist < reach * reach) break
+  }
+  return [bestX, bestY]
+}
+
 interface Zone {
   key: string
   /** Индексы нод зоны в порядке (createdAt, id). */
@@ -134,7 +220,7 @@ interface Zone {
   /** Клетка центра. */
   cx: number
   cy: number
-  /** Указатель на первую свободную клетку в списке смещений; только растёт. */
+  /** Указатель на первую незаблокированную клетку в списке смещений; только растёт. */
   ptr: number
 }
 
@@ -142,12 +228,17 @@ export function snapToGrid(p: GraphPoint): GraphPoint {
   return { x: toCell(p.x) * GRAPH_CELL, y: toCell(p.y) * GRAPH_CELL }
 }
 
-/** Записи графа: статус inbox и library, без корзины. */
-export function toLayoutNodes(items: readonly Item[]): LayoutNode[] {
+/**
+ * Записи раскладки: все записи вне корзины (inbox, library, archive) и записи корзины, у которых есть годное
+ * положение в fixed (держат своё место). Без fixed записи корзины не берутся.
+ */
+export function toLayoutNodes(items: readonly Item[], fixed?: Readonly<Record<string, GraphPoint>>): LayoutNode[] {
   const nodes: LayoutNode[] = []
   for (const item of items) {
-    if (item.deletedAt !== undefined) continue
-    if (item.status !== 'inbox' && item.status !== 'library') continue
+    if (item.deletedAt !== undefined) {
+      // hasOwn: id вроде «constructor» не должен найтись в прототипе.
+      if (!fixed || !Object.hasOwn(fixed, item.id) || !isPoint(fixed[item.id])) continue
+    }
     nodes.push({
       id: item.id,
       categoryId: item.categoryId ?? null,
@@ -172,28 +263,7 @@ export function computeLayout(
     list.push(node)
   }
   const count = list.length
-  if (count === 0) return { positions: new Map(), placed: [], zones: [], bounds: null }
-
-  // 2. Занятые клетки: все сохранённые положения, в том числе скрытых записей (архив, корзина) —
-  //    иначе запись, вернувшаяся из корзины, оказалась бы на чужой ноде.
-  const occupied = new Set<number>()
-  for (const id of Object.keys(fixed)) {
-    const p = fixed[id]
-    if (isPoint(p)) occupied.add(cellKey(toCell(p.x), toCell(p.y)))
-  }
-  const xs = new Float64Array(count)
-  const ys = new Float64Array(count)
-  /** 1 — у ноды есть место (сохранённое или уже выданное в этом вызове). */
-  const done = new Uint8Array(count)
-  for (let i = 0; i < count; i++) {
-    const id = list[i].id
-    // hasOwn: id вроде «constructor» не должен найтись в прототипе.
-    const p = Object.hasOwn(fixed, id) ? fixed[id] : undefined
-    if (!isPoint(p)) continue
-    xs[i] = p.x
-    ys[i] = p.y
-    done[i] = 1
-  }
+  if (count === 0) return { positions: new Map(), placed: [], displaced: [], zones: [], bounds: null }
 
   // Связи: без самоссылок и неизвестных id, в обе стороны, без дублей, по порядку нод.
   const adj: number[][] = list.map(() => [])
@@ -219,6 +289,7 @@ export function computeLayout(
     })
 
   // 3. Зоны: «без категории», затем категории по порядку, затем неизвестные id по алфавиту.
+  //    (Раньше шага 2: зона ноды нужна для рва уже при разборе сохранённых положений.)
   const membersByKey = new Map<string, number[]>()
   for (let i = 0; i < count; i++) {
     const key = list[i].categoryId ?? GRAPH_NONE_ZONE
@@ -242,6 +313,109 @@ export function computeLayout(
     for (const i of zone.members) zoneOf[i] = zi
   })
 
+  // 2. Занятые клетки и ров. occupied — клетки с нодой; claim — чья зона владеет клеткой рва вокруг ноды
+  //    (MIXED — нескольких). Клетка закрыта для зоны zi, если занята или во рву другой зоны.
+  //    Для фиксированной zi blocked со временем только переходит из false в true: occupied растёт, а claim
+  //    уходит от zi только в чужую зону или MIXED. Поэтому указатель зоны (ptr) верен и с рвом.
+  const occupied = new Set<number>()
+  const claim = new Map<number, number>()
+  /** Клетка ноды с местом → её зона (скрытые записи из 2б сюда не входят). */
+  const cellZone = new Map<number, number>()
+  const mark = (cx: number, cy: number, zi: number) => {
+    cellZone.set(cellKey(cx, cy), zi)
+    for (let dy = -GRAPH_MOAT; dy <= GRAPH_MOAT; dy++) {
+      for (let dx = -GRAPH_MOAT; dx <= GRAPH_MOAT; dx++) {
+        const key = cellKey(cx + dx, cy + dy)
+        const owner = claim.get(key)
+        if (owner === undefined) claim.set(key, zi)
+        else if (owner !== zi && owner !== MIXED) claim.set(key, MIXED)
+      }
+    }
+  }
+  const blocked = (cx: number, cy: number, zi: number): boolean => {
+    const key = cellKey(cx, cy)
+    if (occupied.has(key)) return true
+    const owner = claim.get(key)
+    return owner !== undefined && owner !== zi
+  }
+  /**
+   * Клетка годится зоне zi: не закрыта и либо продолжает участок зоны (в её рву), либо начинает новый участок
+   * вдали от чужих нод. В отличие от blocked, со временем может стать годной (рядом встала нода своей зоны),
+   * поэтому указатель зоны по ней не сдвигается.
+   */
+  const usable = (cx: number, cy: number, zi: number): boolean => {
+    if (blocked(cx, cy, zi)) return false
+    if (claim.get(cellKey(cx, cy)) === zi) return true
+    // Ближе рва чужих нод нет (иначе клетка закрыта) — смотрим только кольцо от рва до FRAGMENT_CLEAR.
+    for (let dy = -FRAGMENT_CLEAR; dy <= FRAGMENT_CLEAR; dy++) {
+      const inner = dy >= -GRAPH_MOAT && dy <= GRAPH_MOAT
+      for (let dx = -FRAGMENT_CLEAR; dx <= FRAGMENT_CLEAR; dx++) {
+        if (inner && dx >= -GRAPH_MOAT && dx <= GRAPH_MOAT) continue
+        const owner = cellZone.get(cellKey(cx + dx, cy + dy))
+        if (owner !== undefined && owner !== zi) return false
+      }
+    }
+    return true
+  }
+
+  const xs = new Float64Array(count)
+  const ys = new Float64Array(count)
+  /** 1 — у ноды есть место (сохранённое или уже выданное в этом вызове). */
+  const done = new Uint8Array(count)
+  const placed: string[] = []
+  const displaced: string[] = []
+
+  // 2а. Сохранённые положения нод по порядку (createdAt, id): клетка свободна — точка остаётся как есть
+  //     (в том числе не по сетке), занята более ранней нодой — нода уходит на разведение.
+  const collided: number[] = []
+  for (let i = 0; i < count; i++) {
+    const id = list[i].id
+    // hasOwn: id вроде «constructor» не должен найтись в прототипе.
+    const p = Object.hasOwn(fixed, id) ? fixed[id] : undefined
+    if (!isPoint(p)) continue
+    const cx = toCell(p.x)
+    const cy = toCell(p.y)
+    const key = cellKey(cx, cy)
+    if (occupied.has(key)) {
+      collided.push(i)
+      continue
+    }
+    occupied.add(key)
+    mark(cx, cy, zoneOf[i])
+    xs[i] = p.x
+    ys[i] = p.y
+    done[i] = 1
+  }
+
+  // 2б. Положения записей, которых нет среди нод (скрытые), держат клетку — иначе запись, вернувшаяся
+  //     оттуда, оказалась бы на чужой ноде. Рва они не дают и видимую ноду не вытесняют.
+  const hiddenXs: number[] = []
+  const hiddenYs: number[] = []
+  for (const id of Object.keys(fixed)) {
+    if (indexOf.has(id)) continue
+    const p = fixed[id]
+    if (!isPoint(p)) continue
+    const cx = toCell(p.x)
+    const cy = toCell(p.y)
+    occupied.add(cellKey(cx, cy))
+    hiddenXs.push(cx * GRAPH_CELL)
+    hiddenYs.push(cy * GRAPH_CELL)
+  }
+
+  // 2в. Разведение: ближайшая к сохранённой точке свободная клетка (ров не учитывается — нода уже стояла здесь).
+  const isOccupied = (cx: number, cy: number) => occupied.has(cellKey(cx, cy))
+  for (const i of collided) {
+    const p = fixed[list[i].id]
+    const [cx, cy] = nearestFreeCell(p.x, p.y, isOccupied)
+    occupied.add(cellKey(cx, cy))
+    mark(cx, cy, zoneOf[i])
+    xs[i] = cx * GRAPH_CELL
+    ys[i] = cy * GRAPH_CELL
+    done[i] = 1
+    placed.push(list[i].id)
+    displaced.push(list[i].id)
+  }
+
   // 5. Центры. Сначала зоны, у которых уже есть ноды с местом (их центр задан), потом остальные —
   //    так новая зона обходит все существующие, а не только стоящие раньше по порядку.
   const centered: Zone[] = []
@@ -261,43 +435,88 @@ export function computeLayout(
     }
     setCenter(zone, lowerMedian(saved.map((i) => xs[i])), lowerMedian(saved.map((i) => ys[i])))
   }
-  const gap = GRAPH_ZONE_GAP * GRAPH_CELL
-  const fits = (x: number, y: number, r: number) => {
-    for (const z of centered) {
-      const dx = x - z.x
-      const dy = y - z.y
-      const min = r + z.r + gap
-      if (dx * dx + dy * dy < min * min) return false
+
+  if (pending.length > 0) {
+    // Точки с местом (ноды любой зоны и скрытые записи) по крупным корзинам: круг новой зоны вместе со рвом
+    // не должен их задевать — зона с закреплённым центром могла разрастись далеко за свой круг.
+    const bucketSize = POINT_BUCKET_CELLS * GRAPH_CELL
+    const buckets = new Map<number, number[]>()
+    const addPoint = (x: number, y: number) => {
+      const key = cellKey(Math.floor(x / bucketSize), Math.floor(y / bucketSize))
+      const bucket = buckets.get(key)
+      if (bucket) bucket.push(x, y)
+      else buckets.set(key, [x, y])
     }
-    return true
-  }
-  // Кандидаты «подсолнуха», отвергнутые для зоны радиуса r, не подойдут и зоне не меньшего радиуса
-  // (зон с центром стало только больше) — поиск продолжается с места, где закончился прошлый.
-  const searched: Array<{ r: number; next: number }> = []
-  for (const zone of pending) {
-    let start = 0
-    for (const s of searched) if (s.r <= zone.r && s.next > start) start = s.next
-    let found = false
-    for (let i = start; i < MAX_CENTER_TRIES; i++) {
-      const rho = GRAPH_CELL * Math.sqrt(i)
-      const theta = i * GOLDEN_ANGLE
-      const x = toCell(rho * Math.cos(theta)) * GRAPH_CELL
-      const y = toCell(rho * Math.sin(theta)) * GRAPH_CELL
-      if (!fits(x, y, zone.r)) continue
-      setCenter(zone, x, y)
-      searched.push({ r: zone.r, next: i + 1 })
-      found = true
-      break
+    for (let i = 0; i < count; i++) if (done[i] === 1) addPoint(xs[i], ys[i])
+    for (let k = 0; k < hiddenXs.length; k++) addPoint(hiddenXs[k], hiddenYs[k])
+
+    const moat = GRAPH_MOAT * GRAPH_CELL
+    const clearOfPoints = (x: number, y: number, r: number): boolean => {
+      const reach = r + moat
+      const reach2 = reach * reach
+      const bx0 = Math.floor((x - reach) / bucketSize)
+      const bx1 = Math.floor((x + reach) / bucketSize)
+      const by0 = Math.floor((y - reach) / bucketSize)
+      const by1 = Math.floor((y + reach) / bucketSize)
+      for (let by = by0; by <= by1; by++) {
+        for (let bx = bx0; bx <= bx1; bx++) {
+          const bucket = buckets.get(cellKey(bx, by))
+          if (!bucket) continue
+          for (let k = 0; k < bucket.length; k += 2) {
+            const dx = bucket[k] - x
+            const dy = bucket[k + 1] - y
+            if (dx * dx + dy * dy < reach2) return false
+          }
+        }
+      }
+      return true
     }
-    if (found) continue
-    searched.push({ r: zone.r, next: MAX_CENTER_TRIES })
-    let right = 0
-    for (const z of centered) right = Math.max(right, z.x + z.r)
-    setCenter(zone, right + gap + zone.r, 0)
+    const gap = GRAPH_ZONE_GAP * GRAPH_CELL
+    // Запас места только при дополнении сохранённой раскладки: свежая («Разложить заново») знает итоговые
+    // размеры зон и раздвигает их по ним. reserveR монотонна по r — ускорение searched остаётся верным.
+    const hasSaved = done.some((d) => d === 1) || hiddenXs.length > 0
+    const reserveMin = zoneRadiusCells(GRAPH_ZONE_RESERVE) * GRAPH_CELL
+    const reserveR = (r: number) => (hasSaved ? Math.max(r, reserveMin) : r)
+    const fits = (x: number, y: number, r: number) => {
+      const rr = reserveR(r)
+      for (const z of centered) {
+        const dx = x - z.x
+        const dy = y - z.y
+        const min = rr + reserveR(z.r) + gap
+        if (dx * dx + dy * dy < min * min) return false
+      }
+      return clearOfPoints(x, y, rr)
+    }
+    // Кандидаты «подсолнуха», отвергнутые для зоны радиуса r, не подойдут и зоне не меньшего радиуса
+    // (зон с центром стало только больше, набор точек не меняется, условие монотонно по r) — поиск
+    // продолжается с места, где закончился прошлый.
+    const searched: Array<{ r: number; next: number }> = []
+    for (const zone of pending) {
+      let start = 0
+      for (const s of searched) if (s.r <= zone.r && s.next > start) start = s.next
+      let found = false
+      for (let i = start; i < MAX_CENTER_TRIES; i++) {
+        const rho = GRAPH_CELL * Math.sqrt(i)
+        const theta = i * GOLDEN_ANGLE
+        const x = toCell(rho * Math.cos(theta)) * GRAPH_CELL
+        const y = toCell(rho * Math.sin(theta)) * GRAPH_CELL
+        if (!fits(x, y, zone.r)) continue
+        setCenter(zone, x, y)
+        searched.push({ r: zone.r, next: i + 1 })
+        found = true
+        break
+      }
+      if (found) continue
+      searched.push({ r: zone.r, next: MAX_CENTER_TRIES })
+      let right = 0
+      for (const z of centered) right = Math.max(right, z.x + reserveR(z.r))
+      for (let i = 0; i < count; i++) if (done[i] === 1) right = Math.max(right, xs[i])
+      for (const x of hiddenXs) right = Math.max(right, x)
+      setCenter(zone, right + gap + moat + reserveR(zone.r), 0)
+    }
   }
 
   // 6. Размещение нод без места.
-  const placed: string[] = []
   const compOf = new Int32Array(count).fill(-1)
   const queued = new Uint8Array(count)
   let compCount = 0
@@ -306,11 +525,18 @@ export function computeLayout(
     const zone = zones[zi]
     for (;;) {
       ensureOffsets(zone.ptr + 1)
-      if (!occupied.has(cellKey(zone.cx + offsetDx[zone.ptr], zone.cy + offsetDy[zone.ptr]))) break
+      if (!blocked(zone.cx + offsetDx[zone.ptr], zone.cy + offsetDy[zone.ptr], zi)) break
       zone.ptr++
     }
-    let bestX = zone.cx + offsetDx[zone.ptr]
-    let bestY = zone.cy + offsetDy[zone.ptr]
+    // Первая годная клетка от указателя: клетки «нового участка у чужих нод» пропускаются, но указатель стоит.
+    let first = zone.ptr
+    for (;;) {
+      ensureOffsets(first + 1)
+      if (usable(zone.cx + offsetDx[first], zone.cy + offsetDy[first], zi)) break
+      first++
+    }
+    let bestX = zone.cx + offsetDx[first]
+    let bestY = zone.cy + offsetDy[first]
 
     const linked = adj[v].filter((u) => done[u] === 1)
     if (linked.length > 0) {
@@ -339,12 +565,12 @@ export function computeLayout(
         bestY = cy
       }
 
-      // (а) ближайшие к центру свободные клетки зоны
-      for (let p = zone.ptr, found = 0; found < CENTER_CANDIDATES; p++) {
+      // (а) ближайшие к центру незаблокированные клетки зоны
+      for (let p = first, found = 0; found < CENTER_CANDIDATES; p++) {
         ensureOffsets(p + 1)
         const cx = zone.cx + offsetDx[p]
         const cy = zone.cy + offsetDy[p]
-        if (occupied.has(cellKey(cx, cy))) continue
+        if (!usable(cx, cy, zi)) continue
         found++
         consider(cx, cy)
       }
@@ -357,15 +583,17 @@ export function computeLayout(
         const udx = xs[u] - zone.x
         const udy = ys[u] - zone.y
         const uCenter = udx * udx + udy * udy
-        if (zoneOf[u] !== zi && uCenter >= reach * reach) continue
+        const own = zoneOf[u] === zi
+        if (!own && uCenter >= reach * reach) continue
         used++
         const ux = toCell(xs[u])
         const uy = toCell(ys[u])
-        for (let dy = -NEIGHBOR_REACH; dy <= NEIGHBOR_REACH; dy++) {
-          for (let dx = -NEIGHBOR_REACH; dx <= NEIGHBOR_REACH; dx++) {
+        const side = own ? NEIGHBOR_REACH : FOREIGN_REACH
+        for (let dy = -side; dy <= side; dy++) {
+          for (let dx = -side; dx <= side; dx++) {
             const cx = ux + dx
             const cy = uy + dy
-            if (occupied.has(cellKey(cx, cy))) continue
+            if (!usable(cx, cy, zi)) continue
             // Связь не выводит ноду из зоны: за её радиусом годится только клетка ближе к центру, чем
             // сам сосед. Иначе цепочка связей с чужой категорией шаг за шагом уползает в чужую зону.
             const px = cx * GRAPH_CELL - zone.x
@@ -379,6 +607,7 @@ export function computeLayout(
     }
 
     occupied.add(cellKey(bestX, bestY))
+    mark(bestX, bestY, zi)
     xs[v] = bestX * GRAPH_CELL
     ys[v] = bestY * GRAPH_CELL
     done[v] = 1
@@ -451,6 +680,7 @@ export function computeLayout(
   return {
     positions,
     placed,
+    displaced,
     zones: zones.map((zone) => ({ key: zone.key, x: zone.x, y: zone.y, r: zone.r, count: zone.members.length })),
     bounds,
   }
@@ -474,38 +704,6 @@ export function findFreeSpot(
     if (isPoint(p)) occupied.add(cellKey(toCell(p.x), toCell(p.y)))
   }
 
-  const baseX = toCell(tx)
-  const baseY = toCell(ty)
-  if (!occupied.has(cellKey(baseX, baseY))) return { x: baseX * GRAPH_CELL, y: baseY * GRAPH_CELL }
-
-  let bestX = 0
-  let bestY = 0
-  let bestDist = Infinity
-  const consider = (cx: number, cy: number) => {
-    if (occupied.has(cellKey(cx, cy))) return
-    const dx = cx * GRAPH_CELL - tx
-    const dy = cy * GRAPH_CELL - ty
-    const dist = dx * dx + dy * dy
-    if (dist > bestDist) return
-    if (dist === bestDist && (cy > bestY || (cy === bestY && cx >= bestX))) return
-    bestDist = dist
-    bestX = cx
-    bestY = cy
-  }
-  // Кольца клеток вокруг исходной. Занятых клеток конечное число, поэтому свободная найдётся.
-  for (let k = 1; ; k++) {
-    for (let d = -k; d <= k; d++) {
-      consider(baseX + d, baseY - k)
-      consider(baseX + d, baseY + k)
-    }
-    for (let d = -k + 1; d <= k - 1; d++) {
-      consider(baseX - k, baseY + d)
-      consider(baseX + k, baseY + d)
-    }
-    // Цель лежит не дальше полклетки от центра исходной клетки, значит до любой клетки следующего
-    // кольца не меньше (k + 0.5) клетки: ближе найденной там уже не будет.
-    const reach = (k + 0.5) * GRAPH_CELL
-    if (bestDist < reach * reach) break
-  }
-  return { x: bestX * GRAPH_CELL, y: bestY * GRAPH_CELL }
+  const [cx, cy] = nearestFreeCell(tx, ty, (x, y) => occupied.has(cellKey(x, y)))
+  return { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
 }

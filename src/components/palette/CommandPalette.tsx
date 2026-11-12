@@ -16,11 +16,18 @@ import { CategoryDot } from '@/components/items/CategoryBadge'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { setSetting } from '@/db/settings'
 import { useAllItems, useAllTags, useCategories, useItemsWithTrash, useSavedSearches, useTrashCount } from '@/hooks/useItems'
-import { actApplySearch, actEmptyTrashAsk, actSaveCurrentSearch, openItemInSection } from '@/lib/actions'
+import {
+  actApplySearch,
+  actEmptyTrashAsk,
+  actRelayoutGraph,
+  actSaveCurrentSearch,
+  openItemInSection,
+} from '@/lib/actions'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { isNarrowed } from '@/lib/savedSearch'
 import { fold, makeSnippet, searchItems } from '@/search'
+import { useGraph } from '@/store/graph'
 import { useUi, type View } from '@/store/ui'
 import type { Item, ItemStatus, ScenePref, Settings } from '@/types'
 
@@ -78,6 +85,8 @@ export function CommandPalette() {
   const trashCount = useTrashCount()
   const uiQuery = useUi((s) => s.query)
   const uiFilter = useUi((s) => s.filter)
+  const view = useUi((s) => s.view)
+  const showArchive = useGraph((s) => s.showArchive)
   const canSaveSearch = isNarrowed(uiQuery, uiFilter)
 
   const trimmed = input.trim()
@@ -123,6 +132,7 @@ export function CommandPalette() {
       { id: 'go-library', label: 'Перейти: База знаний', icon: 'library', run: () => go('library') },
       { id: 'go-favorites', label: 'Перейти: Избранное', icon: 'star', run: () => go('favorites') },
       { id: 'go-archive', label: 'Перейти: Архив', icon: 'archive', run: () => go('archive') },
+      { id: 'go-graph', label: 'Перейти: Граф', icon: 'graph', run: () => go('graph') },
       { id: 'go-trash', label: 'Перейти: Корзина', icon: 'trash', run: () => go('trash') },
       ...(trashCount > 0
         ? [
@@ -150,7 +160,37 @@ export function CommandPalette() {
             },
           ]
         : []),
-      // Заглушка этапа 5: «Перейти: Граф» добавится здесь.
+      ...(view === 'graph'
+        ? [
+            {
+              id: 'graph-fit',
+              label: 'Граф: показать весь',
+              icon: 'maximize' as const,
+              run: () => {
+                close()
+                useGraph.getState().fitAll()
+              },
+            },
+            {
+              id: 'graph-relayout',
+              label: 'Граф: разложить заново',
+              icon: 'layout' as const,
+              run: () => {
+                close()
+                void actRelayoutGraph()
+              },
+            },
+            {
+              id: 'graph-archive',
+              label: showArchive ? 'Граф: скрыть архив' : 'Граф: показать архив',
+              icon: showArchive ? ('eye-off' as const) : ('eye' as const),
+              run: () => {
+                close()
+                useGraph.getState().setShowArchive(!showArchive)
+              },
+            },
+          ]
+        : []),
       { id: 'go-settings', label: 'Перейти: Настройки', icon: 'settings', run: () => go('settings') },
       { id: 'theme-light', label: 'Тема: светлая', icon: 'sun', run: () => setTheme('light') },
       { id: 'theme-dark', label: 'Тема: тёмная', icon: 'moon', run: () => setTheme('dark') },
@@ -163,7 +203,7 @@ export function CommandPalette() {
       { id: 'scene-classic', label: 'Сцена: Классика', icon: 'sprout', run: () => pickScene('classic') },
     ],
     // close/go/setTheme зависят только от стабильных zustand-действий и setInput
-    [setScene, trashCount, canSaveSearch],
+    [setScene, trashCount, canSaveSearch, view, showArchive],
   )
 
   const results = useMemo(() => {
@@ -195,9 +235,12 @@ export function CommandPalette() {
     ? allTags.filter((t) => fold(t.tag).includes(needle.replace(/^#/, ''))).slice(0, MAX_MATCHES)
     : []
 
+  // В «Графе» категория и тег из палитры приглушают ноды, не уводя в «Базу знаний». setView там не вызывается, а он
+  // сбрасывает фильтры: сбрасываем сами, чтобы выбор заменял прежний отбор, как в списках.
   const toLibrary = (patch: Parameters<ReturnType<typeof useUi.getState>['setFilter']>[0], query = '') => {
     const ui = useUi.getState()
-    ui.setView('library')
+    if (ui.view !== 'graph') ui.setView('library')
+    else ui.resetFilter()
     ui.setQuery(query)
     ui.setFilter(patch)
     close()
@@ -242,7 +285,9 @@ export function CommandPalette() {
               {trimmed && (
                 <CommandItem value="action-search-library" onSelect={() => toLibrary({}, trimmed)}>
                   <Icon name="search" />
-                  <span className="truncate">Искать «{trimmed}» в базе знаний</span>
+                  <span className="truncate">
+                    {view === 'graph' ? `Искать «${trimmed}» на графе` : `Искать «${trimmed}» в базе знаний`}
+                  </span>
                 </CommandItem>
               )}
             </CommandGroup>
