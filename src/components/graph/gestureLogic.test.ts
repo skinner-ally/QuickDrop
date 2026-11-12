@@ -74,7 +74,19 @@ describe('bitmapSize', () => {
   it('негодные значения — 0, негодный dpr — 1', () => {
     expect(bitmapSize(-5, Number.NaN, 2)).toEqual({ W: 0, H: 0 })
     expect(bitmapSize(100, 50, Number.NaN)).toEqual({ W: 100, H: 50 })
-    expect(bitmapSize(100, 50, 1, { inlineSize: Number.NaN, blockSize: -1 })).toEqual({ W: 0, H: 0 })
+    expect(bitmapSize(-5, Number.NaN, 2, { inlineSize: 0, blockSize: 0 })).toEqual({ W: 0, H: 0 })
+  })
+  it('негодная коробка устройства — round(css·dpr)', () => {
+    expect(bitmapSize(100, 50, 1, { inlineSize: Number.NaN, blockSize: -1 })).toEqual({ W: 100, H: 50 })
+  })
+  it('коробка не сходится с dpr (эмуляция: dpr 2, растр 1×) — round(css·dpr)', () => {
+    expect(bitmapSize(390, 700, 2, { inlineSize: 390, blockSize: 700 })).toEqual({ W: 780, H: 1400 })
+    // Расходится одна ось — тоже не верим.
+    expect(bitmapSize(390, 700, 2, { inlineSize: 780, blockSize: 700 })).toEqual({ W: 780, H: 1400 })
+  })
+  it('допуск сверки — 2 px', () => {
+    expect(bitmapSize(1000, 600, 1.5, { inlineSize: 1502, blockSize: 898 })).toEqual({ W: 1502, H: 898 })
+    expect(bitmapSize(1000, 600, 1.5, { inlineSize: 1503, blockSize: 900 })).toEqual({ W: 1500, H: 900 })
   })
 })
 

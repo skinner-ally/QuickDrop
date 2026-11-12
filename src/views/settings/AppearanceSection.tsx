@@ -125,7 +125,7 @@ export function AppearanceSection({ settings }: { settings: Settings }) {
             onCheckedChange={(v) => void setSetting('ambient', v).catch(fail)}
           />
         </div>
-        <p className="text-xs text-muted-foreground">Листопад, лучи, снег, бабочки и светлячки на графе.</p>
+        <p className="text-xs text-muted-foreground">Лес и пруды, листопад, лучи, снег, бабочки и светлячки на графе. В «Классике» фона нет.</p>
       </div>
     </Section>
   )

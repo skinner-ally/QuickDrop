@@ -52,8 +52,13 @@ function currentDpr(): number {
 }
 
 /**
- * Три canvas сцены (фон этапа 6, связи и ноды, фон поверх нод). Рисование — только по запросу: invalidate() ставит
- * один requestAnimationFrame; постоянного цикла нет. React перерисовывает компонент лишь при смене сцены.
+ * Три canvas сцены: back (живой фон под нодами: плитки леса, листопад), main (связи и ноды), front (фон поверх нод:
+ * лучи, снег, бабочки, светлячки). Рисование — только по запросу, постоянного цикла нет. Два повода кадра:
+ * invalidate() — граф и фон (камера, сцена, размер, тема, смена слоя); invalidateAmbient() — только кадр фона
+ * (тик эффектов, дорисовка плиток): граф по нему не перерисовывается. Оба ставят один requestAnimationFrame.
+ * React перерисовывает компонент лишь при смене сцены.
+ * Замеры в data-атрибутах сцены: drawMs — только граф, ambientMs — только слой; ambientTiles/Ticks/Rendered — счётчики
+ * слоя (приёмка этапа 6).
  */
 export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
   const backRef = useRef<HTMLCanvasElement>(null)
@@ -85,6 +90,12 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
     let disposed = false
     // Фоновые canvas измеряются, только пока слой этапа 6 подключён.
     let ambientSized = false
+    // Граф нужно перерисовать (иначе кадр только для фона).
+    let graphDirty = true
+    // Ревизия сцены для слоя: растёт при смене sceneRef.current по ссылке.
+    let lastScene: GraphScene | null = null
+    let sceneRev = 0
+    let lastV: GraphViewport | null = null
 
     /** Новый размер сцены. true — растр холста сброшен: кадр нужно нарисовать до вывода, иначе он мигнёт пустым. */
     const resize = (cssW: number, cssH: number, device?: { inlineSize: number; blockSize: number }): boolean => {
@@ -117,6 +128,13 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
       ambientSized = on
     }
 
+    const clearAmbientStats = () => {
+      delete stage.dataset.ambientMs
+      delete stage.dataset.ambientTiles
+      delete stage.dataset.ambientTicks
+      delete stage.dataset.ambientRendered
+    }
+
     const frame = () => {
       raf = 0
       if (disposed) return
@@ -126,10 +144,66 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
         themeDirty = false
       }
       const { W, H, cssW, cssH, dpr } = size
+      // Ранний выход оставляет graphDirty: граф дорисуется в первом годном кадре.
       if (!theme || !(W > 0) || !(H > 0)) return
       const g = useGraph.getState()
       const sc = sceneRef.current
-      const v: GraphViewport = { width: cssW, height: cssH, dpr, camera: g.camera }
+      if (sc !== lastScene) {
+        lastScene = sc
+        sceneRev += 1
+      }
+      // Кадр только для фона берёт прежний вид: камера между ними не менялась (её смена ставит graphDirty).
+      const v: GraphViewport =
+        !graphDirty && lastV && lastV.width === cssW && lastV.height === cssH && lastV.dpr === dpr && lastV.camera === g.camera
+          ? lastV
+          : { width: cssW, height: cssH, dpr, camera: g.camera }
+      if (graphDirty) {
+        graphDirty = false
+        lastV = v
+        drawGraph(sc, v, g, W, H)
+        stage.dataset.drawMs = (performance.now() - t0).toFixed(2)
+      }
+
+      const layer = getAmbientLayer()
+      if (layer) {
+        if (!ambientSized) sizeAmbient(true)
+        const bctx = back.getContext('2d')
+        const fctx = front.getContext('2d')
+        if (bctx && fctx) {
+          const a0 = performance.now()
+          layer.draw(
+            { back: bctx, front: fctx },
+            {
+              viewport: v,
+              device: deviceTransform(v),
+              pixel: theme.pixel,
+              dark: document.documentElement.classList.contains('dark'),
+              time: t0,
+              nodeNear: (wx, wy, r) => {
+                const hits = queryBounds(sc.index, sc.nodes, { minX: wx - r, minY: wy - r, maxX: wx + r, maxY: wy + r })
+                for (const i of hits) if (Math.hypot(sc.nodes[i].x - wx, sc.nodes[i].y - wy) <= r) return true
+                return false
+              },
+              sceneRev,
+              points: sc.nodes,
+            },
+          )
+          stage.dataset.ambientMs = (performance.now() - a0).toFixed(2)
+          const st = layer.stats?.()
+          if (st) {
+            stage.dataset.ambientTiles = String(st.tiles)
+            stage.dataset.ambientTicks = String(st.ticks)
+            stage.dataset.ambientRendered = String(st.rendered)
+          }
+        }
+      } else {
+        if (ambientSized || back.width !== 0) sizeAmbient(false)
+        if (stage.dataset.ambientMs !== undefined) clearAmbientStats()
+      }
+    }
+
+    const drawGraph = (sc: GraphScene, v: GraphViewport, g: ReturnType<typeof useGraph.getState>, W: number, H: number) => {
+      if (!theme) return
 
       // Режим связи с мыши: временная связь от выбранной ноды к указателю.
       let tempLink = live.tempLink
@@ -169,41 +243,15 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
         drawLinksClassic(ctx, sc, v, theme, state)
       }
       drawNodes(ctx, sc, v, theme, state)
-
-      const layer = getAmbientLayer()
-      if (layer) {
-        if (!ambientSized) sizeAmbient(true)
-        const bctx = back.getContext('2d')
-        const fctx = front.getContext('2d')
-        if (bctx && fctx) {
-          bctx.imageSmoothingEnabled = false
-          fctx.imageSmoothingEnabled = false
-          layer.draw(
-            { back: bctx, front: fctx },
-            {
-              viewport: v,
-              device: deviceTransform(v),
-              pixel: theme.pixel,
-              dark: document.documentElement.classList.contains('dark'),
-              time: t0,
-              nodeNear: (wx, wy, r) => {
-                const hits = queryBounds(sc.index, sc.nodes, { minX: wx - r, minY: wy - r, maxX: wx + r, maxY: wy + r })
-                for (const i of hits) if (Math.hypot(sc.nodes[i].x - wx, sc.nodes[i].y - wy) <= r) return true
-                return false
-              },
-            },
-          )
-        }
-      } else if (ambientSized || back.width !== 0) {
-        sizeAmbient(false)
-      }
-
-      stage.dataset.drawMs = (performance.now() - t0).toFixed(2)
     }
 
-    function invalidate() {
+    function invalidateAmbient() {
       if (raf || disposed) return
       raf = requestAnimationFrame(frame)
+    }
+    function invalidate() {
+      graphDirty = true
+      invalidateAmbient()
     }
     invalidateRef.current = invalidate
     live.invalidate = invalidate
@@ -220,6 +268,7 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
         // Колбэк идёт после вёрстки и до отрисовки кадра: рисуем сразу, rAF успел бы только к следующему кадру.
         if (raf) cancelAnimationFrame(raf)
         raf = 0
+        graphDirty = true
         frame()
       } else {
         invalidate()
@@ -246,7 +295,7 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
       themeDirty = true
       invalidate()
     })
-    const offAmbient = subscribeAmbient(invalidate)
+    const offAmbient = subscribeAmbient((kind) => (kind === 'frame' ? invalidateAmbient() : invalidate()))
 
     // Перерисовка по смене того, что видно на холсте; React при этом не перерисовывается.
     const offGraph = useGraph.subscribe((s, p) => {
@@ -279,6 +328,7 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
       live.invalidate = () => {}
       invalidateRef.current = () => {}
       delete stage.dataset.drawMs
+      clearAmbientStats()
       // Сцены нет: следующий замер (возврат в раздел) начнётся с нуля и не станет подстраивать камеру
       // от размера, который был до ухода.
       useGraph.getState().setViewSize(0, 0)

@@ -5,6 +5,7 @@ import { GraphHeader } from '@/components/graph/GraphHeader'
 import { GraphHint } from '@/components/graph/GraphHint'
 import { GraphOverlay } from '@/components/graph/GraphOverlay'
 import { GraphToolbar } from '@/components/graph/GraphToolbar'
+import { useAmbient } from '@/components/graph/useAmbient'
 import { useGraphGestures } from '@/components/graph/useGraphGestures'
 import { useGraphKeys } from '@/components/graph/useGraphKeys'
 import { EmptyState } from '@/components/items/EmptyState'
@@ -217,6 +218,7 @@ export function GraphView() {
   }, [scene, positions, itemsById])
 
   useGraphGestures({ stage: stageEl, live: graphLive, sceneRef, takenRef, onMoved })
+  useAmbient(loaded ? stageEl : null)
   useGraphKeys({ stageRef, live: graphLive, sceneRef, itemsRef })
 
   // ── эффекты ──

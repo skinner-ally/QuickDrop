@@ -110,8 +110,10 @@ export default defineConfig({
         },
       },
       workbox: {
-        globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
+        // txt — уведомление лицензии pixelfx (public/licenses): в кэше для офлайна и открывается сам, а не оболочкой.
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2,txt}'],
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/\/licenses\//],
         cleanupOutdatedCaches: true,
       },
     }),

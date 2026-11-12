@@ -101,7 +101,12 @@
   /* Граф: цвета читает lib/graph/theme.ts. Земля сцены --ground — в блоках сцен выше. Обычные связи и рамки
      соседа, наведения и курсора рисуются с тёмной кромкой (--graph-link-edge, --graph-sel-edge): светлые
      --rope-* и --graph-hover на дневной земле без неё не читаются. --graph-label / --graph-label-edge —
-     подпись ноды (pixel.css: px-graph-label). */
+     подпись ноды (pixel.css: px-graph-label).
+     Живой фон (этап 6): земля под нодами остаётся ровной --ground (плитки фона на месте нод — «поляны», там
+     ничего не нарисовано), поэтому кромки к земле считаются от неё. Поверх нод лежит только заливка лучей
+     (дневные «Луг» и «Осень») — белая, не сильнее AMBIENT_OVERLAY_MAX (lib/ambient/types.ts); под ней кромки
+     ноды, связи и выделения к земле остаются ≥ 3, подпись к контуру ≥ 4.5 во всех восьми вариантах
+     (lib/ambient/contrast.test.ts). Меняя --ground или кромки дневных «Луга» и «Осени», прогнать этот тест. */
   --graph-bg: var(--ground);
   --graph-node-edge: var(--wood-dark);  --graph-shadow: var(--shadow);
   --graph-inbox: var(--brand);          --graph-inbox-edge: var(--wood-dark);

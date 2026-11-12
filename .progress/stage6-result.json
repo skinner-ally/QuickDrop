@@ -1,0 +1,369 @@
+{
+ "spec": {
+  "summary": "Спецификация этапа 6 написана: .progress\\spec-stage6.md (отчёт — .progress\\agents\\spec-stage6.md). Код не менялся, git не трогался, зависимости не ставились.\n\nЧто выяснено по коду (важно для исполнителей):\n- Основной canvas графа уже прозрачный (clearRect каждый кадр); землю даёт CSS (.px-graph-stage → --graph-bg = --ground). В lib/graph/draw.ts на этапе 6 ничего не меняется.\n- settings.ambient (переключатель «Живой фон» в src/views/settings/AppearanceSection.tsx, значение в useScene().ambient) сейчас никем не читается.\n- requestAmbientFrame() сегодня перерисовывает весь граф (subscribeAmbient(invalidate)); на этапе 6 подписчик получает причину 'layer' | 'frame', по 'frame' хост рисует только фон.\n- mockup/pixelfx/LICENSE на месте (MIT, Copyright (c) 2026 Patch, Copyright (c) 2026 Hugo Duprez); в каталоге только код, переносить можно всё при сохранении текста лицензии.\n\nГлавные решения:\n1. Фон — слой AmbientLayer (движок src/lib/ambient/engine.ts), новых canvas в DOM нет. Плитки прозрачные (мелочь земли, пруды, лес), поляна = ничего не нарисовано = ровная --ground, поэтому проверки контраста этапа 5 остаются верными.\n2. Резкость: фон рисуется в «решётке устройства» — пиксель графики = u целых пикселей устройства (u = round(2·zoom·dpr·2^lod)), положения объектов идут от мира, плитки — блоки решётки (≈512 px устройства), швов и дробного масштаба нет при любом dpr. На мелком масштабе — уменьшенные спрайты (lod 1/2) и смягчение цветов к земле.\n3. Поляны — чистая структура Clearing из точек нод: рамка вокруг объекта леса (не зависит от масштаба), круг вокруг пруда и мелочи земли. Плитка перерисовывается только при смене набора нод в радиусе влияния (подпись), смена — растворением в 3 шага ≈250 мс; ввод в поиске (приглушение) плитки не трогает. Во время переноса ноды сцена не меняется — поляна меняется один раз при броске.\n4. Эффекты — растры низкого разрешения (Uint32Array), ≈12 кадров/с, целочисленное увеличение: под нодами листопад, над нодами лучи с пылинками, снег, бабочки, светлячки (порядок мокапа). Планировщик без собственного rAF: таймер 83 мс → requestAmbientFrame → кадр хоста → consume → новый таймер (кадр не нарисован — таймер не взводится).\n5. Режимы: off (раздел не «Граф»/сцены нет, «Живой фон» выключен, «Классика» — слой снят, ровная земля), static (prefers-reduced-motion или скрытое окно — лес стоит, таймеров нет), animated.\n6. pixelfx: ядро (≈2700 строк, 244 эффекта) не переносится; в src/lib/pixelfx — hash/rand, цвет, trips, листопад и лучи (производные от pixelfx) с LICENSE и README. Снег, светлячки, бабочки — свои рисовальщики (бабочка pixelfx 88×80 px экрана закрывала бы ноды 16 px).\n7. «Бумага»: без леса и прудов — точечная сетка между нодами, волокна, редкие кляксы; эффектов нет.\n\nРазбивка: волна 0 по очереди (opus): amb-contracts → amb-world → amb-scheduler → amb-tiles → amb-engine; волна 1 параллельно (sonnet): amb-sprites, amb-effects, amb-style; волна 2 (opus, браузер): amb-wire. Один файл — один пакет; после каждого пакета typecheck и тесты проходят. Движок вынесен в волну 0 с внедрением зависимостей (графика, эффекты, поверхности — подделки в тестах), чтобы пакет с браузером был чистым подключением.\n\nРиски (в §8 спецификации): в «Осени» back пересобирается на каждом тике (запасной путь — отдельный canvas под листопад); относительный размер спрайтов гуляет 0.8–1.34 между ступенями и dpr; автоуменьшение спрайтов на обзоре может дать «кашу»; минимизатор может срезать уведомление MIT (проверка в критериях amb-wire); visibilitychange в свёрнутом окне Tauri не проверен; prefers-reduced-motion и dpr 1.25/1.5/2 в панели браузера не переключаются — покрыты тестами, вживую проверяет основная сессия.",
+  "openQuestions": [
+   "Светлячки ночью — только в «Луге» (как в мокапе) или во всех лесных сценах? По умолчанию: только «Луг»; в «Осени» ночью остаётся листопад.",
+   "prefers-reduced-motion: оставить лес и пруды неподвижной картинкой без эффектов или убирать фон целиком? По умолчанию: неподвижный фон остаётся, таймеров нет.",
+   "Скрытое окно: слой остаётся в режиме static (кэш плиток в памяти, до 64 МБ) или снимать его и освобождать память? По умолчанию: остаётся, тики стоят.",
+   "«Бумага»: точечная сетка между нодами, волокна и редкие кляксы — или линовка? По умолчанию: точки, без линовки, без эффектов.",
+   "Пороги масштаба: листопад и светлячки от 50 %, бабочки от 75 %, снег и лучи всегда. По умолчанию: так.",
+   "Смена поляны после переноса ноды — растворение в 3 шага ≈250 мс (в неподвижном режиме мгновенно). По умолчанию: так; можно сделать мгновенной всегда.",
+   "«Живой фон» выключен — пропадает и лес (ровная земля, как сейчас), а не только движение. По умолчанию: так, как сказано в задаче; отдельного переключателя «только лес» нет.",
+   "Блики на прудах (CSS-анимация мокапа) и эффекты действий pixelfx (росток при добавлении, вспышка при выборе) не переносятся. По умолчанию: не переносить на этапе 6.",
+   "На больших экранах (растр эффектов больше 640 тыс. арт-пикселей, например 4K при 100 %) арт-пиксель эффектов укрупняется ради цены кадра. По умолчанию: так.",
+   "Бабочка — своя маленькая (≈9×7 арт-пикселей), а не бабочка pixelfx из мокапа (44×40 со свечением, крупнее нод). По умолчанию: своя.",
+   "Если кадр тика в «Осени» выйдет за 6 мс (back пересобирается на каждом тике), добавить отдельный canvas под листопад в GraphCanvas? По умолчанию: не добавлять, решать по замерам amb-wire.",
+   "Уведомление MIT в сборке: если минимизатор срежет шапку /*! … */ из чанка графа, где показывать лицензию (README уже есть; вариант — раздел «О программе» в настройках на этапе 8)? По умолчанию: README и src/lib/pixelfx/LICENSE, о срезанной шапке amb-wire сообщает в отчёте."
+  ]
+ },
+ "critic": {
+  "summary": "Spec-stage6 checked against the code and the plan. The file names, exports and signatures exist as the spec says. The §3.4 additions to src/lib/graph/ambient.ts are compatible: GraphCanvas passes invalidate with no parameters, and theme.test.ts only counts calls. The layer order (CSS ground → back → main → front → DOM) and the R1–R12 decisions match the code. The lattice calculation over 7 zoom steps × dpr 1/1.25/1.5/2 confirms u/q ∈ [0.8, 1.333], size·u ≈ 512 and u ≤ 8, so tiles land on integer coordinates. The object clearing boxes, pond reach and CLEAR_REACH=360 cover the sprites. Tile-cache memory stays under the limit: about 20 MB for visible tiles at u=1, and 4K at 12.5% is about 14M px. Every stop condition and every 'Stage 6' item in the plan is covered. Real defects fixed in the spec: the contrast test as written (edge ≥ 3 for all 8 variants) would fail at night; the ground-detail clearing radius was too small; the forest would flash under nodes before data loads; drawMs mixed graph and layer time; the tile budget overran by a whole tile. Also fixed: the MIT notice in the bundle and butterfly readability over nodes. The package split stays as it was: every file belongs to one package, wave 1 depends only on wave 0, and wiring plus the browser are only in amb-wire. Only the 'done' conditions and summaries changed. Files: .progress\\spec-stage6.md (25 notes «(уточнено при сверке)», new §11) and .progress\\agents\\spec-stage6-review.md.",
+  "fixed": [
+   "§5.3 contrast.test: strict 'edge ≥ 3 under AMBIENT_OVERLAY_MAX' only for daytime «Луг» and «Осень» (rays exist only there; measured 3.16 and 3.39–3.69). Night edges against the ground are ≈1.2–1.4 by stage-5 design, so the test over 8 variants would fail and force changes to night colours. The label ≥ 4.5 check stays for all 8 (minimum ≈5.7).",
+   "§4.2/§3.1: CLEAR_GROUND_R 44 → 56, and the anchor of ground details and the grid pattern is the sprite centre. With 44 the tileRender test '24 px of world from the node square' would fail on the diagonal.",
+   "§6.5: useAmbient(loaded ? stageEl : null). In GraphView the stage appears before data loads, with a scene of no nodes, so the forest would draw without clearings and then fade out under the nodes on every entry to the section.",
+   "§6.4: drawMs is measured for the graph only (before layer.draw; today it includes the layer), and the layer time goes to ambientMs. Without this, the §6.6 item 2 criterion cannot be checked.",
+   "§4.6/§3.1: tile budget accounts for the cost of the next tile, AMBIENT_TILE_BUDGET_MS 8 → 10. Added a prefetch ring of tiles that only runs if it fits the memory limit. A dissolve remembers its tile position. Engine tests adjusted for the ring and the budget (cost 5 ms → 2 tiles).",
+   "§8: risk 6 recalculated (3–5 ms per 512² tile → the forest appears over 7–20 frames, not 2–4). Added risk 7: small canvases are not GPU-accelerated in WebView2, with a measurement and an ImageBitmap fallback.",
+   "§5.2 MIT: the full LICENSE text goes in the /*! header of pixelfx/math.ts. The LICENSE file does not reach the bundle, and a path to it is not the permission notice. §6.6 item 1 now checks for 'Permission is hereby granted' in the chunk, and effects.test checks the header. README.md: the leaves and rays source is mockup/weather.js (those recipes are not in the mockup/pixelfx copy).",
+   "§5.2: a butterfly near a node is drawn at ×0.35 (it is larger than a node at the 75% threshold). Ray steps must be light (luminance ≥ 0.6, alpha ≤ 0.2), which is what the white-fill contrast check relies on. effects.test checks that rays appear only in daytime «Луг»/«Осень».",
+   "§4.4: pond box x±1.45r, y±1.1r as in the mockup; the clearing-test measure (Euclidean to the 16×16 square, anchors at the edge of the tolerance); a rough speed guard for renderTile (≤ 30 ms in node).",
+   "§3.5: /// <reference types=\"node\" /> in src/test/sceneVars.ts (not a test file, reads node:fs) and a ban on importing it from app code. §3.1: the dangling JSDoc about the anchor became a regular comment.",
+   "§6.7 С1/С2: added link and label readability over the forest and 'no flicker on entry'. The empty-strip criterion during a sharp pan is relaxed to 2–3 frames."
+  ],
+  "openQuestions": [
+   "Leaves (plane under, anchor screen) are tied to the screen, as in the mockup. During a pan, fallen leaves stay put on screen while the forest moves under them, until the next tick at about 83 ms. Is that acceptable, or should leaves be tied to the world? That means rewriting the mockup algorithm (more work for amb-effects).",
+   "After a zoom change the forest appears gradually over 7–20 frames (≈0.1–0.3 s) at 3–5 ms per tile. Is that acceptable, or do we plan a polish step that shows the previous zoom step's tiles at integer scale while the new ones draw?",
+   "The prefix ring of tiles is a review addition (more memory: about 42 tiles of 1 MB at u=1 on 1280×800 @1.5, within the 64 MB limit). Keep it or drop it? Without it, a new row takes 2–3 frames to appear on an ordinary pan.",
+   "If the Vite 8 minifier (rolldown/oxc) strips /*! comments, keeping the MIT notice needs a vite.config.ts change (output.comments.legal) or shipping LICENSE in public/. Neither file belongs to any package, so the main session decides.",
+   "The small-canvas tile risk in WebView2 (risk 7): if ambientMs during a pan at u ≥ 4 exceeds 3 ms, switch to ImageBitmap in surface.ts. That needs an asynchronous swap of source; agree whether it goes into amb-wire or later polish.",
+   "Ponds near a node disappear entirely together with their reeds (the mockup's rule), so there are almost no ponds near zones. Confirm this is wanted."
+  ]
+ },
+ "packages": [
+  {
+   "key": "amb-contracts",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/types.ts",
+    "src/lib/ambient/lattice.ts",
+    "src/lib/ambient/lattice.test.ts",
+    "src/lib/ambient/raster.ts",
+    "src/lib/ambient/raster.test.ts",
+    "src/lib/graph/ambient.ts",
+    "src/lib/graph/ambient.test.ts",
+    "src/test/sceneVars.ts",
+    "src/test/sceneVars.test.ts"
+   ]
+  },
+  {
+   "key": "amb-world",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/world.ts",
+    "src/lib/ambient/world.test.ts",
+    "src/lib/ambient/clearing.ts",
+    "src/lib/ambient/clearing.test.ts"
+   ]
+  },
+  {
+   "key": "amb-scheduler",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/scheduler.ts",
+    "src/lib/ambient/scheduler.test.ts"
+   ]
+  },
+  {
+   "key": "amb-tiles",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/tileRender.ts",
+    "src/lib/ambient/tileRender.test.ts",
+    "src/lib/ambient/tileStore.ts",
+    "src/lib/ambient/tileStore.test.ts"
+   ]
+  },
+  {
+   "key": "amb-engine",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/engine.ts",
+    "src/lib/ambient/engine.test.ts"
+   ]
+  },
+  {
+   "key": "amb-sprites",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/lib/ambient/sprites/build.ts",
+    "src/lib/ambient/sprites/palette.ts",
+    "src/lib/ambient/sprites/forest.ts",
+    "src/lib/ambient/sprites/ground.ts",
+    "src/lib/ambient/sprites/index.ts",
+    "src/lib/ambient/sprites/sprites.test.ts"
+   ]
+  },
+  {
+   "key": "amb-effects",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/lib/pixelfx/LICENSE",
+    "src/lib/pixelfx/README.md",
+    "src/lib/pixelfx/math.ts",
+    "src/lib/pixelfx/color.ts",
+    "src/lib/pixelfx/trips.ts",
+    "src/lib/pixelfx/leaves.ts",
+    "src/lib/pixelfx/rays.ts",
+    "src/lib/pixelfx/pixelfx.test.ts",
+    "src/lib/ambient/effects/snow.ts",
+    "src/lib/ambient/effects/fireflies.ts",
+    "src/lib/ambient/effects/butterflies.ts",
+    "src/lib/ambient/effects/index.ts",
+    "src/lib/ambient/effects/effects.test.ts"
+   ]
+  },
+  {
+   "key": "amb-style",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/styles/scenes.css",
+    "src/styles/pixel.css",
+    "docs/DESIGN.md",
+    "README.md",
+    "src/views/settings/AppearanceSection.tsx",
+    "src/lib/ambient/contrast.test.ts"
+   ]
+  },
+  {
+   "key": "amb-wire",
+   "wave": 2,
+   "model": "opus",
+   "files": [
+    "src/lib/ambient/surface.ts",
+    "src/lib/ambient/controller.ts",
+    "src/lib/ambient/controller.test.ts",
+    "src/components/graph/useAmbient.ts",
+    "src/components/graph/GraphCanvas.tsx",
+    "src/views/GraphView.tsx"
+   ]
+  }
+ ],
+ "results": [
+  {
+   "key": "amb-contracts",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-contracts (волна 0) выполнен по spec-stage6 §2.2, §3.1–3.5. types.ts — типы и константы §3.1 дословно (AMBIENT_TILE_BUDGET_MS = 10, правило опор: объекты — центр ширины и низ, мелочь и узор — центр). lattice.ts — latticeStep/softenFor/effectUnit/toLattice/tileRange/tileBounds/tileOrigin; тесты на 7 ступеней × dpr 1/1.25/1.5/2: u целое, u/q в [0.8, 1.34], size в [64, 512], size·u в [384, 640], стык плиток без зазора, tileRange покрывает экран при отрицательных и больших ox/oy без лишних плиток, effectUnit 1600×1000@1.5 → e=3 (534×334), 3840×2160@1 → e=4 (960×540). raster.ts — createRaster, clearRaster, rgba, hexColor, chR/G/B/A, mixColor, withAlpha, setPx, blendPx, ditherPx (Байер 4×4), fillRectPx, blitSprite, glow, shadeBox (+ getPx); тесты: ничего вне растра, blendPx на пустом → альфа a·k, на непрозрачном → смесь с альфой 255, ditherPx 0.5 → 8 из 16, обрезка blitSprite по всем краям. lib/graph/ambient.ts — только добавления: AmbientWake, AmbientStats, sceneRev/points в AmbientFrame, stats? у слоя, subscribeAmbient(cb: (kind) => void): 'layer' из setAmbientLayer, 'frame' из requestAmbientFrame; тесты причин, подписчика без параметра и вызова без подписчиков в новом ambient.test.ts. src/test/sceneVars.ts с /// <reference types=\"node\" /> (parseRootBlocks, sceneVars, readSceneCss, SCENE_VARIANTS из 8, luminance, contrast, overlay), тест --ground всех 8 вариантов и overlay('#000000', белый 0.2) = '#333333'. theme.test.ts и GraphCanvas.tsx не тронуты, GraphCanvas компилируется. npm run typecheck — без ошибок; npm test — 64 файла, 1960 тестов, все прошли.",
+   "deviations": [
+    "raster.ts: добавлен экспорт getPx(r, x, y) (чтение пикселя, вне растра — 0) — нужен тестам и пригодится другим пакетам; сигнатуры спецификации не менялись.",
+    "setPx пропускает любой цвет с альфой 0, не только c = 0 (надмножество правила спецификации).",
+    "Поведение там, где спецификация молчит: tileRange при W или H <= 0 возвращает пустой диапазон (ti1 < ti0, tj1 < tj0); softenFor для NaN и zoom <= 0 возвращает 0 (как zoom 1); effectUnit при негодном dpr считает dpr = 1; hexColor для негодной строки возвращает 0.",
+    "ditherPx: порог клетки (n + 0.5)/16, рисует через blendPx (непрозрачный цвет — прямая запись); glow умножает собственную альфу c на (1 − d)²·k; shadeBox обходит рамку пикселей [floor(x0), ceil(x1)) × [floor(y0), ceil(y1)) ∩ растр."
+   ],
+   "notVerified": [
+    "Браузер по заданию не нужен, не открывался.",
+    "Каналы chR..chA на платформе big-endian проверены только чтением кода (тесты идут на little-endian)."
+   ],
+   "forMainSession": [
+    "subscribeAmbient теперь передаёт причину ('layer' | 'frame'). GraphCanvas пока передаёт invalidate без параметров и, как раньше, перерисовывает весь граф. Раздельную обработку 'frame' подключает пакет amb-wire.",
+    "src/test/sceneVars.ts лежит в src и проверяется typecheck через reference types=node. Из кода приложения его импортировать нельзя."
+   ]
+  },
+  {
+   "key": "amb-world",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-world готов. world.ts переносит расстановку из mockup/forest.js один к одному: те же формулы h2, vn и density, objectsOf, pondOf и pondD, те же «соли» хеша. Наружу отдаются px мира (арт × 2). Тест сверяет результат с эталонной копией формул мокапа: объекты 169 ячеек и пруды 121 ячейки совпадают точно. Есть всё по спецификации: chunkObjects, pondOfCell, pondDistance, objectsIn (порядок y, x, id), pondsIn, eachGroundDetail, resetWorldCache. Кэши ячеек и прудов ограничены 600 записями. Рамки полян: дерево 74/140/44, сосна 60/134/44, куст 60/72/44, камень и мелочь 54/62/44; у пруда reach = r·1.45 + 56. clearing.ts: корзины по 128 px, near и inBox включают границу, signature не зависит от порядка точек (сумма хешей точных битов координат плюс их число), пустой набор даёт 0; ещё key, size, EMPTY_CLEARING, objectCleared, pondCleared, CLEAR_GROUND_R = 56. Тестов 33 (world 20, clearing 13): детерминизм (обратный порядок прогрева, сброс и переполнение кэша), отрицательные координаты, стыки ячеек и разбиение области, доля прудов 0.42 ± 0.05 на 2000 ячейках, пруд внутри своей ячейки, объект не в воде своего пруда, пределы SPRITE_LIMITS, мелочь земли (5 мест на клетку), правило полян для дерева (100 px выше — скрыто; 200 выше, 60 ниже, 80 сбоку — нет). npm run typecheck и npm test проходят: 66 файлов, 1993 теста.",
+   "deviations": [
+    "WorldObject.id — не хеш места, а взаимно однозначный номер места. Хеш h2 давал около 10 % совпадений на соседних местах (1239 разных id на 1368 объектов). Лес: id >= 0 по месту (qx, qy). Камыши и кувшинки: id < 0 по (sx, sy, i). Pond.id — номер ячейки. Это целые числа до 2^46, их нельзя приводить к int32.",
+    "Кувшинки создаются в каждом пруду, а в мокапе их нет в зиме: мир не зависит от сцены. В зимней сцене SceneArt.object('lily') должен вернуть null.",
+    "Добавлены экспорты сверх спецификации: hashU32 (целочисленный h2), OBJECT_CLEAR (рамки полян по видам), POND_REACH_PAD = 56, pondBox(p) (рамка пруда x ± r·1.45, y ± r·1.1 — по ней отбирает pondsIn), compareObjects (порядок y, x, id)."
+   ],
+   "notVerified": [
+    "Пакету браузер не нужен, поэтому вид леса в приложении не смотрелся: это делается при подключении (amb-wire)."
+   ],
+   "forMainSession": [
+    "Во всех запросах world и clearing (objectsIn, pondsIn, eachGroundDetail, inBox, signature) границы Bounds включаются, как в queryBounds графа. Объект на стыке попадает в обе соседние области; для отрисовки плиток это и нужно.",
+    "В world.ts запросы с бесконечными или NaN-границами возвращают пустой результат. В clearing.ts бесконечные рамки допустимы: обходятся все корзины, а signature по всей плоскости равна key.",
+    "Для amb-sprites: кувшинки есть и в зиме, поэтому зимний object('lily') должен вернуть null.",
+    "Для amb-tiles: id объектов бывают отрицательными и больше 2^32 — в хешах их не приводить через | 0."
+   ]
+  },
+  {
+   "key": "amb-scheduler",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-scheduler готов: в src/lib/ambient/scheduler.ts есть ambientMode и createAmbientScheduler, сигнатуры точно по §4.3. Таймеры внедряются, своего rAF, setInterval, window и document нет (это проверяет тест по тексту модуля). Инвариант держится: пока планировщик запущен, истинно ровно одно из «тик ждёт кадра» и «таймер взведён»; после остановки — ни то, ни другое. setRunning(true) шлёт request без таймера. consume возвращает null вне тика; в первый тик после запуска dt = 0, дальше dt в пределах [0, 0.25], после чего взводится один таймер. Сработавший таймер ставит armed = false и шлёт request. setRunning(false) снимает таймер и сбрасывает «первый тик», t сохраняется. dispose идемпотентен и после него все методы ничего не делают. В scheduler.test.ts 19 тестов на подставных таймерах (свой список). Они покрывают таблицу на 32 сочетания (off 28, static 3, animated 1) и каждое условие остановки отдельно. Проверено: запуск даёт один request без таймера, consume — один таймер. Двух срабатываний подряд без consume нет. Инвариант держится на цепочке из 50 тиков. setRunning(false) в обоих состояниях оставляет 0 таймеров, и прокрутка времени не вызывает request. Покрыты также запоздалый колбэк, пауза 10 с без скачка t, ограничение dt, dispose и повторный setRunning(true). npm run typecheck проходит; npm test: 67 файлов, 2012 тестов, все прошли.",
+   "deviations": [
+    "Сверх §4.3 (контракт не меняется): защита счётчиком поколений от запоздалого колбэка уже снятого таймера. Он не ставит due и не шлёт request, поэтому инвариант держится, даже если clearTimer хоста не успел снять таймер.",
+    "Сверх §4.3: если now не число (NaN), dt = 0, а не NaN.",
+    "В тесте есть /// <reference types=\"node\" /> и импорт node:fs для проверки по тексту модуля, что в нём нет requestAnimationFrame, setInterval, setTimeout, window и document."
+   ],
+   "notVerified": [
+    "Работа с настоящими window.setTimeout/clearTimeout и кадром хоста (requestAmbientFrame) — это сборка и браузер пакета amb-wire; пакету браузер не нужен."
+   ],
+   "forMainSession": []
+  },
+  {
+   "key": "amb-tiles",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-tiles готов: tileRender.ts (renderTile, tileSignature, TILE_MARGIN_PX=40, CLEAR_REACH=360) и tileStore.ts (createTileStore, LRU с пределом по пикселям) по spec-stage6 §4.4–4.5, с тестами. Порядок в плитке: узор сетки (lod 0, клетка >= 8 px решётки, полянами не убирается) → мелочь земли (lod 0, без CLEAR_GROUND_R у нод) → пруды по пикселям решётки в pondBox ∩ плитка (shore/bank/lit/mid/deep, блики только lod 0) → объекты леса + камыши/кувшинки нескрытых прудов по (y, x, id); всё по опоре toLattice − ax − ti·size. Проверено тестами: 2×2 соседние плитки побайтно равны одной большой на k = 1/1.25/0.5/0.25/0.125 (отрицательные индексы, ноды у шва); повтор даёт тот же растр (и после сброса кэша мира); порядок объектов совпадает с эталоном; на k = 0.125/0.5/1/1.25/2 ни один пиксель, кроме узора сетки, не ближе 24 − worldPerPx к квадрату 16×16 ноды (замер наименьшего: 28–38 px), узор у нод остаётся; пруд у ноды скрыт с камышами; пустая плитка при water=null/object=null; tileSignature меняется для ближней ноды и не меняется для далёкой, ноды за радиусом влияния не меняют растр. Скорость в node (u=1, с прудом, мелочью, 40 нодами, после сброса кэша мира): lod 0 ≈ 3.0 мс, lod 2 ≈ 2.2 мс (порог 30). Кэш: вытеснение по used, записи текущего кадра не трогаются, release ровно один раз, put на существующий ключ возвращает старую поверхность без release. npm run typecheck чист, npm test: 69 файлов, 2051 тест прошли.",
+   "deviations": [
+    "tileStore.put: если под тем же ключом кладётся та же самая поверхность, возвращается undefined (а не прежняя поверхность), чтобы вызывающий не освободил живую поверхность. Для разных поверхностей — как в спецификации.",
+    "renderTile: растр out не размера size×size не считается ошибкой — рисуется с угла плитки и обрезается по out; 0×0 → 0. Возвращаемое число — объекты (лес, камыши, кувшинки), задевшие out; мелочь земли и узор сетки в счёт не входят (в спецификации не уточнено).",
+    "Подставные спрайты в тесте полян: на lod 0 опора на краю допуска (ax = ⌊w/2⌋+1, ay = h−4), на lod 1/2 — размер ceil(w/f) и опора, делённая на f (как downscale в §5.1). Буквальное ay = h−4 на lod 2 (8 пикселей мира на пиксель решётки) нарушало бы рамку clearDown = 44 само по себе, но такого спрайта настоящая графика не даёт."
+   ],
+   "notVerified": [
+    "Цена плитки в браузере / WebView2 (ориентир 3–5 мс на 512²) не мерилась — замер amb-wire.",
+    "С настоящей графикой сцен (amb-sprites, волна 1) не прогонялось — только подставные сплошные спрайты наибольшего размера.",
+    "Браузер пакету не нужен и не запускался."
+   ],
+   "forMainSession": [
+    "amb-engine может брать запись из store.get и менять в ней rev напрямую (запись изменяемая, тест это закрепляет).",
+    "При put на существующий ключ кэш не освобождает прежнюю поверхность: её освобождает движок (сразу или после растворения)."
+   ]
+  },
+  {
+   "key": "amb-engine",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-engine готов. Новый файл src\\lib\\ambient\\engine.ts: интерфейсы Surface, EngineDeps, AmbientEngine и функция createAmbientEngine. Сигнатуры точно по §4.6, своих экспортов не добавлял.\n\nКак устроен draw:\n- поляны пересобираются по sceneRev; ревизия полян растёт, только если сменился key или size набора нод;\n- тик берётся через scheduler.consume;\n- плитки рисуются от центра экрана с ключом artKey|step.key|ti,tj. Бюджет 10 мс: первая плитка кадра рисуется всегда, следующая — только если с ценой прошлой укладывается в бюджет; отложенные дорисовываются через requestFrame;\n- запас-кольцо дорисовывается, только если помещается в AMBIENT_TILE_MAX_PX;\n- растворение при смене поляны: 'lighter', 3 шага, с местом плитки; плитка, ушедшая с экрана или со ступени, освобождается сразу;\n- растры четырёх пар эффектов создаются лениво, пересоздаются при смене размера (с прежним t), растр world сдвигается вместе с камерой и перерисовывается при смене k;\n- back и front сводятся только при изменениях;\n- в конце setRunning(animate && (эффекты || растворения)).\n\nconfigure сбрасывает кэш при смене сцены; animate:false останавливает планировщик, освобождает растры эффектов и растворения. dispose освобождает всё, stats отдаёт счётчики.\n\nТесты: src\\lib\\ambient\\engine.test.ts, 23 штуки, все пункты «Готово» из задания и §4.6 покрыты. Подделки контекста, поверхностей, планировщика и часов; плитки рисует настоящий renderTile на пустой графике. `npm run typecheck` проходит, `npm test` — 70 файлов, 2074 теста, все прошли. Файл прогресса: .progress\\agents\\stage6-amb-engine.md.",
+   "deviations": [
+    "Проверка памяти для кольца считает пиксели плиток, взятых в этом кадре (видимые плюс уже готовые плитки кольца), плюс недостающие плитки кольца. По спецификации — store.pixels плюс недостающие. Причина: после прыжка камеры в кэше до trim ещё лежат старые плитки, и со store.pixels кольцо не рисовалось бы, а кадр не запрашивался.",
+    "Плитки кольца с изменившейся подписью перерисовываются в пределах бюджета без растворения (их нет на экране), прежняя поверхность освобождается сразу. В спецификации этот случай не описан.",
+    "draw до configure ведёт себя как при pixel:false: canvas очищаются, растворения освобождаются, планировщик останавливается. На первом кадре canvas считается уже изрисованным, поэтому делается один clearRect на каждый canvas.",
+    "configure со сменой сцены вызывает store.clear() и освобождает все плитки прежней сцены (в спецификации — «помечает всё к перерисовке»).",
+    "EffectFrame.near берётся из clearing.near, если хост передал points, иначе из frame.nodeNear. EffectFrame.bounds — экран с запасом 64·dpr пикселей устройства.",
+    "dispose вызывает только scheduler.setRunning(false), как в спецификации; scheduler.dispose() не вызывается — планировщик принадлежит контроллеру."
+   ],
+   "notVerified": [
+    "Браузер пакету не нужен и не запускался: цену плитки, сведения и drawImage на настоящих canvas (WebView2) проверяет amb-wire.",
+    "Тесты идут на пустой подставной графике без спрайтов; цена плитки задаётся подставными часами, реальная скорость в браузере не замерялась."
+   ],
+   "forMainSession": [
+    "amb-wire: при draw до configure, при pixel:false или нулевом canvas движок очищает оба canvas и останавливает планировщик. Контроллер должен вызывать configure до setAmbientLayer(engine).",
+    "amb-wire: создавая планировщик, контроллер должен сам вызвать scheduler.dispose() при off — engine.dispose() его только останавливает.",
+    "Риск 6 (первый показ после смены масштаба): плитки новой ступени до дорисовки не показываются, на их месте ровная земля. Запасной путь из §8 (сводить плитки прежней ступени) не реализован."
+   ]
+  },
+  {
+   "key": "amb-sprites",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет amb-sprites сделан: buildSceneArt(scene, dark, lod, soft) и процедурная графика четырёх сцен в Uint32Array (деревья 4 гаммы × 3 кроны, сосны, кусты, камни, пень, тыква/ромашка/сугроб, гриб, камыш, кувшинка (зимой null), вода). Мелочь земли и точечная сетка с клякс/волокнами «Бумаги», ночной фильтр мокапа, downscale для lod 1/2, смягчение к земле. npm run typecheck чист; npm test — 72 файла, 2132 теста прошли, из них 43 теста пакета. После последнего косметического переименования функции прогнаны typecheck и тесты пакета, полный npm test повторно не гонялся.",
+   "deviations": [
+    "Спецификация говорит «lod 1/2 — downscale от lod 0». Для lod 2 использую прямой downscale(s, 4); если остаётся меньше половины ожидаемой площади (камыш в 1 px шириной), уменьшаю двумя шагами по 2. Размеры те же — ceil(w/4)×ceil(h/4).",
+    "downscale получил необязательный третий параметр minShare (по умолчанию 0.5, как в спецификации). При равенстве цветов в блоке побеждает более тёмный, чтобы контур не терялся.",
+    "Точка опоры при уменьшении — floor(ax/factor), зажатая в границы спрайта. Тест проверяет правила центра и нижних строк на lod 1 и 2, они выполняются.",
+    "Ночью тень и вода тоже проходят через nightColor, как в CSS-фильтре мокапа поверх всего слоя леса. Матрица насыщенности взята стандартная (feColorMatrix).",
+    "Добавлены экспорты: buildForest, buildGround, makeSprite, ellipse, crown, mapColors, paintedCount, DETAIL_SHARE, GROUND, а также реэкспорт downscale/nightColor/soften из index.ts. В SPRITE_LIMITS и types.ts ничего не менялось.",
+    "Чернила клякс «Бумаги» (ink: день #b8a272, ночь #3a3a52) выбраны мной: в мокапе кляксы не было, спецификация требует лишь «приглушённые чернила». Две формы клякс 6×5 и 7×4."
+   ],
+   "notVerified": [
+    "Внешний вид спрайтов в браузере: резкость, читаемость мелочи, «каша» при lod 1/2 (риск 3 спецификации), контраст кляксы и волокон на «Бумаге».",
+    "Скорость сборки в браузере и на слабых устройствах (в node все 24 сочетания сцена × яркость × lod собираются меньше секунды).",
+    "Взаимодействие с реальными tileRender/engine на экране — это сценарии amb-wire.",
+    "Совпадение размеров на lod 1/2 с рамками полян проверено только правилами опоры, не пиксельным тестом плитки."
+   ],
+   "forMainSession": [
+    "Для amb-wire: buildSceneArt кэширует базовые спрайты на уровне модуля (по сцене и яркости). Вызов на каждое смягчение дёшев — смягчение ленивое, с memo внутри возвращённого SceneArt. Кэшировать SceneArt по ключу scene:dark:lod:soft всё равно стоит в движке, как в спецификации.",
+    "Кувшинки генерируются миром всегда; зимой art.object('lily', …) возвращает null (тестом проверено), а art.water не null (лёд).",
+    "Если на сценариях в браузере крона на lod 2 выглядит кашей, точка доводки — reduce()/reduceForest() в index.ts (можно подменить на ручные мелкие карты для деревьев)."
+   ]
+  },
+  {
+   "key": "amb-effects",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Пакет amb-effects готов. src/lib/pixelfx содержит LICENSE (побайтно с mockup/pixelfx/LICENSE), README, math.ts с полным текстом MIT в шапке /*! */, color.ts, trips.ts, листопад и лучи, тест. В src/lib/ambient/effects добавлены снег, светлячки, бабочки и effectsFor, тест. npm run typecheck и npm test проходят (74 файла, 2211 тестов; пакетные файлы три раза подряд зелёные). Замер в node: rays.draw 800×500 — 1.5 мс на тик (лимит 50), листопад на том же растре — 0.9 мс. Ступени лучей светлые, их альфа не выше 51 из 255 (0.2). Мировые эффекты при сдвиге камеры на целое число арт-пикселей сдвигаются на столько же — проверено тестом.",
+   "deviations": [
+    "Бабочка у ноды рисуется с альфой 0.3 (5 клеток шаблона 4×4 из 16), а не 0.35. Шаблон Байера привязан к спрайту, а не к растру (bayer из pixelfx/trips плюс setPx, не ditherPx). При шаблоне растра закрытые крылья (14 пикселей) давали до 57 %, раскрытые при 0.35 — 44 %. Сейчас у кадров 18/45, 9/30 и 3/14 пикселей, то есть не больше 40 % (у раскрытых крыльев ровно 40 %, это граничное значение).",
+    "Пылинки лучей не рисуются у ноды (f.near(мир, 14)): в мокапе такого нет, но пылинка с альфой до 1 над подписью мешала бы читать. Пылинки — не сплошная заливка, на тест альфы ≤ AMBIENT_OVERLAY_MAX она не влияет; тест проверяет только заливку (drawRayLight).",
+    "Начальные места снежинок взяты от rand, а не из i·53 и i·97 мокапа (при большом числе снежинок вставала бы решётка). Скорость падения и качание — формулы мокапа.",
+    "В светлячках свечение рисуется до ядра: в мокапе свет — отдельный слой, который добавляется поверх цвета.",
+    "Лучи пишут в пустой пиксель растра цвет напрямую (быстрый путь), в занятый — через blendPx. Пылинки, как в мокапе, перезаписывают пиксель.",
+    "Для лучей добавлены экспорты drawRayLight, drawMotes, rayGeometry, RAY_LEVELS; для листьев — drawLeaf, LEAF_NEAR_ALPHA, LEAF_NEAR_R; для бабочек — drawButterfly, butterflySprite, butterflyOfCell; для светлячков — firefliesOfCell; для снега — snowCount. Нужны тестам; сигнатуры контрактов не менялись."
+   ],
+   "notVerified": [
+    "Вид эффектов на экране: браузер пакету не нужен, сценарии движения остаются за amb-wire.",
+    "Контраст нод под лучами: расчёт ведёт amb-style (contrast.test.ts), в этом пакете он не проверялся.",
+    "Попал ли полный текст MIT из шапки math.ts в минифицированный чанк: npm run build не запускался (проверка §6.6 п. 1, amb-wire).",
+    "Тест 'не пишет вне растра' ловит индексы вне длины Uint32Array. Запись с переносом на соседнюю строку внутри длины он не ловит; защита от неё — только проверки x/y в коде (пылинки: x < W−1, y < H−1).",
+    "Сравнение с окном вывода движка не делалось: эффекты вызывались только с самодельным EffectFrame, построенным по тем же формулам, что в engine.ts (ax, ay, wx, wy, bounds)."
+   ],
+   "forMainSession": [
+    "effects.test.ts импортирует эффекты и тестирует world-сдвиг со своим makeFrame, повторяющим формулы EffectFrame из engine.ts; если amb-wire поменяет эти формулы в engine, тест не заметит.",
+    "В raster.ts blendAt на пустом пикселе при округлённой альфе 0 пишет ненулевой цвет с альфой 0 (хвосты свечения в glow). Для canvas это незаметно, но проверки painted() по c !== 0 такие пиксели считают. Файл не мой, не менялся; в моих тестах там, где это важно, считаются пиксели с альфой ≥ 128.",
+    "rays.ts держит кэш геометрии на один размер растра и таблицу света на последнее значение t на уровне модуля. Один растр на пару plane+anchor сейчас ровно один размер. Если эффекты будут вызываться из нескольких растров разного размера подряд, геометрия будет пересчитываться каждый вызов — для 800×500 это единицы мс.",
+    "world-эффекты рисуют по ячейкам из f.bounds, расширенным на размах блуждания (светлячки 46 px мира плюс запас под свечение, бабочки 160×90 плюс размер спрайта). Запас рассчитан на bounds с полем 64 px экрана, как в engine.ts.",
+    "Spec просит «светлячки от 50 %, бабочки от 75 %, листопад от 50 %» — реализовано константами ZOOM_LEAVES, ZOOM_FIREFLIES, ZOOM_BUTTERFLIES в effects/index.ts."
+   ]
+  },
+  {
+   "key": "amb-style",
+   "model": "sonnet",
+   "status": "готово",
+   "summary": "Тест контраста написан и проходит без правки значений --graph-*. Для дневных Луга и Осени под заливкой AMBIENT_OVERLAY_MAX кромки ноды, связи и выделения к земле дают Луг 3.16/3.16/3.16 и Осень 3.69/3.39/3.69 (порог ≥ 3). Подпись к контуру ≥ 4.5 проверена для всех восьми вариантов, наименьшее значение 10.24 (Зима день). Подпись переключателя «Живой фон» обновлена, комментарии scenes.css и pixel.css дополнены, DESIGN.md §11 переписан, §13 обновлён, в README добавлен раздел «Сторонний код». npm run typecheck чистый, npm test: 71 файл, 2089 тестов, все прошли.",
+   "deviations": [
+    "В contrast.test.ts добавлен тест «в проверку попадают ровно два варианта» (Луг день, Осень день), чтобы выборка не расходилась с условием «лучи только в этих двух вариантах».",
+    "Подпись переключателя взята слово в слово из §5.3 спецификации: «Лес и пруды, листопад, лучи, снег, бабочки и светлячки на графе. В «Классике» фона нет.» Остальную разметку AppearanceSection не менял.",
+    "Формулировку DESIGN.md про lod написал через число пикселей устройства в номинальном арт-пикселе (от 0,75 lod 0, от 0,375 lod 1, ниже lod 2): так записано в формуле q0 = 2k, а не «75 %» масштаба.",
+    "В README указан путь src/lib/pixelfx/LICENSE и полный текст лицензии в шапке math.ts, как требует спецификация (§5.2). Эти файлы пишет amb-effects, на момент работы их ещё не было."
+   ],
+   "notVerified": [
+    "Браузер не использовался (пакету не нужен).",
+    "Содержание DESIGN.md §11 (пороги масштаба эффектов, рамки полян, бюджеты, смягчение, поведение растворения плиток) взято из спецификации, а не сверено с готовым кодом amb-sprites, amb-effects и amb-wire.",
+    "Файлов src/lib/pixelfx/* и effects.test.ts (там проверяется «лучи только в дневных Луге и Осени», а на этом держится объём контрастного теста) на момент работы не было, пути в документах указаны по спецификации."
+   ],
+   "forMainSession": [
+    "После слияния всех пакетов волны 1 проверить, что src/lib/pixelfx/LICENSE и src/lib/pixelfx/README.md существуют, а в шапке math.ts полный текст MIT (README.md и DESIGN.md на них ссылаются).",
+    "Если amb-effects изменит набор дневных сцен с лучами или пороги масштаба в таблице эффектов, поправить таблицу в docs/DESIGN.md §11 и выборку в contrast.test.ts (там отфильтрованы Луг день и Осень день).",
+    "Если amb-wire поменяет условия режимов или причины пробуждения хоста, сверить с docs/DESIGN.md §11 и §13 (описание 'layer' / 'frame' и режимов off, static, animated)."
+   ]
+  },
+  {
+   "key": "amb-wire",
+   "model": "opus",
+   "status": "готово",
+   "summary": "Пакет amb-wire сделан: в разделе «Граф» живой фон теперь подключён и работает. Добавлены поверхности на canvas (surface.ts), контроллер режимов (controller.ts, 18 тестов на подставных движке и планировщике) и хук useAmbient. В GraphCanvas кадр по поводу 'frame' граф больше не перерисовывает: drawMs меряет только граф, ambientMs — только слой. Хост передаёт слою sceneRev и points и пишет в атрибуты сцены ambientMs, ambientTiles, ambientTicks и ambientRendered. В GraphView добавлена одна строка useAmbient(loaded ? stageEl : null).\n\nПроверки: typecheck чист, vitest — 75 файлов, 2229 тестов. Сборка в папку scratchpad проходит, граф остаётся отдельным чанком, код pixelfx в нём есть. Но уведомления MIT в собранных чанках нет (подробности в forMainSession).\n\nБраузер: порт 5189, 1280×800 при dpr 1, своя база.\n- С1, «Осень» днём: лес вокруг зон, под нодами ровная земля, видны пруд, листопад и лучи. При входе в раздел rendered == tiles (20/20), то есть плитки после первого кадра не перерисовывались и деревья под нодами не мелькают. ambientMode = animated.\n- Неподвижная камера: за 3 с граф не перерисовался ни разу (clearRect на main = 0, drawMs не меняется), идёт 10–12 тиков в секунду, кадр тика 0.8–1.2 мс.\n- С3, все 7 ступеней: кадры с новыми плитками не дольше 11.2 мс; на 12,5 % лес бледнее и мельче.\n- С4: пруд с берегом, камышами и кувшинками; в «Зиме» — лёд без кувшинок.\n- С5: во время переноса ноды rendered не меняется, после броска перерисованы 6 плиток и деревья у ноды исчезли.\n- С6: «Разложить заново» и «Отменить» — по одной перестройке (по 6 плиток), повторная ревизия сцены с теми же точками даёт 0 плиток.\n- С7: «Луг» днём — лучи, бабочки на 100 % и 75 %, на 50 % их нет (непрозрачных пикселей на front 0). «Луг» ночью — светлячки. «Зима» днём и ночью — снег. «Бумага» днём и ночью — точки и волокна, леса и эффектов нет, ambientTicks не растёт. «Осень» ночью — листопад, лучей нет.\n- С8: поиск не увеличивает ambientRendered.\n- С9: во «Входящих» getAmbientLayer() === null, за 2 с ни одного requestAnimationFrame и ни одного пробуждения фона; при возврате фон на месте.\n- С10: скрытое окно даёт static, тики стоят; при возврате animated, тики идут.\n- С11: «Живой фон» выключен — слоя нет, back и front шириной 0, атрибуты сняты; включён — фон вернулся.\n- С12: «Классика» — слоя нет, back.width = 0.\n- С13: пустой граф и «Все записи в архиве» — слоя нет.\n- С14: на 390 px горизонтальной прокрутки нет (scrollWidth 390), фон работает и совпадает с нодами.\n- С16: ошибок в консоли нет.\n- С15, нагрузка 2030 записей и около 2000 связей при сдвиге: медиана drawMs без фона и с фоном — 4.3/4.1 мс (12,5 %), 6.1/6.0 (50 %), 5.8/5.8 (100 %). Медиана ambientMs 0.1 мс, кадры с плитками до 7.6 мс. На u = 4 и u = 3 (масштаб 2 и 1,5) ambientMs до 2.8 мс, запасной путь createImageBitmap из риска 7 не нужен. Интервал кадров при сдвиге одинаков с фоном и без: медиана 6.9 мс на экране 144 Гц. Тик «Осени» днём при неподвижной камере на 2000 записях: медиана 0.8 мс, максимум 1.1 мс.\n- Память: после 200 прыжков камеры наибольшее tilePixels — 15 999 888 при пределе 16 000 000.\n\nВсе замеры — время процессора: отправка drawImage на видеокарту в ambientMs не входит, поэтому для неё смотрел интервал кадров.",
+   "deviations": [
+    "Общие правила запрещают запускать npm run build, а условие готовности пакета его требует. Поэтому tsc -b прогнан через typecheck, а vite build запущен с --outDir в папку scratchpad: dist проекта не тронут.",
+    "Контроллер снимает слой при off, только если текущий слой — его собственный: чужой слой не трогает. dispose устроен как off и оставляет контроллер годным (иначе React StrictMode при повторном монтировании получал бы мёртвый контроллер). requestAmbientFrame зовётся только при смене сцены или режима, повторный update с теми же условиями хост не будит.",
+    "Кадр только для фона в GraphCanvas передаёт слою прежний объект viewport, если камера и размер не менялись. На содержимое AmbientFrame это не влияет.",
+    "В «Бумаге» data-ambient-mode = animated (так по условиям ambientMode), хотя эффектов нет и тики не идут: планировщик не запускается, потому что список эффектов пуст."
+   ],
+   "notVerified": [
+    "Уведомление MIT в сборке: строк «Copyright (c) 2026 Patch» и «Permission is hereby granted» нет ни в одном собранном чанке (критерий §6.6 п. 1 не выполнен; vite.config.ts по условию не правил).",
+    "dpr 1.25, 1.5 и 2 вживую, prefers-reduced-motion вживую, окно Tauri/WebView2 (свёрнутое окно и visibilitychange). Всё проверено только тестами и подменой visibilityState.",
+    "Растворение плиток за ≈250 мс глазами не наблюдалось: известно только, что после броска перерисованы 6 плиток и деревья у ноды исчезли.",
+    "Что светлячки при сдвиге едут вместе с лесом, вживую отдельно не проверял (покрыто тестом effects и логикой пары world движка).",
+    "Мелкие детали (швы, размытие, читаемость подписей над лесом) оценены по снимкам, уменьшенным с 1280 до 800 px: швов и мыла не видно, подписи и связи читаются, но попиксельно не проверял.",
+    "390 px проверены под эмуляцией панели: canvas там получает размер 1× при dpr 2 (поведение хоста этапа 5, не фона), поэтому граф и фон отображаются крупнее и со смещением, но совпадают друг с другом. На настоящем телефоне не проверял.",
+    "Медленный бросок мышью (лес не меняется во время долгого переноса) — перенос инструментом длился ~30 мс; инвариант держится на sceneRev и в тестах движка."
+   ],
+   "forMainSession": [
+    "Лицензия pixelfx: Vite 8 (rolldown/oxc) срезает /*! комментарии — строк MIT нет в GraphView-*.js (код pixelfx там есть, проверено по '#2c2132'). Нужно решение: например, build.rolldownOptions.output.comments / legalComments в vite.config.ts, banner у чанка или вынести LICENSE в public и сослаться на него.",
+    "Риск 1 (тик «Осени» пересобирает back) не подтвердился: кадр тика 0.8–1.1 мс на 2000 записях. Риск 7 тоже: на u = 3–4 ambientMs до 2.8 мс, а интервал кадров при сдвиге с фоном и без одинаков (6.9 мс на 144 Гц). Запасные пути не нужны.",
+    "Риск 6: на ступенях без кэша до 112–128 плиток (вместе с кольцом). Кадры с плитками до 11.2 мс, при смене масштаба лес проявляется за несколько кадров; на глаз заметного мигания не было.",
+    "Наблюдение этапа 5 (не фона): под эмуляцией узкого окна панели браузера device-pixel-content-box даёт canvas 1× при devicePixelRatio 2, и граф рисуется с k = zoom·2 в холст 1×. Стоит проверить на настоящем телефоне.",
+    "Вкусовые замечания: снег в «Зиме» редкий (около 25 снежинок на 1000×600 px сцены, на front ~100 пикселей); на 12,5 % лес «Осени» очень пёстрый и плотный вокруг зон (смягчение 0.5 помогает, но нод там 2 px); светлячки ночью еле заметны на снимке; в «Бумаге» волокна и точки едва видны — это по замыслу.",
+    "В базе на порту 5189 после проверки — демоданные (seedDemoData(true)), сцена «Осень», светлая тема; dev-сервер остановлен, порт свободен, вкладка закрыта."
+   ]
+  }
+ ],
+ "checks": {
+  "typecheck": "чисто (npm run typecheck, tsc -b: вывода ошибок нет)",
+  "tests": "75 файлов, 2229 тестов: все прошли, упавших нет (npm test, vitest run, 11.95 с)",
+  "ports": "свободны (слушающих портов в диапазоне 5174–5199 нет)"
+ }
+}

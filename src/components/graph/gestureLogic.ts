@@ -39,10 +39,15 @@ export function underDetailPanel(clientX: number, innerWidth: number, asidePx: n
   return Number.isFinite(clientX) && Number.isFinite(innerWidth) && clientX > innerWidth - asidePx - slackPx
 }
 
+/** Допуск сверки коробки устройства с css·dpr: привязка к пикселям при дробном dpr даёт расхождение до 1 px. */
+export const DEVICE_BOX_SLACK_PX = 2
+
 /**
  * Размер битмапа canvas в пикселях устройства. Точный размер из devicePixelContentBoxSize, если браузер его дал:
  * при дробном dpr коробка canvas привязывается к пикселям устройства с учётом её положения, и round(css·dpr)
  * может отличаться на 1 px — тогда браузер растягивает буфер. Иначе — round(css·dpr). Негодное → 0.
+ * Коробке верим, только если она сходится с css·dpr: масштаб рисования берётся из того же dpr, и при подменённом
+ * dpr (эмуляция телефона в панели браузера: dpr 2, растр 1×) граф и подписи разошлись бы вдвое.
  */
 export function bitmapSize(
   cssW: number,
@@ -51,8 +56,11 @@ export function bitmapSize(
   device?: { inlineSize: number; blockSize: number },
 ): { W: number; H: number } {
   const ok = (n: number) => (Number.isFinite(n) && n > 0 ? Math.round(n) : 0)
-  if (device) return { W: ok(device.inlineSize), H: ok(device.blockSize) }
   const d = Number.isFinite(dpr) && dpr > 0 ? dpr : 1
+  const near = (box: number, css: number) => Math.abs(box - css * d) <= DEVICE_BOX_SLACK_PX
+  if (device && near(device.inlineSize, cssW) && near(device.blockSize, cssH)) {
+    return { W: ok(device.inlineSize), H: ok(device.blockSize) }
+  }
   return { W: ok(cssW * d), H: ok(cssH * d) }
 }
 
