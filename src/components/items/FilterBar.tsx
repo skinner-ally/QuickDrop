@@ -64,7 +64,8 @@ function FilterButton({
     <Button
       variant="outline"
       size="sm"
-      className={cn('shrink-0', active && 'border-foreground/30 bg-muted')}
+      className={cn('shrink-0 px-btn pixel:max-md:h-9 pixel:pointer-coarse:h-9', active && 'border-foreground/30 bg-muted')}
+      data-on={active ? 'true' : undefined}
       {...props}
     >
       <Icon name={icon} />
@@ -94,7 +95,7 @@ function TypeChips() {
             aria-pressed={on}
             onClick={() => toggle(t)}
             className={cn(
-              'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-2sm pointer-coarse:h-9 transition-colors',
+              'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-2sm pointer-coarse:h-9 transition-colors px-chip pixel:px-1.5',
               on
                 ? 'border-foreground/30 bg-muted text-foreground'
                 : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -196,7 +197,7 @@ function TagsFilter() {
             shown.map(({ tag, count: n }) => (
               <label
                 key={tag}
-                className="flex cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-2sm hover:bg-muted"
+                className="flex cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-2sm hover:bg-muted px-nav"
               >
                 <Checkbox checked={!!tags?.includes(tag)} onCheckedChange={() => toggle(tag)} />
                 <span className="min-w-0 flex-1 truncate">#{tag}</span>
@@ -256,7 +257,7 @@ function ActiveChip({
   children?: React.ReactNode
 }) {
   return (
-    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted pr-0.5 pl-2 text-xs text-foreground">
+    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted pr-0.5 pl-2 text-xs text-foreground px-chip pixel:h-auto pixel:min-h-6">
       {children}
       {label}
       <button
@@ -296,9 +297,9 @@ export function FilterBar({ className }: { className?: string }) {
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <div className="no-scrollbar -mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0">
+      <div className="no-scrollbar -mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0 pixel:-mx-2.5 pixel:-my-1 pixel:px-2.5 pixel:py-1 pixel:md:-mx-1 pixel:md:px-1">
         <TypeChips />
-        <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border" />
+        <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border pixel:w-0.5" />
         <CategoryFilter />
         <TagsFilter />
         <button
@@ -306,7 +307,7 @@ export function FilterBar({ className }: { className?: string }) {
           aria-pressed={!!filter.untagged}
           onClick={() => setFilter({ untagged: filter.untagged ? undefined : true })}
           className={cn(
-            'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-2sm pointer-coarse:h-9 transition-colors',
+            'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-2sm pointer-coarse:h-9 transition-colors px-chip',
             filter.untagged
               ? 'border-foreground/30 bg-muted text-foreground'
               : 'border-border text-foreground hover:bg-muted dark:border-input',
@@ -333,7 +334,7 @@ export function FilterBar({ className }: { className?: string }) {
           <div
             role="group"
             aria-label="Вид списка"
-            className="flex rounded-lg border border-border p-0.5 dark:border-input"
+            className="flex rounded-lg border border-border p-0.5 dark:border-input pixel:gap-1 pixel:border-0 pixel:p-0"
           >
             {(
               [
@@ -348,7 +349,7 @@ export function FilterBar({ className }: { className?: string }) {
                 aria-pressed={layout === mode}
                 onClick={() => setLayout(mode)}
                 className={cn(
-                  'flex size-6 items-center justify-center rounded-md transition-colors pointer-coarse:size-9',
+                  'flex size-6 items-center justify-center rounded-md transition-colors pointer-coarse:size-9 px-btn pixel:size-7.5 pixel:max-md:size-9 pixel:pointer-coarse:size-9',
                   layout === mode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
                   focusRing,
                 )}

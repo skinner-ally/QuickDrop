@@ -88,6 +88,7 @@ export function ItemMenu({
             onClick={stop}
             className={cn(
               'pointer-coarse:size-9',
+              card && 'pixel:size-7.5 pixel:pointer-coarse:size-9',
               card &&
                 'pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 aria-expanded:opacity-100',
               className,

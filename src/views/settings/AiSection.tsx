@@ -73,7 +73,7 @@ export function AiSection({ settings }: { settings: Settings }) {
       description="Предлагает заголовок, краткое описание и теги для записи. Работает с любым OpenAI-совместимым API."
     >
       <Row>
-        <label htmlFor="ai-enabled" className="text-2sm">
+        <label htmlFor="ai-enabled" className="text-2sm pixel:font-semibold">
           Включить ИИ-помощника
         </label>
         <Switch

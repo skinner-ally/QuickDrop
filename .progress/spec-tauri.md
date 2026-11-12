@@ -31,7 +31,7 @@
    только с подтверждённой папкой. Обоснование: `write_export_file` пишет файлы с произвольными именами
    (вложения пользователя, в т.ч. `.exe`, `.bat`); без списка любая ошибка внедрения скрипта в веб-слое
    превращалась бы в запись в «Автозагрузку». Следствие: npm-пакет `@tauri-apps/plugin-dialog` и право
-   `dialog:allow-open` **не нужны**, `package.json` на этом этапе не меняется.
+   `dialog:allow-open` **не нужны**, `package.json` на этом этапе не меняется. (обновлено после ревью этапов 1–2) Заголовок диалога Rust выбирает сам по коду назначения (`purpose`), свой текст веб-слой не передаёт (внедрённый скрипт иначе выдал бы свой вопрос за вопрос приложения); начальная папка диалога принимается, только если она уже подтверждена.
 3. **Данные передаются частями по 8 МиБ** сырым телом `invoke`; параметры — в заголовке `x-qd-args`.
    Одним вызовом нельзя: копия до 480 МБ дала бы пик памяти 1,5–3 ГБ (ArrayBuffer в JS + тело запроса
    в процессе WebView2 + `Vec<u8>` в Rust, а в запасном канале `postMessage` — JSON-массив чисел).
@@ -40,6 +40,9 @@
 5. **Имя автокопии** `quickdrop-backup-YYYYMMDD-HHMMSS.json` (локальное время). Ручной экспорт называется
    `quickdrop-backup-YYYY-MM-DD.json` (`backupFileName`, не меняется) — под шаблон автокопии не подпадает,
    поэтому обрезка его никогда не удалит.
+   (обновлено после ревью этапов 1–2) Обрезка трогает только копии, начатые этой установкой: их имена ведёт `OwnBackups`
+   (`own-backups.json` в каталоге настроек рядом с `approved-dirs.json`). Копии другого компьютера с той же схемой
+   имён в общей облачной папке не удаляются и не вытесняют свои. Шаблон имени не менялся.
 6. Ошибки Rust — `Result<_, String>` с готовым русским текстом; JS превращает строку в `Error`.
 
 ## 1.2. Зависимости
@@ -68,6 +71,7 @@ pub const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;        // JS-предел �
 pub const MAX_EXPORT_FILE_BYTES: u64 = 128 * 1024 * 1024;   // вложение ≤ 100 МБ (MAX_FILE_SIZE) + запас
 pub const MAX_KEEP: u32 = 1000;
 pub const MAX_APPROVED_DIRS: usize = 16;
+pub const MAX_OWN_BACKUPS: usize = 2000;                    // (обновлено после ревью этапов 1–2): предел списка своих копий, старые вытесняются
 pub const MAX_REL_PATH_CHARS: usize = 400;
 pub const MAX_REL_DEPTH: usize = 8;
 pub const MAX_FULL_PATH_UTF16: usize = 259;                 // MAX_PATH - 1
@@ -105,7 +109,26 @@ impl ApprovedDirs {
   «Это не папка: {dir}»; ни одна запись списка после `dunce::canonicalize` не равна результату:
   «Папка не подтверждена: выберите её заново в настройках». Возвращает канонический путь.
   Записи списка, которые сейчас не канонизируются (диск отключён), пропускаются, но из файла не удаляются.
+  (обновлено после ревью этапов 1–2) Список копируется под мьютексом, проверка идёт без блокировки. Сначала точное совпадение записи с
+  запрошенной строкой или её каноническим видом (без канонизации записей: в настройках обычно строка из диалога),
+  затем канонизация записей от новых к старым — старая запись о недоступном сетевом диске не ждёт тайм-аута на
+  каждую часть и каждый файл экспорта.
 - Сравнение — точное равенство канонических путей (подпапки подтверждённой папки не считаются подтверждёнными).
+
+### Список своих копий (обновлено после ревью этапов 1–2)
+
+```rust
+pub struct OwnBackups { file: PathBuf, names: Mutex<Vec<String>> }   // own-backups.json: JSON-массив имён
+impl OwnBackups {
+    pub fn load(file: PathBuf) -> Self;                       // нет файла/битый JSON → пусто; посторонние строки отбрасываются
+    pub fn record(&self, name: &str) -> Result<(), String>;   // до записи первой части; без дублей; не больше MAX_OWN_BACKUPS
+    fn snapshot(&self) -> Vec<String>;
+    fn forget(&self, gone: &[String]) -> Result<(), String>;  // убрать удалённые обрезкой имена
+}
+```
+
+`save_backup` записывает имя в список на части с `offset 0` до записи; сбой записи списка — ошибка копии (иначе копия
+навсегда осталась бы вне обрезки).
 
 ### Чистые функции (покрываются `#[cfg(test)]`)
 
@@ -115,7 +138,7 @@ fn is_backup_part_name(name: &str) -> bool;  // is_backup_name(имя без PAR
 fn safe_rel_path(rel: &str) -> Result<PathBuf, String>;
 fn write_chunk(target: &Path, offset: u64, bytes: &[u8], last: bool, max_total: u64) -> Result<u64, String>;
 fn list_in(dir: &Path) -> Result<Vec<BackupEntry>, String>;          // только обычные файлы по шаблону, по имени по убыванию
-fn prune_in(dir: &Path, keep: usize) -> Result<PruneResult, String>;
+fn prune_in(dir: &Path, keep: usize, protect: Option<&str>, is_own: impl Fn(&str) -> bool) -> Result<PruneResult, String>;   // (обновлено после ревью этапов 1–2)
 fn body_bytes(body: &tauri::ipc::InvokeBody) -> Result<std::borrow::Cow<'_, [u8]>, String>;
 fn header_args<T: serde::de::DeserializeOwned>(headers: &tauri::http::HeaderMap) -> Result<T, String>;
 fn io_message(e: &std::io::Error, action: &str) -> String;
@@ -142,9 +165,12 @@ fn io_message(e: &std::io::Error, action: &str) -> String;
 - при любой ошибке записи или переименования временный файл удаляется (без паники, если не вышло);
 - возвращает записанный на данный момент размер.
 
-`prune_in`: `keep == 0` → «Число хранимых копий должно быть не меньше 1»; берёт `list_in`, удаляет всё после
-первых `keep`; дополнительно удаляет все файлы `is_backup_part_name` (остатки прерванной записи). Каталоги,
-ссылки и любые другие имена не трогает. Неудачное удаление отдельного файла — в `failed`, не ошибка.
+`prune_in`: `keep == 0` → «Число хранимых копий должно быть не меньше 1»; берёт список файлов по шаблону и
+оставляет только те, что `is_own` (начаты этой установкой); удаляет свои копии после первых `keep` (по имени по убыванию);
+дополнительно удаляет свои остатки `.qdpart` прерванной записи. Каталоги, ссылки, чужие копии и любые другие имена не
+трогает. Неудачное удаление отдельного файла — в `failed`, не ошибка. (обновлено после ревью этапов 1–2) `protect` — имя только что сохранённой
+копии: остаётся всегда и занимает одно из `keep` мест (при `keep = 1` и часах, переведённых назад, удаляется старая
+копия, а не новая); если такой копии среди своих нет, остаются `keep` последних.
 
 `body_bytes`: `Raw(v)` → заимствовать; `Json(Array)` из чисел 0..=255 → собрать `Vec<u8>` (запасной канал
 `postMessage`); иначе «Ожидались двоичные данные». Длина > `MAX_CHUNK_BYTES` → «Слишком большая часть данных».
@@ -162,13 +188,16 @@ fn io_message(e: &std::io::Error, action: &str) -> String;
 ```rust
 #[tauri::command]
 pub async fn pick_directory(window: tauri::WebviewWindow, approved: tauri::State<'_, ApprovedDirs>,
-    title: Option<String>, default_path: Option<String>) -> Result<Option<String>, String>;
+    purpose: Option<String>, default_path: Option<String>) -> Result<Option<String>, String>;   // (обновлено после ревью этапов 1–2): вместо title
 #[tauri::command]
-pub async fn save_backup(request: tauri::ipc::Request<'_>, approved: tauri::State<'_, ApprovedDirs>)
-    -> Result<SavedFile, String>;
+pub async fn save_backup(request: tauri::ipc::Request<'_>, approved: tauri::State<'_, ApprovedDirs>,
+    own: tauri::State<'_, OwnBackups>) -> Result<SavedFile, String>;
 #[tauri::command]
-pub async fn prune_backups(dir: String, keep: u32, approved: tauri::State<'_, ApprovedDirs>)
-    -> Result<PruneResult, String>;
+pub async fn prune_backups(dir: String, keep: u32, protect: Option<String>,
+    approved: tauri::State<'_, ApprovedDirs>, own: tauri::State<'_, OwnBackups>) -> Result<PruneResult, String>;
+#[tauri::command]   // (обновлено после ревью этапов 1–2)
+pub async fn discard_export_part(dir: String, rel_path: String, approved: tauri::State<'_, ApprovedDirs>)
+    -> Result<bool, String>;
 #[tauri::command]
 pub async fn list_backups(dir: String, approved: tauri::State<'_, ApprovedDirs>)
     -> Result<Vec<BackupEntry>, String>;
@@ -180,14 +209,16 @@ pub async fn write_export_file(request: tauri::ipc::Request<'_>, approved: tauri
 Все `async` (не занимают главный поток окна); внутри обычный `std::fs` — часть ≤ 16 МиБ пишется быстро.
 
 - `pick_directory`: `use tauri_plugin_dialog::DialogExt;`
-  `window.dialog().file().set_parent(&window).set_title(title.unwrap_or("Выберите папку"))`,
-  `set_directory(default_path)` — только если это существующий каталог; `blocking_pick_folder()`
+  `window.dialog().file().set_parent(&window).set_title(dialog_title(purpose))` — заголовок из фиксированного набора:
+  `"backup"` → «Папка для резервных копий», `"export"` → «Папка для экспорта Markdown», иначе «Выберите папку»;
+  `set_directory(default_path)` — только если `default_path` уже подтверждённая папка (`dialog_start` → `approved.resolve`); `blocking_pick_folder()`
   (в async-команде допустимо). Отмена → `Ok(None)`. Выбор → `FilePath::into_path()` → `approved.approve` →
   `Ok(Some(путь строкой))`. Ошибка сохранения списка: «Не удалось запомнить выбранную папку: {e}».
 - `save_backup`: `header_args::<SaveBackupArgs>` → `!is_backup_name(file_name)` → «Недопустимое имя файла
   резервной копии» → `approved.resolve(dir)` → `write_chunk(dir.join(file_name), …, MAX_BACKUP_BYTES)` →
   `SavedFile { path: <dir/file_name>, size, done: last }`.
-- `prune_backups`: `keep > MAX_KEEP` → «Слишком большое число копий»; `resolve` → `prune_in`.
+- `prune_backups`: `keep > MAX_KEEP` → «Слишком большое число копий»; `protect`, если задан и не `is_backup_name` → «Недопустимое имя файла резервной копии»; `resolve` → `prune_in` по снимку `OwnBackups`; удалённые имена убираются из списка (сбой записи списка обрезку не отменяет).
+- `discard_export_part` (обновлено после ревью этапов 1–2): удаляет `<файл>.qdpart` в подтверждённой папке; путь проверяется `safe_rel_path`; каталогов не создаёт, ссылку наружу из папки отклоняет («Путь выходит за пределы папки экспорта»), каталог с именем остатка не трогает; `true` — остаток был удалён.
 - `list_backups`: `resolve` → `list_in`.
 - `write_export_file`: `header_args::<WriteExportArgs>` → `resolve(dir)` → `safe_rel_path` →
   `target = base.join(rel)`; длина пути в UTF-16 > `MAX_FULL_PATH_UTF16` → «Слишком длинный путь к файлу:
@@ -206,14 +237,16 @@ builder
     .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
         use tauri::Manager;
-        app.manage(backup::ApprovedDirs::load(app.path().app_config_dir()?.join("approved-dirs.json")));
+        let config_dir = app.path().app_config_dir()?;
+        app.manage(backup::ApprovedDirs::load(config_dir.join("approved-dirs.json")));
+        app.manage(backup::OwnBackups::load(config_dir.join("own-backups.json")));   // (обновлено после ревью этапов 1–2)
         create_main_window(app)?;
         Ok(())
     })
     .invoke_handler(tauri::generate_handler![
         fetch_link_meta,
         backup::pick_directory, backup::save_backup, backup::prune_backups,
-        backup::list_backups, backup::write_export_file
+        backup::list_backups, backup::write_export_file, backup::discard_export_part
     ])
 ```
 
@@ -236,6 +269,7 @@ invoke(cmd, Uint8Array(часть), { headers: { 'x-qd-args': encodeURIComponent
 - Заголовок кодируется `encodeURIComponent`: значения заголовков обязаны быть ASCII, а пути бывают кириллические.
 - Ответ каждой части — `SavedFile`; итог операции — ответ последней (`done: true`).
 - Прерывание (ошибка, закрытие приложения) оставляет только `*.qdpart`; итоговый файл либо прежний, либо целый новый.
+  (обновлено после ревью этапов 1–2) При отмене или сбое (Rust или чтение части), если Rust принял хотя бы одну часть, `invokeChunked` вызывает `discard` — для экспорта это `discard_export_part`; сбой уборки не заменяет исходную ошибку (`console.warn`). Остаток после аварийного закрытия приложения посреди выгрузки остаётся, пока тот же файл не будет выгружен целиком; остатки автокопий убирает обрезка.
 
 ## 1.6. TypeScript: `src/lib/ipc.ts` (новый, чистый) и добавления в `src/lib/desktop.ts`
 
@@ -258,7 +292,7 @@ export function ipcError(e: unknown, fallback: string): Error
 /** Шлёт data частями; к args добавляет offset и last; возвращает ответ последней части. Отказ → ipcError. */
 export function invokeChunked<T>(
   invokeFn: InvokeFn, cmd: string, args: Record<string, unknown>, data: Blob,
-  options?: { chunkBytes?: number; fallback?: string; signal?: AbortSignal },
+  options?: { chunkBytes?: number; fallback?: string; signal?: AbortSignal; discard?: () => Promise<unknown> },   // discard — (обновлено после ревью этапов 1–2)
 ): Promise<T>
 ```
 
@@ -274,10 +308,10 @@ export interface PruneResult { removed: string[]; failed: string[] }
 export const DESKTOP_ONLY_MESSAGE = 'Доступно только в настольной версии'
 
 /** Системный диалог выбора папки; папка запоминается как разрешённая для записи. Вне Tauri и при отмене — null. */
-export function pickDirectory(options?: { title?: string; defaultPath?: string }): Promise<string | null>
+export function pickDirectory(options?: { purpose?: DirectoryPurpose; defaultPath?: string }): Promise<string | null>   // (обновлено после ревью этапов 1–2): purpose 'backup' | 'export' вместо title; defaultPath действует, только если папка уже подтверждена
 /** Атомарная запись автокопии. fileName — только quickdrop-backup-YYYYMMDD-HHMMSS.json. */
 export function saveBackupFile(dir: string, fileName: string, data: Blob, signal?: AbortSignal): Promise<SavedFile>
-export function pruneBackups(dir: string, keep: number): Promise<PruneResult>
+export function pruneBackups(dir: string, keep: number, protect?: string): Promise<PruneResult>   // (обновлено после ревью этапов 1–2): protect — имя только что сохранённой копии; чужие копии не трогаются
 export function listBackups(dir: string): Promise<BackupEntry[]>
 /** Запись файла экспорта: relPath относительный, разделитель '/'. Строка пишется как UTF-8 без BOM. */
 export function writeExportFile(dir: string, relPath: string, data: Blob | string, signal?: AbortSignal): Promise<SavedFile>
@@ -311,7 +345,7 @@ export function autoBackupFileName(date?: Date): string
 export function clampKeep(keep: number): number
 export function isBackupDue(s: Pick<Settings, 'backupDir' | 'backupEvery' | 'backupLastAt'>, now: number): boolean
 
-export type BackupSkipReason = 'not-desktop' | 'off' | 'no-dir' | 'not-due' | 'busy' | 'empty'   // 'empty' — уточнено при сверке
+export type BackupSkipReason = 'not-desktop' | 'off' | 'no-dir' | 'not-due' | 'busy' | 'empty' | 'retry-later'   // 'empty' — уточнено при сверке; 'retry-later' — (обновлено после ревью этапов 1–2)
 export type BackupRunResult =
   | { status: 'skipped'; reason: BackupSkipReason }
   | { status: 'done'; path: string; size: number; removed: number }
@@ -326,9 +360,12 @@ export interface AutoBackupDeps {
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>
   /** Число записей в базе, включая корзину (настоящая зависимость: `db.items.count()`). Уточнено при сверке. */
   countItems(): Promise<number>
+  /** Папка доступна и подтверждена, иначе исключение с текстом Rust (настоящая — `listBackups`). (обновлено после ревью этапов 1–2) */
+  checkDir(dir: string): Promise<void>
   exportBackup(): Promise<Blob>
   saveBackupFile(dir: string, fileName: string, data: Blob): Promise<SavedFile>
-  pruneBackups(dir: string, keep: number): Promise<PruneResult>
+  /** protect — имя только что сохранённой копии. */
+  pruneBackups(dir: string, keep: number, protect: string): Promise<PruneResult>
   /** Сообщить о сбое планового запуска. */
   notifyError(message: string): void
 }
@@ -354,8 +391,8 @@ export function autoBackupStatus(): AutoBackupStatus
 Поведение:
 - `isBackupDue`: `false`, если `backupEvery === 'off'` или `backupDir.trim() === ''`; иначе `true`, если
   `backupLastAt <= 0`, или `backupLastAt > now` (часы перевели назад), или `now - backupLastAt >= период`.
-- Порядок запуска: `exportBackup()` → `saveBackupFile(dir, autoBackupFileName(new Date(now)), blob)` →
-  `setSetting('backupLastAt', now)` → `pruneBackups(dir, clampKeep(backupKeep))`. Сбой обрезки — только
+- Порядок запуска: `checkDir(dir)` (до сборки копии; (обновлено после ревью этапов 1–2)) → `exportBackup()` → `saveBackupFile(dir, autoBackupFileName(new Date(now)), blob)` →
+  `setSetting('backupLastAt', now)` → `pruneBackups(dir, clampKeep(backupKeep), fileName)`. Сбой обрезки — только
   `console.warn`, итог остаётся `done` (`removed: 0`).
 - `check()`: вне Tauri → `skipped/not-desktop`, зависимости не вызываются; далее по `getSettings()`:
   `off`, `no-dir`, `not-due`.
@@ -370,6 +407,11 @@ export function autoBackupStatus(): AutoBackupStatus
   Плановый запуск вызывает `notifyError` **один раз за серию сбоев**: флаг сбрасывается после успешной копии.
   `runNow()` `notifyError` не вызывает — сообщение показывает вызвавший интерфейс. Следующая попытка — на
   очередной плановой проверке (через час), без ускоренных повторов.
+  (обновлено после ревью этапов 1–2) Пауза после сбоя: `failed = { at, dir }`; плановый запуск в той же папке раньше чем через
+  `BACKUP_CHECK_INTERVAL_MS − 60 000` после сбоя даёт `skipped/'retry-later'` (её соблюдают `visibilitychange`, таймер старта и
+  часовой таймер). Пауза не действует, если часы переведены назад (`now < at`) или выбрана другая папка
+  (`checkAutoBackup()` после смены папки делает копию сразу); успешная копия её снимает. `runNow()` паузу не учитывает,
+  но его сбой её ставит. Сбой `checkDir` (отключённый диск, неподтверждённая папка) — `failed` с текстом Rust без сборки копии.
 - `start()`: `setTimeout(check, BACKUP_START_DELAY_MS)`, `setInterval(check, BACKUP_CHECK_INTERVAL_MS)`,
   слушатель `visibilitychange` (при `visible` → `check()`: после сна компьютера таймер может запоздать).
   При отсутствии `document` слушатель не ставится.
@@ -447,6 +489,10 @@ export function exportMarkdownToDir(
 
 Требование к `exportImport.ts` (архитектор данных): `backupDir`, `mdExportDir`, `backupLastAt` — в
 `PRIVATE_SETTINGS` (пути этого компьютера не должны попадать в копию и приходить из чужой копии).
+(обновлено после ревью этапов 1–2) Туда же `backupEvery` и `backupKeep`. `clearAllData` `backupLastAt` не сбрасывает (иначе первая запись после
+стирания вызвала бы автокопию почти пустой базы и обрезку рабочих копий). Отзыв подтверждённых папок при смене
+настройки не реализован: настройки живут в IndexedDB, Rust о смене не знает; нужна команда отзыва, которую вызовет экран
+настроек (этап 4).
 Интерфейс этапа 4 использует: `pickDirectory`, `listBackups`, `revealInExplorer`, `runBackupNow`,
 `checkAutoBackup` (после смены папки или периодичности), `autoBackupStatus`, `exportMarkdownToDir`.
 
@@ -491,7 +537,7 @@ Rust (`#[cfg(test)] mod tests` в `backup.rs`; временный каталог
 - `write_chunk`: одна часть; три части; неверный `offset`; часть без начала; превышение предела (временный
   файл удалён); перезапись существующего; после завершения `.qdpart` нет;
 - `prune_in`: остаются `keep` последних по имени; не тронуты посторонний файл, ручной экспорт, каталог с
-  именем по шаблону; `keep 0` → ошибка; остатки `.qdpart` удалены;
+  именем по шаблону; `keep 0` → ошибка; остатки `.qdpart` удалены; (обновлено после ревью этапов 1–2): защищённая (`protect`) копия с меньшей отметкой остаётся при `keep = 1` и `keep = 3`; чужие копии и остатки не трогаются и не вытесняют свои; `OwnBackups` (запись, повтор, перезагрузка, `forget`, битый файл, предел, сбой записи); `discard_export_part_in`; `dialog_title`, `dialog_start`; `is_approved` (точное совпадение без канонизации, порядок от новых к старым);
 - `list_in`: порядок по убыванию, размеры;
 - `ApprovedDirs`: `approve` → `resolve` проходит; неподтверждённая папка → ошибка; несуществующая → ошибка;
   относительный путь → ошибка; перезагрузка из файла; вытеснение сверх `MAX_APPROVED_DIRS`; битый файл → пусто;

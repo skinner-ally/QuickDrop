@@ -12,8 +12,8 @@ export function SettingsView() {
   const settings = useSettings()
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6">
-        <h1 className="font-heading text-lg font-medium">Настройки</h1>
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6 pixel:mx-0 pixel:max-w-[720px] pixel:gap-2.5 pixel:px-2.5 pixel:pt-2.5 pixel:md:px-2.5">
+        <h1 className="font-heading text-lg font-medium pixel:text-2xl">Настройки</h1>
         {settings ? (
           <>
             <AppearanceSection settings={settings} />

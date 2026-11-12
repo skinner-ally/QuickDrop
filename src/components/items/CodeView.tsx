@@ -142,18 +142,21 @@ const KIND_CLASS: Record<Kind, string | undefined> = {
   comment: 'text-muted-foreground italic',
   string: 'text-[color-mix(in_oklab,var(--cat-green)_55%,var(--foreground))]',
   number: 'text-[color-mix(in_oklab,var(--cat-orange)_55%,var(--foreground))]',
-  keyword: 'text-brand',
+  keyword: 'text-brand pixel:text-brand-lo pixel:dark:text-brand-hi',
 }
 
 export function CodeView({
   code,
   language,
   maxLines,
+  bare,
   className,
 }: {
   code: string
   language?: string
   maxLines?: number
+  // без px-well: в пиксельных сценах он рисует рамку со всех сторон, а превью в карточке нужна только нижняя
+  bare?: boolean
   className?: string
 }) {
   const preview = maxLines !== undefined
@@ -167,6 +170,7 @@ export function CodeView({
   return (
     <div
       className={cn(
+        !bare && 'px-well',
         'group/code relative rounded-lg border border-border bg-muted/50 text-foreground',
         className,
       )}
@@ -200,7 +204,7 @@ export function CodeView({
             type="button"
             onClick={() => void copyText(code)}
             aria-label="Копировать код"
-            className="flex h-6 items-center gap-1 rounded-md bg-muted px-1.5 text-xs text-muted-foreground transition-opacity outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 group-hover/code:opacity-100 pointer-fine:opacity-0"
+            className="px-btn flex h-6 items-center gap-1 rounded-md bg-muted px-1.5 text-xs text-muted-foreground transition-opacity outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 group-hover/code:opacity-100 pointer-fine:opacity-0"
           >
             <Icon name="copy" size={12} />
             Копировать

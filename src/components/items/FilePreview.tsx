@@ -45,7 +45,7 @@ function ImagePreview({ item, variant }: { item: Item; variant: 'thumb' | 'full'
   const thumb = variant === 'thumb'
   return (
     <div className={cn('relative overflow-hidden', thumb ? 'size-full min-h-16 bg-muted' : 'rounded-lg bg-muted/50')}>
-      {!loaded && <div className={cn('animate-pulse bg-muted', thumb ? 'absolute inset-0' : 'h-48 w-full')} aria-hidden />}
+      {!loaded && <div className={cn('animate-pulse bg-muted pixel:animate-none', thumb ? 'absolute inset-0' : 'h-48 w-full')} aria-hidden />}
       {url && (
         <img
           src={url}
@@ -54,7 +54,7 @@ function ImagePreview({ item, variant }: { item: Item; variant: 'thumb' | 'full'
           onError={() => setLoaded(true)}
           draggable={false}
           className={cn(
-            'transition-opacity duration-150',
+            'transition-opacity duration-150 pixel:transition-none',
             thumb ? 'size-full object-cover' : 'mx-auto max-h-[70vh] w-auto max-w-full object-contain',
             loaded ? 'opacity-100' : 'opacity-0',
             !loaded && !thumb && 'absolute inset-0',
@@ -86,7 +86,7 @@ function FileTextBody({ item }: { item: Item }) {
     <pre
       tabIndex={0}
       aria-label="Содержимое файла"
-      className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
+      className="px-well max-h-80 overflow-auto rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
     >
       {text}
     </pre>
@@ -112,8 +112,8 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 p-3">
-        <Icon name={icon} size={28} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
+      <div className="px-well flex items-center gap-3 rounded-lg border border-border bg-muted/50 p-3">
+        <Icon name={icon} size={28} pixelSize={32} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{item.fileName || item.title || 'Файл'}</div>
           {item.fileSize !== undefined && (

@@ -12,6 +12,7 @@ import { makeSnippet } from '@/search'
 import type { SearchHit } from '@/search'
 import type { Item } from '@/types'
 import { CategoryBadge } from './CategoryBadge'
+import { catBarStyle, catColorVar, useListCategory } from './categoryColor'
 import { CodeView } from './CodeView'
 import { FilePreview } from './FilePreview'
 import { Highlighted } from './Highlighted'
@@ -123,12 +124,15 @@ function QuickButton({
   onClick,
   active,
   destructive,
+  dense,
 }: {
   label: string
   icon: IconName
   onClick: () => void
   active?: boolean
   destructive?: boolean
+  /** Плотная группа в накладке карточки: без собственной рамки кнопок. */
+  dense?: boolean
 }) {
   return (
     <Tooltip>
@@ -143,12 +147,11 @@ function QuickButton({
               e.stopPropagation()
               onClick()
             }}
-            className={cn(destructive && 'hover:text-destructive')}
+            className={cn(!dense && 'px-btn pixel:size-7.5 pixel:max-md:size-9', destructive && 'hover:text-destructive')}
           />
         }
       >
-        {/* pixel:text-inherit: в пиксельных сценах нажатая кнопка сама золотая, значок берёт её цвет текста */}
-        <Icon name={icon} className={cn(active && 'fill-gold text-gold pixel:text-inherit')} />
+        <Icon name={icon} className={cn(active && 'fill-gold text-gold')} />
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
@@ -156,22 +159,23 @@ function QuickButton({
 }
 
 /** Быстрые действия по наведению/фокусу (меню «…» отдельно, оно управляет своей видимостью). */
-function QuickActions({ item, variant }: { item: Item; variant: ItemVariant }) {
+function QuickActions({ item, variant, dense }: { item: Item; variant: ItemVariant; dense?: boolean }) {
   if (variant === 'archive') {
     return (
       <>
-        <QuickButton label="Вернуть" icon="archive-restore" onClick={() => void actUnarchive(item.id)} />
-        <QuickButton label="Удалить" icon="trash" destructive onClick={() => void actDelete(item.id)} />
+        <QuickButton dense={dense} label="Вернуть" icon="archive-restore" onClick={() => void actUnarchive(item.id)} />
+        <QuickButton dense={dense} label="Удалить" icon="trash" destructive onClick={() => void actDelete(item.id)} />
       </>
     )
   }
   return (
     <>
       {variant === 'inbox' && (
-        <QuickButton label="В базу знаний" icon="check" onClick={() => void actToLibrary(item.id)} />
+        <QuickButton dense={dense} label="В базу знаний" icon="check" onClick={() => void actToLibrary(item.id)} />
       )}
-      <QuickButton label="В архив" icon="archive" onClick={() => void actArchive(item.id)} />
+      <QuickButton dense={dense} label="В архив" icon="archive" onClick={() => void actArchive(item.id)} />
       <QuickButton
+        dense={dense}
         label={item.favorite ? 'Убрать из избранного' : 'В избранное'}
         icon="star"
         active={item.favorite === 1}
@@ -181,10 +185,13 @@ function QuickActions({ item, variant }: { item: Item; variant: ItemVariant }) {
   )
 }
 
-function StarMark({ item }: { item: Item }) {
+/** className — для обёртки: в строке в пиксельных сценах скрыт (там флажок), в карточке — золотая плашка с рамкой. */
+function StarMark({ item, className }: { item: Item; className?: string }) {
   if (item.favorite !== 1) return null
   return (
-    <Icon name="star" size={13} className="shrink-0 fill-gold text-gold" aria-label="В избранном" />
+    <span className={cn('inline-flex shrink-0', className)}>
+      <Icon name="star" size={13} pixelSize={16} className="fill-gold text-gold pixel:text-gold-ink" aria-label="В избранном" />
+    </span>
   )
 }
 
@@ -243,12 +250,15 @@ function LeadCell({
   selecting,
   onToggle,
   className,
+  pixelSize,
 }: {
   item: Item
   checked: boolean
   selecting: boolean
   onToggle: ItemEntryProps['onToggle']
   className?: string
+  /** Размер значка типа в пиксельных сценах (в строке 30, в накладке карточки — по умолчанию). */
+  pixelSize?: number
 }) {
   const show = selecting || checked
   return (
@@ -261,6 +271,7 @@ function LeadCell({
     >
       <TypeIcon
         type={item.type}
+        pixelSize={pixelSize}
         className={cn(
           'text-muted-foreground transition-opacity',
           show ? 'opacity-0' : 'group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0',
@@ -282,7 +293,7 @@ function LeadCell({
 }
 
 const rowBase =
-  'group relative scroll-mt-9 scroll-mb-2 cursor-default outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60'
+  'group relative scroll-mt-9 pixel:scroll-mt-11 scroll-mb-2 pixel:scroll-mb-3 cursor-default outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60'
 
 // ───────────────────────── строка списка ─────────────────────────
 
@@ -302,88 +313,111 @@ export const ItemRow = memo(function ItemRow({
   const title = displayTitle(item)
   const linkImage = item.type === 'link' ? item.linkMeta?.image : undefined
   const favicon = item.type === 'link' ? item.linkMeta?.favicon : undefined
+  const cat = useListCategory(item.categoryId)
 
   return (
     <div
       role="listitem"
       aria-current={open ? 'true' : undefined}
       data-cursor={cursor ? 'true' : undefined}
+      data-checked={checked ? 'true' : undefined}
       data-item-id={item.id}
       tabIndex={tabbable ? 0 : -1}
       onClick={(e) => onActivate(item.id, e)}
       className={cn(
         rowBase,
         'flex items-start gap-3 rounded-lg px-3 py-2 hover:bg-muted/60',
+        'px-row pixel:items-stretch pixel:gap-0 pixel:p-0',
         open && 'bg-muted',
         checked && 'bg-brand-soft/60 hover:bg-brand-soft/70',
         cursor && 'bg-accent before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand',
       )}
     >
-      <LeadCell item={item} checked={checked} selecting={selecting} onToggle={onToggle} className="mt-0.5" />
+      <span
+        className="hidden w-2.5 shrink-0 px-flag px-flag-l pixel:block"
+        data-flag={item.favorite === 1 ? 'fav' : undefined}
+        {...(item.favorite === 1 ? { role: 'img', 'aria-label': 'В избранном' } : { 'aria-hidden': true })}
+      />
+      <div
+        className="contents px-catbar pixel:flex pixel:min-w-0 pixel:flex-1 pixel:items-start pixel:gap-2.5 pixel:px-2.5 pixel:pt-3 pixel:pb-2"
+        style={catBarStyle(cat?.color)}
+      >
+        <LeadCell
+          item={item}
+          checked={checked}
+          selecting={selecting}
+          onToggle={onToggle}
+          pixelSize={30}
+          className="mt-0.5 pixel:size-7.5"
+        />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-row md:items-center md:gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">
-            <Highlighted text={title} terms={terms} />
+        <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-row md:items-center md:gap-3 pixel:md:flex-col pixel:md:items-stretch pixel:md:gap-1">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground pixel:font-semibold">
+              <Highlighted text={title} terms={terms} />
+            </div>
+            {(snippet.text || snippet.lead) && (
+              <div
+                className={cn(
+                  'flex min-w-0 items-center gap-1.5 text-2sm text-muted-foreground',
+                  snippet.mono && 'font-mono text-xs',
+                )}
+              >
+                {item.type === 'link' && (
+                  <SafeImg
+                    src={favicon}
+                    className="size-3.5 shrink-0 rounded-sm"
+                    fallback={<Icon name="link" size={13} className="shrink-0" />}
+                  />
+                )}
+                {snippet.lead && <span className="shrink-0 text-foreground/70">{snippet.lead}</span>}
+                {snippet.lead && snippet.text && <span aria-hidden>·</span>}
+                <span className="truncate">
+                  <Highlighted text={snippet.text} terms={terms} />
+                </span>
+              </div>
+            )}
           </div>
-          {(snippet.text || snippet.lead) && (
-            <div
-              className={cn(
-                'flex min-w-0 items-center gap-1.5 text-2sm text-muted-foreground',
-                snippet.mono && 'font-mono text-xs',
-              )}
-            >
-              {item.type === 'link' && (
-                <SafeImg
-                  src={favicon}
-                  className="size-3.5 shrink-0 rounded-sm"
-                  fallback={<Icon name="link" size={13} className="shrink-0" />}
-                />
-              )}
-              {snippet.lead && <span className="shrink-0 text-foreground/70">{snippet.lead}</span>}
-              {snippet.lead && snippet.text && <span aria-hidden>·</span>}
-              <span className="truncate">
-                <Highlighted text={snippet.text} terms={terms} />
+
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:shrink-0 md:flex-nowrap pixel:gap-1 pixel:md:flex-wrap">
+            <CategoryBadge categoryId={item.categoryId} className="pixel:md:hidden" />
+            <TagsLine tags={item.tags} />
+            <StarMark item={item} className="md:hidden pixel:hidden" />
+            <span className="text-xs text-muted-foreground md:hidden">{formatRelative(item.createdAt)}</span>
+          </div>
+        </div>
+
+        {item.type === 'image' && item.fileId && (
+          <div className="size-10 shrink-0 overflow-hidden rounded-md border border-border pixel:border-2 pixel:border-wood-dark">
+            <FilePreview item={item} variant="thumb" />
+          </div>
+        )}
+        {linkImage && (
+          <SafeImg
+            src={linkImage}
+            className="size-10 shrink-0 rounded-md border border-border object-cover pixel:border-2 pixel:border-wood-dark"
+          />
+        )}
+
+        <div className="hidden shrink-0 items-center md:flex pixel:self-center" onClick={(e) => e.stopPropagation()}>
+          <div className="grid items-center justify-items-end">
+            <div className="col-start-1 row-start-1 flex items-center gap-2 transition-opacity pixel:flex-col pixel:items-end pixel:gap-0.5 pointer-fine:group-focus-within:opacity-0 pointer-fine:group-hover:opacity-0">
+              <CategoryBadge categoryId={item.categoryId} className="hidden pixel:inline-flex" />
+              <StarMark item={item} className="pixel:hidden" />
+              <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
+                {formatRelative(item.createdAt)}
               </span>
             </div>
-          )}
-        </div>
-
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:shrink-0 md:flex-nowrap">
-          <CategoryBadge categoryId={item.categoryId} />
-          <TagsLine tags={item.tags} />
-          <span className="md:hidden">
-            <StarMark item={item} />
-          </span>
-          <span className="text-xs text-muted-foreground md:hidden">{formatRelative(item.createdAt)}</span>
-        </div>
-      </div>
-
-      {item.type === 'image' && item.fileId && (
-        <div className="size-10 shrink-0 overflow-hidden rounded-md border border-border">
-          <FilePreview item={item} variant="thumb" />
-        </div>
-      )}
-      {linkImage && (
-        <SafeImg src={linkImage} className="size-10 shrink-0 rounded-md border border-border object-cover" />
-      )}
-
-      <div className="hidden shrink-0 items-center md:flex" onClick={(e) => e.stopPropagation()}>
-        <div className="grid items-center justify-items-end">
-          <div className="col-start-1 row-start-1 flex items-center gap-2 transition-opacity pointer-fine:group-focus-within:opacity-0 pointer-fine:group-hover:opacity-0">
-            <StarMark item={item} />
-            <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
-              {formatRelative(item.createdAt)}
-            </span>
-          </div>
-          <div className="col-start-1 row-start-1 hidden items-center transition-opacity pointer-fine:flex pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100">
-            <QuickActions item={item} variant={variant} />
+            <div className="col-start-1 row-start-1 hidden items-center transition-opacity pixel:gap-1 pointer-fine:flex pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100">
+              <QuickActions item={item} variant={variant} />
+            </div>
           </div>
         </div>
+        <div className="shrink-0 pixel:self-center" onClick={(e) => e.stopPropagation()}>
+          <ItemMenu item={item} className="px-btn" />
+        </div>
       </div>
-      <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-        <ItemMenu item={item} />
-      </div>
+      <span aria-hidden className="hidden w-2.5 shrink-0 px-flag px-flag-r pixel:block" data-flag={item.status} />
     </div>
   )
 }, propsEqual)
@@ -395,7 +429,7 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
     case 'image':
     case 'file':
       return item.fileId ? (
-        <div className="h-32 overflow-hidden border-b border-border">
+        <div className="h-32 overflow-hidden border-b border-border pixel:border-b-2">
           <FilePreview item={item} variant="thumb" />
         </div>
       ) : null
@@ -405,7 +439,8 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
           code={item.content}
           language={item.language}
           maxLines={6}
-          className="rounded-none border-0 border-b"
+          bare
+          className="rounded-none border-0 border-b pixel:border-b-2 pixel:border-[var(--paper-line)] pixel:bg-[var(--paper-2)]"
         />
       ) : null
     case 'link': {
@@ -418,7 +453,7 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
       return (
         <SafeImg
           src={item.linkMeta?.image}
-          className="h-32 w-full border-b border-border object-cover"
+          className="h-32 w-full border-b border-border object-cover pixel:border-b-2"
           fallback={textFallback}
         />
       )
@@ -445,27 +480,30 @@ export const ItemCard = memo(function ItemCard({
 }: ItemEntryProps) {
   const { item, terms } = hit
   const lead = item.type === 'link' ? domainOf(item.url) : ''
+  const cat = useListCategory(item.categoryId)
 
   return (
     <div
       role="listitem"
       aria-current={open ? 'true' : undefined}
       data-cursor={cursor ? 'true' : undefined}
+      data-checked={checked ? 'true' : undefined}
       data-item-id={item.id}
       tabIndex={tabbable ? 0 : -1}
       onClick={(e) => onActivate(item.id, e)}
       className={cn(
         rowBase,
-        'flex flex-col overflow-hidden rounded-lg border border-border bg-card hover:border-foreground/20',
+        'flex flex-col overflow-hidden rounded-lg border border-border bg-card hover:border-foreground/20 px-row',
         open && 'border-foreground/30 bg-muted/60',
         checked && 'border-brand/50 bg-brand-soft/40',
         cursor && 'border-brand bg-accent ring-1 ring-brand',
       )}
     >
+      <span aria-hidden className="hidden h-1 shrink-0 pixel:block" style={{ background: catColorVar(cat?.color) }} />
       <CardPreview item={item} terms={terms} />
 
       <div className="flex flex-1 flex-col gap-1.5 px-3 py-2.5">
-        <div className="line-clamp-2 text-sm font-medium break-words text-foreground">
+        <div className="line-clamp-2 text-sm font-medium break-words text-foreground pixel:font-semibold">
           <Highlighted text={displayTitle(item)} terms={terms} />
         </div>
         {lead && <div className="truncate text-xs text-muted-foreground">{lead}</div>}
@@ -474,7 +512,10 @@ export const ItemCard = memo(function ItemCard({
           <CategoryBadge categoryId={item.categoryId} />
           <TagsLine tags={item.tags} max={2} />
           <span className="ml-auto flex items-center gap-1.5">
-            <StarMark item={item} />
+            <StarMark
+              item={item}
+              className="pixel:border-2 pixel:border-wood-dark pixel:bg-gold pixel:p-px pixel:text-gold-ink"
+            />
             <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
               {formatRelative(item.createdAt)}
             </span>
@@ -488,16 +529,16 @@ export const ItemCard = memo(function ItemCard({
         selecting={selecting}
         onToggle={onToggle}
         className={cn(
-          'absolute top-2 left-2 size-6 rounded-md bg-card/90 shadow-xs ring-1 ring-border transition-opacity',
+          'absolute top-2 left-2 size-6 rounded-md bg-card/90 shadow-xs ring-1 ring-border transition-opacity pixel:top-3 pixel:border-2 pixel:border-wood-dark pixel:bg-paper',
           !(selecting || checked) && 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100',
         )}
       />
       <div
-        className="absolute top-1.5 right-1.5 flex items-center rounded-md bg-card/90 shadow-xs ring-1 ring-border transition-opacity pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100"
+        className="absolute top-1.5 right-1.5 flex items-center rounded-md bg-card/90 shadow-xs ring-1 ring-border transition-opacity pixel:top-3 pixel:border-2 pixel:border-wood-dark pixel:bg-paper pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="hidden items-center pointer-fine:flex">
-          <QuickActions item={item} variant={variant} />
+          <QuickActions item={item} variant={variant} dense />
         </div>
         <ItemMenu item={item} />
       </div>

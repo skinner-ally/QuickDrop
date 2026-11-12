@@ -47,7 +47,7 @@ function OgImage({ src }: { src: string }) {
       referrerPolicy="no-referrer"
       loading="lazy"
       onError={() => setFailed(true)}
-      className="max-h-48 w-full border-b border-border bg-muted object-cover"
+      className="max-h-48 w-full border-b border-border bg-muted object-cover pixel:border-b-2"
     />
   )
 }
@@ -93,12 +93,12 @@ export function LinkCard({ item }: { item: Item }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-hidden rounded-lg border border-border bg-card px-well">
         {skeleton ? (
-          <div className="flex animate-pulse flex-col gap-2 p-3" aria-busy="true" aria-label="Загрузка данных ссылки">
-            <div className="h-3 w-1/3 rounded bg-muted" />
-            <div className="h-4 w-4/5 rounded bg-muted" />
-            <div className="h-3 w-full rounded bg-muted" />
+          <div className="flex animate-pulse flex-col gap-2 p-3 pixel:animate-none" aria-busy="true" aria-label="Загрузка данных ссылки">
+            <div className="h-3 w-1/3 rounded bg-muted pixel:bg-paper-line" />
+            <div className="h-4 w-4/5 rounded bg-muted pixel:bg-paper-line" />
+            <div className="h-3 w-full rounded bg-muted pixel:bg-paper-line" />
           </div>
         ) : (
           <>

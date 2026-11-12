@@ -17,7 +17,7 @@ export function LinksSection({ settings }: { settings: Settings }) {
   return (
     <Section id="links" title="Ссылки" description="Как QuickDrop подписывает добавленные ссылки.">
       <Row>
-        <label htmlFor="auto-title" className="text-2sm">
+        <label htmlFor="auto-title" className="text-2sm pixel:font-semibold">
           Автоматически подтягивать заголовок страницы
         </label>
         <Switch

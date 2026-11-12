@@ -118,8 +118,8 @@ function FileRow({ entry, onRemove }: { entry: FileEntry; onRemove: () => void }
   }, [entry.file, isImage])
 
   return (
-    <li className="flex items-center gap-2 rounded-lg border bg-card p-1.5 pr-1">
-      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground">
+    <li className="flex items-center gap-2 rounded-lg border bg-card p-1.5 pr-1 px-well">
+      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground pixel:bg-paper-line">
         {isImage && url ? (
           <img src={url} alt="" className="size-full object-cover" />
         ) : (
@@ -130,7 +130,7 @@ function FileRow({ entry, onRemove }: { entry: FileEntry; onRemove: () => void }
         <div className="truncate text-2sm">{entry.file.name}</div>
         <div className="text-xs text-muted-foreground">{formatBytes(entry.file.size)}</div>
       </div>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Убрать файл ${entry.file.name}`} onClick={onRemove}>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Убрать файл ${entry.file.name}`} className="px-btn pixel:size-7.5 pixel:max-md:size-9" onClick={onRemove}>
         <Icon name="x" />
       </Button>
     </li>
@@ -171,7 +171,10 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
   const [saving, setSaving] = useState(false)
   const [restored, setRestored] = useState(!!initial.restored)
   const [dragging, setDragging] = useState(false)
+  /** Показан вопрос «Закрыть без прикреплённых файлов?» (вместо window.confirm: в Tauri он асинхронный). */
+  const [confirmClose, setConfirmClose] = useState(false)
 
+  const stayRef = useRef<HTMLButtonElement>(null)
   const textSource = useRef<ItemSource>(initial.d?.text ? ((initial.d as DraftWithSource).source ?? 'paste') : 'manual')
   const textRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -259,7 +262,13 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
       // Пока идёт сохранение, закрытие дало бы дубль при следующем открытии.
       if (savingRef.current) return false
       // Файлы в черновик (sessionStorage) не попадают: не теряем их молча.
-      if (hasFiles && !window.confirm('Прикреплённые файлы не сохранятся. Закрыть?')) return false
+      if (hasFiles) {
+        // Первая попытка закрыть показывает вопрос, повторная (Esc, клик вне) — «Остаться».
+        // Повторная попытка — это «Остаться»: фокус в поле до того, как кнопка исчезнет.
+        if (confirmClose) textRef.current?.focus()
+        setConfirmClose(!confirmClose)
+        return false
+      }
       if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
       return true
     }
@@ -267,6 +276,23 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
       snapshotRef.current = null
     }
   })
+
+  // Список файлов изменился — прежний вопрос неактуален.
+  useEffect(() => {
+    if (document.activeElement === stayRef.current) textRef.current?.focus()
+    setConfirmClose(false)
+  }, [files])
+
+  useEffect(() => {
+    if (confirmClose) stayRef.current?.focus()
+  }, [confirmClose])
+
+  /** «Закрыть» в вопросе: файлы теряются, текстовый черновик сохраняется как при обычном закрытии. */
+  function closeWithoutFiles() {
+    if (savingRef.current) return
+    if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
+    closeCapture()
+  }
 
   const addFiles = useCallback((list: File[], source: ItemSource) => {
     const entries = acceptFiles(list, source)
@@ -460,7 +486,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
   const saveHint = coarse ? null : plainEnterSaves && !hasFiles ? '↵' : `${mod}↵`
   return (
     <div
-      className="relative flex flex-col gap-2.5"
+      className="relative flex flex-col gap-2.5 pixel:-m-1 pixel:min-h-0 pixel:overflow-y-auto pixel:p-1"
       onKeyDown={onContainerKeyDown}
       onPaste={onPaste}
       onDragOver={onDragOver}
@@ -468,7 +494,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
       onDrop={onDrop}
     >
       {dragging && (
-        <div className="pointer-events-none absolute -inset-1 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-ring bg-popover/90 text-sm text-muted-foreground">
+        <div className="pointer-events-none absolute -inset-1 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-ring bg-popover/90 text-sm pixel:bg-paper text-muted-foreground">
           Отпустите, чтобы добавить файлы
         </div>
       )}
@@ -531,7 +557,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
               onClick={() => onTypeClick(t)}
               title={t === 'file' || t === 'image' ? 'Прикрепить файл' : manualType === t ? 'Вернуть автоопределение' : undefined}
               className={cn(
-                'inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40',
+                'px-chip pixel:px-1.5 inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40',
                 active && 'border-border bg-muted font-medium text-foreground',
               )}
             >
@@ -578,6 +604,23 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
         </div>
       </div>
 
+      {confirmClose && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-muted/50 p-2 text-2sm px-well"
+        >
+          <span className="min-w-0 flex-1">Прикреплённые файлы не сохранятся. Закрыть?</span>
+          <div className="flex items-center gap-1.5">
+            <Button type="button" variant="outline" size="sm" onClick={closeWithoutFiles}>
+              Закрыть
+            </Button>
+            <Button ref={stayRef} type="button" size="sm" onClick={() => { textRef.current?.focus(); setConfirmClose(false) }}>
+              Остаться
+            </Button>
+          </div>
+        </div>
+      )}
+
       {restored && (
         <div className="text-xs text-muted-foreground">
           Черновик восстановлен ·{' '}
@@ -598,7 +641,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
             e.target.value = ''
           }}
         />
-        <Button type="button" variant="ghost" size="icon" aria-label="Прикрепить файлы" title="Прикрепить файлы" onClick={() => fileInputRef.current?.click()}>
+        <Button type="button" variant="ghost" size="icon" aria-label="Прикрепить файлы" title="Прикрепить файлы" className="px-btn pixel:size-7.5 pixel:max-md:size-9" onClick={() => fileInputRef.current?.click()}>
           <Icon name="paperclip" />
         </Button>
         <Button
@@ -609,7 +652,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
           aria-pressed={favorite}
           title="В избранное"
           onClick={() => setFavorite((v) => !v)}
-          className={cn(favorite && 'text-foreground')}
+          className={cn('px-btn pixel:size-7.5 pixel:max-md:size-9', favorite && 'text-foreground')}
         >
           <Icon name="star" className={cn(favorite && 'fill-current')} />
         </Button>
@@ -630,6 +673,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
             aria-label="Сохранить и добавить ещё"
             title={`Сохранить и добавить ещё (${mod}+Shift+Enter)`}
             disabled={!canSave}
+            className="px-btn pixel:size-7.5 pixel:max-md:size-9"
             onClick={() => void save(true)}
           >
             <Icon name="plus" />
@@ -681,9 +725,13 @@ export function QuickCapture() {
     >
       <DialogContent
         showCloseButton={false}
-        className="top-[max(0.5rem,env(safe-area-inset-top))] max-h-[calc(100dvh-1rem)] w-full max-w-[calc(100%-1rem)] translate-y-0 gap-0 overflow-y-auto p-2.5 sm:top-[12vh] sm:max-w-[640px] sm:p-3"
+        className="top-[max(0.5rem,env(safe-area-inset-top))] max-h-[calc(100dvh-1rem)] w-full max-w-[calc(100%-1rem)] translate-y-0 gap-0 overflow-y-auto p-2.5 sm:top-[12vh] sm:max-w-[640px] sm:p-3 pixel:flex pixel:flex-col pixel:overflow-hidden"
+        data-skin="panel"
       >
-        <DialogTitle className="sr-only">Быстрое добавление</DialogTitle>
+        <DialogTitle className="sr-only font-heading pixel:not-sr-only pixel:mb-2.5 pixel:flex pixel:items-center pixel:gap-2 pixel:text-2xl">
+          <Icon name="sprout" pixelSize={20} className="hidden pixel:block" />
+          Быстрая запись
+        </DialogTitle>
         <CaptureForm snapshotRef={snapshotRef} />
       </DialogContent>
     </Dialog>

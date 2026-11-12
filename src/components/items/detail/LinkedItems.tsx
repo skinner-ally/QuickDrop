@@ -20,7 +20,7 @@ async function run(fn: () => Promise<void>, fallback: string) {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="text-xs font-medium text-muted-foreground">{children}</h3>
+  return <h3 className="text-xs font-medium text-muted-foreground pixel:text-2sm pixel:font-semibold">{children}</h3>
 }
 
 /** Связанные записи и подсказки «Похожие» (по общим тегам). */
@@ -54,7 +54,7 @@ export function LinkedItems({ item }: { item: Item }) {
       ) : (
         <ul className="flex flex-col">
           {linked.map((l) => (
-            <li key={l.id} className="group/link flex items-center gap-1 rounded-md hover:bg-muted/50">
+            <li key={l.id} className="group/link flex items-center gap-1 rounded-md px-nav hover:bg-muted/50">
               <button
                 type="button"
                 onClick={() => select(l.id)}
@@ -82,7 +82,7 @@ export function LinkedItems({ item }: { item: Item }) {
           <SectionTitle>Похожие</SectionTitle>
           <ul className="flex flex-col">
             {similar.map((s) => (
-              <li key={s.id} className="flex items-center gap-1 rounded-md hover:bg-muted/50">
+              <li key={s.id} className="flex items-center gap-1 rounded-md px-nav hover:bg-muted/50">
                 <button
                   type="button"
                   onClick={() => select(s.id)}

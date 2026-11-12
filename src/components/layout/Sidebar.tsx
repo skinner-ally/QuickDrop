@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { matchKey } from '@/lib/keys'
-import { Icon, type IconName } from '@/components/icons'
+import { Icon, usePixel, type IconName } from '@/components/icons'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,21 @@ import { useUi, type View } from '@/store/ui'
 import { CATEGORY_COLORS, type Settings } from '@/types'
 
 const TOP_TAGS = 12
+
+// Порядок совпадает с клавишами 1–4 (useHotkeys.VIEW_BY_DIGIT).
+const NAV_ITEMS: Array<{
+  view: View
+  label: string
+  icon: IconName
+  count: 'inbox' | 'library' | 'favorites' | 'archive'
+}> = [
+  { view: 'inbox', label: 'Входящие', icon: 'inbox', count: 'inbox' },
+  { view: 'library', label: 'База знаний', icon: 'library', count: 'library' },
+  { view: 'favorites', label: 'Избранное', icon: 'star', count: 'favorites' },
+  { view: 'archive', label: 'Архив', icon: 'archive', count: 'archive' },
+  // этап 5: { view: 'graph', label: 'Граф', icon: 'graph' } (клавиша 5)
+  // этап 4: { view: 'trash', label: 'Корзина', icon: 'trash' } (последним, без цифры)
+]
 
 function NavButton({
   active,
@@ -38,6 +53,7 @@ function NavButton({
       aria-current={active ? 'page' : undefined}
       className={cn(
         'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-2sm outline-none transition-colors',
+        'px-nav pixel:h-7 pixel:px-1.5 pixel:max-md:h-9.5',
         'hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
         active ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-sidebar-foreground/85',
       )}
@@ -48,7 +64,7 @@ function NavButton({
         <span
           className={cn(
             'text-xs tabular-nums',
-            accent ? 'rounded-full bg-brand px-1.5 font-medium text-brand-foreground' : 'text-muted-foreground',
+            accent ? 'rounded-full bg-brand px-1.5 font-medium text-brand-foreground px-count' : 'text-muted-foreground',
           )}
         >
           {count}
@@ -70,12 +86,12 @@ function SectionHeader({
   action?: ReactNode
 }) {
   return (
-    <div className="mt-3 flex items-center justify-between pr-1 pl-2">
+    <div className="mt-3 flex items-center justify-between pr-1 pl-2 pixel:mt-1.5 pixel:px-0">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex items-center gap-1 rounded text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        className="flex items-center gap-1 rounded text-xs font-medium text-muted-foreground pixel:text-2sm pixel:font-semibold outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
         <Icon name={open ? 'chevron-down' : 'chevron-right'} className="size-3.5" />
         {title}
@@ -101,6 +117,7 @@ function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon-sm"
+      className="px-btn pixel:size-7.5 pixel:max-md:size-9"
       aria-label={`${THEME_LABEL[current]}. Переключить: ${THEME_LABEL[next].toLowerCase()}`}
       title={THEME_LABEL[current]}
       onClick={() => {
@@ -146,7 +163,7 @@ function NewCategory({ onDone }: { onDone: () => void }) {
       onBlur={() => void submit()}
       placeholder="Название категории"
       aria-label="Название новой категории"
-      className="mx-1 my-0.5 h-7 w-[calc(100%-0.5rem)] rounded-md border border-input bg-background px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 md:text-2sm"
+      className="mx-1 my-0.5 h-7 w-[calc(100%-0.5rem)] px-field pixel:h-7.5 rounded-md border border-input bg-background px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 md:text-2sm"
     />
   )
 }
@@ -158,6 +175,7 @@ export function Sidebar() {
   const setFilter = useUi((s) => s.setFilter)
   const resetFilter = useUi((s) => s.resetFilter)
   const openCapture = useUi((s) => s.openCapture)
+  const pixel = usePixel()
 
   const counts = useCounts()
   const categories = useCategories()
@@ -205,9 +223,9 @@ export function Sidebar() {
   const shownTags = allTags ? tags : tags.slice(0, TOP_TAGS)
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)] text-sidebar-foreground">
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <span className="flex size-6 items-center justify-center rounded-md bg-brand text-brand-foreground" aria-hidden>
+    <div className="flex h-full min-h-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)] text-sidebar-foreground pixel:gap-2.5 pixel:bg-transparent pixel:pt-0">
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2 pixel:p-0">
+        <span className="flex size-6 items-center justify-center rounded-md bg-brand text-brand-foreground pixel:hidden" aria-hidden>
           <svg
             viewBox="0 0 16 16"
             className="size-3.5"
@@ -220,12 +238,13 @@ export function Sidebar() {
             <path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3.5 13.5h9" />
           </svg>
         </span>
-        <span className="text-md font-semibold tracking-tight">QuickDrop</span>
+        <Icon name="sprout" pixelSize={20} className="hidden pixel:block" />
+        <span className="text-md font-semibold tracking-tight font-heading pixel:text-2xl pixel:tracking-normal">QuickDrop</span>
       </div>
 
-      <div className="px-3 pb-2">
+      <div className="px-3 pb-2 pixel:p-0">
         <Button
-          className="h-9 w-full justify-between bg-brand px-3 text-brand-foreground hover:bg-brand/90"
+          className="h-9 w-full justify-between bg-brand px-3 text-brand-foreground hover:bg-brand/90 pixel:h-9.5 pixel:justify-center pixel:gap-1.5"
           onClick={() => openCapture()}
         >
           <span className="flex items-center gap-1.5">
@@ -236,37 +255,19 @@ export function Sidebar() {
         </Button>
       </div>
 
-      <nav aria-label="Основная навигация" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <nav aria-label="Основная навигация" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pixel:-m-1 pixel:p-1">
         <div className="flex flex-col gap-0.5">
-          <NavButton
-            active={view === 'inbox'}
-            onClick={() => go('inbox')}
-            icon={<Icon name="inbox" className="size-4" />}
-            label="Входящие"
-            count={counts.inbox}
-            accent={counts.inbox > 0}
-          />
-          <NavButton
-            active={plainLibrary}
-            onClick={() => go('library')}
-            icon={<Icon name="library" className="size-4" />}
-            label="База знаний"
-            count={counts.library}
-          />
-          <NavButton
-            active={view === 'favorites'}
-            onClick={() => go('favorites')}
-            icon={<Icon name="star" className="size-4" />}
-            label="Избранное"
-            count={counts.favorites}
-          />
-          <NavButton
-            active={view === 'archive'}
-            onClick={() => go('archive')}
-            icon={<Icon name="archive" className="size-4" />}
-            label="Архив"
-            count={counts.archive}
-          />
+          {NAV_ITEMS.map((item) => (
+            <NavButton
+              key={item.view}
+              active={item.view === 'library' ? plainLibrary : view === item.view}
+              onClick={() => go(item.view)}
+              icon={<Icon name={item.icon} className="size-4" />}
+              label={item.label}
+              count={counts[item.count]}
+              accent={item.view === 'inbox' && counts.inbox > 0}
+            />
+          ))}
         </div>
 
         <SectionHeader
@@ -277,6 +278,7 @@ export function Sidebar() {
             <Button
               variant="ghost"
               size="icon-xs"
+              className="px-btn pixel:size-7.5 pixel:max-md:size-9"
               aria-label="Создать категорию"
               title="Создать категорию"
               onClick={() => {
@@ -303,7 +305,7 @@ export function Sidebar() {
             <NavButton
               active={inLibrary && filter.categoryId === null}
               onClick={() => toggleCategory(null)}
-              icon={<span aria-hidden className="size-2.5 rounded-full border border-muted-foreground/50" />}
+              icon={<span aria-hidden className="size-2.5 rounded-full border border-muted-foreground/50 px-sw pixel:bg-(--cat-none)" />}
               label="Без категории"
               count={perCategory.get(null) ?? 0}
             />
@@ -316,20 +318,37 @@ export function Sidebar() {
             <SectionHeader title="Теги" open={tagsOpen} onToggle={() => setTagsOpen((o) => !o)} />
             {tagsOpen && (
               <div className="mt-0.5 flex flex-col gap-0.5">
-                {shownTags.map(({ tag, count }) => (
-                  <NavButton
-                    key={tag}
-                    active={inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag}
-                    onClick={() => toggleTag(tag)}
-                    icon={
-                      <span aria-hidden className="text-muted-foreground">
-                        #
-                      </span>
-                    }
-                    label={tag}
-                    count={count}
-                  />
-                ))}
+                {pixel ? (
+                  <div className="flex flex-wrap gap-1">
+                    {shownTags.map(({ tag, count }) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        aria-pressed={inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag}
+                        title={`Записей: ${count}`}
+                        onClick={() => toggleTag(tag)}
+                        className="px-chip inline-flex min-h-6 items-center px-1.5 text-xs max-md:min-h-9 max-md:px-2"
+                      >
+                        #{tag}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  shownTags.map(({ tag, count }) => (
+                    <NavButton
+                      key={tag}
+                      active={inLibrary && filter.tags?.length === 1 && filter.tags[0] === tag}
+                      onClick={() => toggleTag(tag)}
+                      icon={
+                        <span aria-hidden className="text-muted-foreground">
+                          #
+                        </span>
+                      }
+                      label={tag}
+                      count={count}
+                    />
+                  ))
+                )}
                 {tags.length > TOP_TAGS && (
                   <button
                     type="button"
@@ -345,7 +364,7 @@ export function Sidebar() {
         )}
       </nav>
 
-      <div className="flex items-center gap-1 border-t border-sidebar-border px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="flex items-center gap-1 border-t border-sidebar-border px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pixel:gap-1.5 pixel:border-t-0 pixel:p-0">
         <div className="min-w-0 flex-1">
           <NavButton
             active={view === 'settings'}

@@ -15,8 +15,8 @@ export function AiSummary({ item }: { item: Item }) {
   const summary = item.ai?.summary?.trim()
   if (!summary) return null
   return (
-    <section aria-label="Кратко" className="rounded-lg bg-muted/50 px-3 py-2">
-      <h3 className="mb-0.5 text-xs font-medium text-muted-foreground">Кратко</h3>
+    <section aria-label="Кратко" className="rounded-lg bg-muted/50 px-3 py-2 px-well">
+      <h3 className="mb-0.5 text-xs font-medium text-muted-foreground pixel:text-2sm pixel:font-semibold">Кратко</h3>
       <p className="text-sm leading-relaxed whitespace-pre-wrap">{summary}</p>
     </section>
   )
@@ -67,7 +67,7 @@ export function AiSuggest({ item }: { item: Item }) {
       {result && !hasResult && <p className="text-xs text-muted-foreground">Нечего предложить</p>}
 
       {hasResult && result && (
-        <div className="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-3">
+        <div className="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-3 px-well">
           {title && (
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">

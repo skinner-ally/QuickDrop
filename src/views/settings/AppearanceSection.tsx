@@ -8,7 +8,7 @@ import { FONT_LABEL, FONT_PREFS, SCENE_LABEL, SCENE_PREFS } from '@/lib/scene'
 import { cn } from '@/lib/utils'
 import type { FontPref, ScenePref, Settings } from '@/types'
 import { radioGroupKeyDown } from './radioKeys'
-import { Field, Row, Section } from './Section'
+import { Field, Section } from './Section'
 
 interface SegmentedOption<T extends string> {
   value: T
@@ -43,7 +43,7 @@ function Segmented<T extends string>({
       aria-label={label}
       aria-disabled={disabled || undefined}
       onKeyDown={disabled ? undefined : radioGroupKeyDown}
-      className={cn('inline-flex w-fit max-w-full flex-wrap rounded-lg bg-muted p-[3px]', disabled && 'opacity-50')}
+      className={cn('inline-flex w-fit max-w-full flex-wrap rounded-lg bg-muted p-[3px] pixel:gap-1 pixel:bg-transparent pixel:p-0', disabled && 'opacity-50')}
     >
       {options.map(({ value: v, label: text, icon }) => {
         const active = value === v
@@ -57,7 +57,7 @@ function Segmented<T extends string>({
             tabIndex={active ? 0 : -1}
             onClick={disabled ? undefined : () => onChange(v)}
             className={cn(
-              'inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-2sm font-medium text-muted-foreground transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+              'px-btn inline-flex h-7 items-center gap-1.5 rounded-md px-3 pixel:h-7.5 text-2sm font-medium text-muted-foreground transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
               disabled ? 'cursor-default' : 'hover:text-foreground',
               active && 'bg-background text-foreground shadow-sm dark:bg-input/40',
             )}
@@ -114,9 +114,9 @@ export function AppearanceSection({ settings }: { settings: Settings }) {
           disabled={!pixel}
         />
       </Field>
-      <div className="flex flex-col gap-1.5">
-        <Row>
-          <label htmlFor="ambient" className="text-2sm">
+      <div className="flex flex-col gap-1.5 px-divider pixel:pt-2">
+        <div className="flex items-center justify-between gap-3 pixel:gap-4 pixel:max-md:flex-wrap">
+          <label htmlFor="ambient" className="text-2sm pixel:font-semibold">
             Живой фон
           </label>
           <Switch
@@ -124,7 +124,7 @@ export function AppearanceSection({ settings }: { settings: Settings }) {
             checked={settings.ambient}
             onCheckedChange={(v) => void setSetting('ambient', v).catch(fail)}
           />
-        </Row>
+        </div>
         <p className="text-xs text-muted-foreground">Листопад, лучи, снег, бабочки и светлячки на графе.</p>
       </div>
     </Section>

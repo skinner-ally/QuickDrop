@@ -148,7 +148,7 @@ export function TagInput({
     <div ref={rootRef} className={cn('relative', className)}>
       <div
         onClick={() => inputRef.current?.focus()}
-        className="flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-1.5 py-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30"
+        className="px-field flex min-h-8 flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-1.5 py-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30"
       >
         {value.map((tag) => (
           <TagChip key={tag} tag={tag} onRemove={() => onChange(value.filter((t) => t !== tag))} />
@@ -190,8 +190,8 @@ export function TagInput({
           // mousedown не должен забирать фокус у поля — иначе подсказки закроются раньше клика
           onMouseDown={(e) => e.preventDefault()}
           className={cn(
-            'absolute right-0 left-0 z-50 max-h-56 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10',
-            flipUp ? 'bottom-full mb-1' : 'top-full mt-1',
+            'px-pop absolute right-0 left-0 z-50 max-h-56 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10',
+            flipUp ? 'bottom-full mb-1 pixel:mb-2' : 'top-full mt-1 pixel:mt-2',
           )}
         >
           {suggestions.map((s, i) => (
@@ -203,7 +203,7 @@ export function TagInput({
               onClick={() => pick(i)}
               onMouseEnter={() => setActive(i)}
               className={cn(
-                'flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm',
+                'px-nav flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm',
                 active === i && 'bg-muted',
               )}
             >
@@ -219,7 +219,7 @@ export function TagInput({
               onClick={() => pick(suggestions.length)}
               onMouseEnter={() => setActive(suggestions.length)}
               className={cn(
-                'flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm',
+                'px-nav flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm',
                 active === suggestions.length && 'bg-muted',
               )}
             >

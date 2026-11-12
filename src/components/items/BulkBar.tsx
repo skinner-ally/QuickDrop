@@ -52,13 +52,13 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
     <div
       role="toolbar"
       aria-label="Действия с выбранными записями"
-      className="pointer-events-none sticky bottom-3 z-20 mt-3 flex justify-center px-2 pb-[env(safe-area-inset-bottom)]"
+      className="pointer-events-none sticky bottom-3 pixel:bottom-4 z-20 mt-3 flex justify-center px-2 pb-[env(safe-area-inset-bottom)] pixel:pb-0"
     >
-      <div className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
+      <div className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-md px-pop pixel:gap-1.5 pixel:p-1.5">
         <span className="px-2 text-2sm font-medium whitespace-nowrap" aria-live="polite">
           {selected.size} {plural(selected.size)}
         </span>
-        <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-border pixel:w-0.5" aria-hidden />
 
         {variant === 'inbox' && (
           <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actToLibrary(ids)} aria-label="В базу знаний">
@@ -112,7 +112,7 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
           <span className="hidden sm:inline">Удалить</span>
         </Button>
 
-        <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-border pixel:w-0.5" aria-hidden />
         <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-9" onClick={clear} aria-label="Снять выбор">
           <Icon name="x" className="size-4" />
         </Button>

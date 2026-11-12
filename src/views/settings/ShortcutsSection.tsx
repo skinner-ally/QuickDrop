@@ -34,7 +34,7 @@ function Keys({ keys }: { keys: string[][] }) {
 export function ShortcutsSection({ settings }: { settings: Settings }) {
   const mod = modKey()
   const rows: Array<{ keys: string[][]; label: string }> = [
-    { keys: [[mod, 'Shift', 'Space'], ['Alt', 'N'], ['N']], label: 'Быстрое добавление (N, кроме полей ввода)' },
+    { keys: [[mod, 'Shift', 'Space'], ['Alt', 'N'], ['N']], label: 'Быстрая запись (N, кроме полей ввода)' },
     { keys: [[mod, 'K'], ['/']], label: 'Поиск' },
     { keys: [['Esc']], label: 'Закрыть панель или детали' },
     { keys: [[mod, 'V']], label: 'Добавить содержимое буфера (вне полей ввода)' },
@@ -51,7 +51,7 @@ export function ShortcutsSection({ settings }: { settings: Settings }) {
       title="Горячие клавиши"
       description="Работают внутри открытого приложения. Файлы можно перетащить в окно, чтобы добавить их."
     >
-      <ul className="divide-y rounded-lg border">
+      <ul className="divide-y rounded-lg border px-well pixel:divide-y-2">
         {rows.map((r) => (
           <li
             key={r.label}

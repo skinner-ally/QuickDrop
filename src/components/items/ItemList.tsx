@@ -463,8 +463,8 @@ export function ItemList({
           aria-label="Записи"
           className={
             layoutMode === 'grid'
-              ? 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]'
-              : 'flex flex-col gap-px'
+              ? 'grid gap-3 pixel:gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]'
+              : 'flex flex-col gap-px pixel:gap-2'
           }
         >
           {entries.map((en) =>
@@ -472,7 +472,7 @@ export function ItemList({
               <div
                 key={`h-${en.label}`}
                 role="presentation"
-                className="sticky top-0 z-10 bg-background px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground"
+                className="sticky top-0 z-10 bg-background px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground pixel:px-0.5 pixel:text-2sm pixel:font-semibold"
               >
                 {en.label}
               </div>

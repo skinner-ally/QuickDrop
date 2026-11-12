@@ -83,7 +83,10 @@ export function ContentEditor({
     <div className="group/content relative">
       <div
         onClick={startEdit}
-        className="-mx-1 cursor-text rounded-md px-1 py-0.5 hover:bg-muted/40"
+        className={cn(
+          '-mx-1 cursor-text rounded-md px-1 py-0.5 hover:bg-muted/40',
+          !mono && 'px-well pixel:mx-0 pixel:p-2',
+        )}
       >
         {value.trim() ? (
           renderView(value)

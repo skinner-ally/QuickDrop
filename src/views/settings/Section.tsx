@@ -16,14 +16,14 @@ export function Section({
   children: ReactNode
 }) {
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t pt-6">
+    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t pt-6 px-panel-thin pixel:gap-1.5 pixel:[--px-pad:10px]">
       <header className="flex flex-col gap-1">
-        <h2 id={`${id}-title`} className="font-heading text-md font-medium">
+        <h2 id={`${id}-title`} className="text-md font-medium pixel:text-2sm pixel:font-semibold pixel:text-muted-foreground">
           {title}
         </h2>
         {description && <p className="text-2sm text-muted-foreground">{description}</p>}
       </header>
-      <div className="flex flex-col gap-3">{children}</div>
+      <div className="flex flex-col gap-3 pixel:gap-2">{children}</div>
     </section>
   )
 }
@@ -43,8 +43,8 @@ export function Field({
   className?: string
 }) {
   return (
-    <div className={cn('flex flex-col gap-1.5', className)}>
-      <label htmlFor={htmlFor} className="text-2sm font-medium">
+    <div className={cn('flex flex-col gap-1.5 px-divider pixel:pt-2', className)}>
+      <label htmlFor={htmlFor} className="text-2sm font-medium pixel:font-semibold">
         {label}
       </label>
       {children}
@@ -55,7 +55,7 @@ export function Field({
 
 /** Строка «текст слева, действие справа». */
 export function Row({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('flex items-center justify-between gap-3', className)}>{children}</div>
+  return <div className={cn('flex items-center justify-between gap-3 px-divider pixel:gap-4 pixel:pt-2 pixel:max-md:flex-wrap', className)}>{children}</div>
 }
 
 export function saved() {

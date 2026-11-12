@@ -11,6 +11,7 @@ import {
   Command,
   CommandShortcut,
 } from '@/components/ui/command'
+import { useScene } from '@/components/layout/ThemeProvider'
 import { CategoryDot } from '@/components/items/CategoryBadge'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { setSetting } from '@/db/settings'
@@ -19,7 +20,7 @@ import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { fold, makeSnippet, searchItems } from '@/search'
 import { useUi, type View } from '@/store/ui'
-import type { Item, ItemStatus, Settings } from '@/types'
+import type { Item, ItemStatus, ScenePref, Settings } from '@/types'
 
 const MAX_HITS = 12
 const MAX_RECENT = 6
@@ -70,6 +71,7 @@ export function CommandPalette() {
   const open = useUi((s) => s.paletteOpen)
   const setPaletteOpen = useUi((s) => s.setPaletteOpen)
   const [input, setInput] = useState('')
+  const { setScene } = useScene()
 
   const items = useAllItems()
   // Индекс поиска синхронизируется с полным набором (с корзиной); выдача сужается через within
@@ -97,6 +99,12 @@ export function CommandPalette() {
     setSetting('theme', theme).catch((e: unknown) => toast.error(describeError(e)))
   }
 
+  const pickScene = (scene: ScenePref) => {
+    close()
+    setScene(scene)
+    setSetting('scene', scene).catch((e: unknown) => toast.error(describeError(e)))
+  }
+
   const go = (view: View) => {
     useUi.getState().setView(view)
     close()
@@ -117,13 +125,20 @@ export function CommandPalette() {
       { id: 'go-library', label: 'Перейти: База знаний', icon: 'library', run: () => go('library') },
       { id: 'go-favorites', label: 'Перейти: Избранное', icon: 'star', run: () => go('favorites') },
       { id: 'go-archive', label: 'Перейти: Архив', icon: 'archive', run: () => go('archive') },
+      // Заглушки этапов 4-5: «Перейти: Граф» и «Перейти: Корзина» добавятся здесь.
       { id: 'go-settings', label: 'Перейти: Настройки', icon: 'settings', run: () => go('settings') },
       { id: 'theme-light', label: 'Тема: светлая', icon: 'sun', run: () => setTheme('light') },
       { id: 'theme-dark', label: 'Тема: тёмная', icon: 'moon', run: () => setTheme('dark') },
       { id: 'theme-system', label: 'Тема: как в системе', icon: 'monitor', run: () => setTheme('system') },
+      { id: 'scene-auto', label: 'Сцена: по календарю', icon: 'sprout', run: () => pickScene('auto') },
+      { id: 'scene-meadow', label: 'Сцена: Луг', icon: 'sprout', run: () => pickScene('meadow') },
+      { id: 'scene-autumn', label: 'Сцена: Осень', icon: 'sprout', run: () => pickScene('autumn') },
+      { id: 'scene-paper', label: 'Сцена: Бумага', icon: 'sprout', run: () => pickScene('paper') },
+      { id: 'scene-winter', label: 'Сцена: Зима', icon: 'sprout', run: () => pickScene('winter') },
+      { id: 'scene-classic', label: 'Сцена: Классика', icon: 'sprout', run: () => pickScene('classic') },
     ],
     // close/go/setTheme зависят только от стабильных zustand-действий и setInput
-    [],
+    [setScene],
   )
 
   const results = useMemo(() => {
@@ -170,7 +185,7 @@ export function CommandPalette() {
       description="Поиск записей и быстрые действия"
       className="sm:max-w-xl"
     >
-      <Command shouldFilter={false} loop label="Палитра команд">
+      <Command shouldFilter={false} loop label="Палитра команд" className="pixel:p-0">
         <CommandInput
           value={input}
           onValueChange={setInput}
@@ -230,7 +245,7 @@ export function CommandPalette() {
 
           <CommandEmpty>Ничего не найдено</CommandEmpty>
         </CommandList>
-        <div className="hidden items-center gap-3 border-t border-border px-3 py-1.5 text-xs text-muted-foreground sm:flex">
+        <div className="hidden items-center gap-3 border-t border-border px-3 py-1.5 text-xs pixel:border-t-2 pixel:px-1 text-muted-foreground sm:flex">
           <span className="flex items-center gap-1">
             <Kbd>↑</Kbd>
             <Kbd>↓</Kbd> выбрать

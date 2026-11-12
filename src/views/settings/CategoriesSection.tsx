@@ -43,7 +43,7 @@ function ColorPicker({
         aria-label={`${label}: ${COLOR_LABEL[value]}`}
         className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
       >
-        <span className="size-3.5 rounded-full" style={{ background: `var(--cat-${value})` }} />
+        <span className="size-3.5 rounded-full px-sw" style={{ background: `var(--cat-${value})` }} />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto">
         <div role="radiogroup" aria-label="Цвет" onKeyDown={radioGroupKeyDown} className="grid grid-cols-5 gap-1.5">
@@ -62,10 +62,10 @@ function ColorPicker({
               }}
               className={cn(
                 'flex size-7 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
-                c === value && 'ring-2 ring-foreground/60',
+                c === value && 'ring-2 ring-foreground/60 px-sel',
               )}
             >
-              <span className="size-5 rounded-full" style={{ background: `var(--cat-${c})` }} />
+              <span className="size-5 rounded-full px-sw" style={{ background: `var(--cat-${c})` }} />
             </button>
           ))}
         </div>
@@ -176,7 +176,7 @@ export function CategoriesSection() {
       {categories.length === 0 ? (
         <p className="text-2sm text-muted-foreground">Категорий пока нет.</p>
       ) : (
-        <ul className="flex flex-col divide-y rounded-lg border">
+        <ul className="flex flex-col divide-y rounded-lg border px-well pixel:divide-y-2">
           {categories.map((c, i) => (
             <li key={c.id} className="flex items-center gap-1 px-1.5 py-1">
               <ColorPicker

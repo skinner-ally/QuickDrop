@@ -69,7 +69,7 @@ function LinkImage({ src }: { src: string | undefined }) {
       referrerPolicy="no-referrer"
       draggable={false}
       onError={() => setFailed(true)}
-      className="max-h-56 w-full rounded-lg border border-border object-cover"
+      className="max-h-56 w-full rounded-lg border border-border object-cover pixel:border-2"
     />
   )
 }
@@ -161,7 +161,7 @@ function TitleField({ item }: { item: Item }) {
       }}
       placeholder={displayTitle({ ...item, title: '' })}
       aria-label="Заголовок записи"
-      className="h-10 border-transparent bg-transparent px-2 text-lg font-medium shadow-none hover:border-input md:text-lg"
+      className="h-10 border-transparent bg-transparent px-2 text-lg font-medium shadow-none hover:border-input md:text-lg pixel:font-semibold"
     />
   )
 }
@@ -225,7 +225,7 @@ function AiSuggest({ item }: { item: Item }) {
         <button
           type="button"
           onClick={() => void acceptTitle(title)}
-          className="inline-flex h-6 max-w-full items-center rounded-md bg-muted px-2 text-2sm text-foreground outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="inline-flex h-6 max-w-full items-center rounded-md bg-muted px-2 text-2sm text-foreground outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/60 px-chip pixel:h-auto pixel:min-h-6"
           aria-label={`Принять заголовок: ${title}`}
         >
           <span className="truncate">Заголовок: {title}</span>
@@ -403,11 +403,11 @@ function TriageBody({ onClose }: { onClose: () => void }) {
     const skipped = Math.max(0, total - decisions.size)
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 text-center">
-        <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <Icon name="circle-check" size={24} strokeWidth={1.5} />
+        <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground pixel:size-auto pixel:bg-transparent">
+          <Icon name="circle-check" size={24} pixelSize={48} strokeWidth={1.5} />
         </div>
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-medium">{total === 0 ? 'Входящие пусты' : 'Всё разобрано'}</h2>
+          <h2 className="font-heading text-lg font-medium pixel:text-2xl pixel:font-semibold">{total === 0 ? 'Входящие пусты' : 'Всё разобрано'}</h2>
           <p className="text-2sm text-muted-foreground">
             {total === 0 ? 'Разбирать пока нечего.' : 'Входящие просмотрены до конца.'}
           </p>
@@ -439,13 +439,13 @@ function TriageBody({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 pr-12 text-2sm text-muted-foreground">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 pr-12 text-2sm text-muted-foreground pixel:border-b-2">
         <TypeIcon type={item.type} />
         <span className="tabular-nums" aria-live="polite">
           {index + 1} из {total}
         </span>
-        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden>
-          <div className="h-full bg-brand transition-[width] duration-150" style={{ width: `${(index / total) * 100}%` }} />
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted pixel:h-2 pixel:bg-paper-line" aria-hidden>
+          <div className="h-full bg-brand transition-[width] duration-150 pixel:transition-none" style={{ width: `${(index / total) * 100}%` }} />
         </div>
       </div>
 
@@ -456,7 +456,7 @@ function TriageBody({ onClose }: { onClose: () => void }) {
             <ItemBody item={item} />
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-border px-2 pt-5">
+          <div className="flex flex-col gap-3 border-t border-border px-2 pt-5 pixel:border-t-2">
             <div className="grid gap-3 sm:grid-cols-[14rem_1fr] sm:items-start">
               <CategorySelect
                 value={item.categoryId}
@@ -478,7 +478,7 @@ function TriageBody({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pixel:border-t-2">
         <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-center gap-2">
           <ActionButton primary label="В базу знаний" hint="E" icon="book-marked" onClick={() => decide('library')} />
           <ActionButton label="В архив" hint="A" icon="archive" onClick={() => decide('archive')} />

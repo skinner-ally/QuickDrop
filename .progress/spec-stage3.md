@@ -15,7 +15,7 @@
 
 | Шаг | Исполнитель | Что |
 |---|---|---|
-| P0 | основная сессия (до распараллеливания) | §5: `Icon.pixelSize`, `TypeIcon` (size/pixelSize), `items/categoryColor.ts`, заплатка `src/styles/pixel.css`, дополнение `docs/DESIGN.md` |
+| P0 | основная сессия (до распараллеливания) | §5: `Icon.pixelSize`, `TypeIcon` (size/pixelSize), `items/categoryColor.ts`, заплатка `src/styles/pixel.css`, дополнение `docs/DESIGN.md`. (обновлено после ревью этапов 1–2) Выполнен на этапах 1–2: `Icon.pixelSize`, `TypeIcon`, `categoryColor.ts`, заплатка `pixel.css` (в т.ч. `px-fab`, `data-skin`, `--px-pad`, правила про золото). `docs/DESIGN.md` дополнен при синхронизации документов |
 | P1–P8 | 8 исполнителей параллельно | §4, файлы не пересекаются |
 | P9 | основная сессия | сквозная приёмка (§4.9), коммит этапа |
 
@@ -121,7 +121,9 @@
   в П дал бы Tiny5 на некратном размере).
 - **Квадратная кнопка-значок в П** (`m: .btn.sq`): к `Button variant="ghost" size="icon-xs|icon-sm|icon"` `+ px-btn pixel:size-7.5`
   (30px; на телефоне `pixel:max-md:size-9`). Включённое состояние — `aria-pressed` (золото даёт `pixel.css`).
-- **Значок внутри включённой (золотой) кнопки**: `fill-gold text-gold` `+ pixel:text-inherit` — иначе золотой значок на золотом фоне.
+- **Значок внутри включённой (золотой) кнопки** (обновлено после ревью этапов 1–2): `fill-gold text-gold` — и всё. Рецепт
+  `pixel:text-inherit` УСТАРЕЛ: `pixel.css` сам наследует цвет у `.px-icon` внутри включённых `px-btn`, `px-chip`, `tabs-trigger`
+  и `ui/button[aria-pressed]`. Золото на бумаге как единственный индикатор не используется (`docs/DESIGN.md` §3).
 - **Вставка** (`m: .detail .content`): `rounded-lg border border-border bg-muted/50` (или `bg-card`) `+ px-well`.
 - **Список с разделителями** (`divide-y rounded-lg border`): `+ px-well pixel:divide-y-2`.
 - **Скелет загрузки**: `animate-pulse … bg-muted` `+ pixel:animate-none pixel:bg-paper-line`.
@@ -136,7 +138,7 @@
 | корень | `flex h-full min-h-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)]` | `+ pixel:gap-2.5 pixel:bg-transparent pixel:pt-0` |
 | логотип | brand-квадрат `rounded-md` со встроенным SVG + `text-md font-semibold` | строка `+ pixel:p-0`; квадрат с SVG `+ pixel:hidden`; рядом `<Icon name="sprout" pixelSize={20} className="hidden pixel:block" />`; текст `+ font-heading pixel:text-2xl pixel:tracking-normal` |
 | «Добавить» | `Button h-9 w-full justify-between bg-brand …` + `Kbd tone="inherit"` | обёртка `+ pixel:p-0`; кнопка `+ pixel:h-9.5 pixel:justify-center pixel:gap-1.5` (`m: .btn.brand.big`) |
-| `nav` | `min-h-0 flex-1 overflow-y-auto px-2 pb-2` | `+ pixel:px-0 pixel:pb-0` |
+| `nav` | `min-h-0 flex-1 overflow-y-auto px-2 pb-2` | `+ pixel:-m-1 pixel:p-1` |
 | `NavButton` | `h-8 rounded-md px-2 text-2sm hover:bg-sidebar-accent focus-visible:ring-2 …`, активный `bg-sidebar-accent font-medium` | `+ px-nav pixel:h-7 pixel:px-1.5 pixel:max-md:h-9.5`; `aria-current="page"` уже есть — его и ловит `px-nav` |
 | счётчик входящих | `rounded-full bg-brand px-1.5 font-medium text-brand-foreground text-xs` | `+ px-count` |
 | `SectionHeader` | `mt-3 … pr-1 pl-2`, кнопка `text-xs font-medium text-muted-foreground` | `+ pixel:mt-1.5 pixel:px-0`; кнопка — рецепт «подзаголовок блока» |
@@ -228,11 +230,11 @@ const cat = useListCategory(item.categoryId)            // §5.2
 | заголовок | `truncate text-sm font-medium` | `+ pixel:font-semibold` |
 | текстовый блок | `flex … flex-col gap-1 md:flex-row md:items-center md:gap-3` | `+ pixel:md:flex-col pixel:md:items-stretch pixel:md:gap-1` (теги уходят под сниппет) |
 | блок меток | `flex … flex-wrap gap-1.5 md:shrink-0 md:flex-nowrap` | `+ pixel:gap-1 pixel:md:flex-wrap`; `CategoryBadge` здесь `+ className="pixel:md:hidden"` |
-| `StarMark` | золотая звезда 13px | `+ pixel:hidden` (в П избранное — левый флажок) |
+| `StarMark` | золотая звезда 13px | `+ pixel:hidden` (в П избранное — левый флажок `px-flag[data-flag="fav"]`, золотая заливка с тёмной кромкой; звезда золотом на бумаге не рисуется) |
 | миниатюры | `size-10 rounded-md border border-border` | `+ pixel:border-2 pixel:border-wood-dark` |
 | ячейка справа | `hidden shrink-0 items-center md:flex` | `+ pixel:self-center` |
 | слой «время» | `flex items-center gap-2 …` | `+ pixel:flex-col pixel:items-end pixel:gap-0.5`; первым ребёнком — `<CategoryBadge categoryId={item.categoryId} className="hidden pixel:inline-flex" />` |
-| слой «действия» | `QuickButton` = `Button ghost icon-xs` + `Tooltip` | контейнер `+ pixel:gap-1`; кнопка — рецепт «квадратная кнопка»; активная звезда — рецепт «значок во включённой кнопке» |
+| слой «действия» | `QuickButton` = `Button ghost icon-xs` + `Tooltip` | контейнер `+ pixel:gap-1`; кнопка — рецепт «квадратная кнопка»; значок активной звезды `fill-gold text-gold` (цвет наследуется автоматически) |
 | меню «…» | `ItemMenu` в `div.shrink-0` | обёртка `+ pixel:self-center` |
 
 Набор и порядок быстрых действий, подписи, `stopPropagation`, `memo`/`propsEqual` — без изменений.
@@ -319,7 +321,7 @@ const cat = useListCategory(item.categoryId)            // §5.2
 | блок организации | `border-t border-border px-2 pt-5` | `+ pixel:border-t-2` |
 | `AiSuggest` (локальный) | кнопка-заголовок `h-6 rounded-md bg-muted px-2 text-2sm` | `+ px-chip pixel:h-auto pixel:min-h-6` |
 | нижняя панель | `border-t border-border bg-surface px-4 pt-3 …` | `+ pixel:border-t-2` |
-| `ActionButton` | `Button lg h-10`, главная `bg-brand`, «Удалить» `destructive`, «Избранное» `aria-pressed` | без изменений; значок активной звезды — рецепт «значок во включённой кнопке» |
+| `ActionButton` | `Button lg h-10`, главная `bg-brand`, «Удалить» `destructive`, «Избранное» `aria-pressed` | без изменений; значок активной звезды `fill-gold text-gold` (цвет наследуется автоматически) |
 | локальный `Kbd` | `rounded border border-current/25 px-1 text-2xs opacity-70` | без изменений (`.pixel kbd`) |
 | экран «Всё разобрано» | кружок `size-12 rounded-full bg-muted`, `h2 text-lg font-medium` | кружок `+ pixel:size-auto pixel:bg-transparent`; значок `<Icon name="circle-check" size={24} pixelSize={48} strokeWidth={1.5} />`; `h2` — рецепт заголовка раздела |
 
@@ -336,7 +338,7 @@ const cat = useListCategory(item.categoryId)            // §5.2
 |---|---|---|
 | `DetailBody` корень | `@container flex h-full min-h-0 flex-col bg-background` | без изменений |
 | шапка | `sticky top-0 z-10 … gap-1 border-b border-border bg-background px-2 py-1.5` | `+ pixel:gap-1.5 pixel:border-b-2 pixel:px-0.5 pixel:pb-2 pixel:pt-0.5` |
-| «Назад», «Закрыть», звезда | `Button ghost icon-sm` | рецепт «квадратная кнопка»; звезда — `aria-pressed` уже есть, значок — рецепт «значок во включённой кнопке» |
+| «Назад», «Закрыть», звезда | `Button ghost icon-sm` | рецепт «квадратная кнопка»; звезда — `aria-pressed` уже есть, значок `fill-gold text-gold` (цвет наследуется автоматически) |
 | `TypeSwitch` (триггер) | `h-7 rounded-md px-1.5 text-sm hover:bg-muted …ring…` | `+ px-btn px-btn-ghost pixel:h-7.5`; несменяемый тип — без изменений |
 | метка статуса | `h-5 rounded-md bg-muted px-1.5 text-xs` | `+ px-chip pixel:h-auto pixel:min-h-6` |
 | `PrimaryAction` | `Button sm`, для входящих `bg-brand` | без изменений |
@@ -450,7 +452,7 @@ const cat = useListCategory(item.categoryId)            // §5.2
 7. **Цвет.** Только токены. `text-brand` на бумаге в П запрещён (счётчик → `px-count`, код → `brand-lo/hi`).
    Золото: курсор, включённые кнопки/чипы, избранное. Текст поверх цвета категории не писать.
 8. **Фокус и курсор.** Классы `focus-visible:ring-*` остаются (это вид «Классики»); в П кольца погашены, фокус —
-   автоматическая обводка 2px brand, курсор списка — 2px gold (`px-row[data-cursor]`). Прокручиваемому контейнеру с
+   автоматическая обводка 2px brand, курсор списка — 2px gold с внешней кромкой 2px wood-dark (`px-row[data-cursor]`). Прокручиваемому контейнеру с
    фокусируемыми детьми в П нужен внутренний запас ≥ 4px (`pixel:p-1 pixel:-m-1`), иначе обводка обрезается.
 9. **Состояния.** Наведение и нажатие — из примитивов (нажатая кнопка −2px, без плавности). Выключенное — `disabled` /
    `aria-disabled` (`opacity .5`). Включённое — `aria-pressed` / `aria-checked` / `data-on="true"`; отмеченная строка —
@@ -598,6 +600,8 @@ const cat = useListCategory(item.categoryId)            // §5.2
 
 ## 5. Сделать ДО распараллеливания (P0, основная сессия)
 
+(обновлено после ревью этапов 1–2) P0 выполнен на этапах 1–2: §5.1 (`Icon.pixelSize`, `TypeIcon`), §5.2 (`categoryColor.ts`), §5.3 (заплатка `pixel.css`: `px-fab`, `data-skin`, `--px-pad`, `--px-sheet-pad`, блок телефона) и правки по ревью (золото с тёмной кромкой, наследование цвета значком, `aria-invalid`). §5.4 (`docs/DESIGN.md`) выполнен при синхронизации документов. Ниже — прежний текст как справка; сверять с фактическим `src/styles/pixel.css`.
+
 ### 5.1 `Icon`: размер только для пиксельных сцен
 
 `src/components/icons/Icon.tsx` — добавить в `IconProps`:
@@ -673,7 +677,7 @@ export function useListCategory(categoryId: string | null | undefined): Category
 (г) Проверить после заплатки (в «Осени»): подтверждение удаления категории (обычный диалог — рама наружу, как раньше);
 палитра и быстрая запись — рама-панель; лайтбокс — тёмный.
 
-### 5.4 `docs/DESIGN.md` — дополнить
+### 5.4 `docs/DESIGN.md` — дополнить (выполнено при синхронизации документов после ревью этапов 1–2)
 
 - §5: `px-fab`; `data-skin="panel" | "none"` у `DialogContent`; `--px-pad`, `--px-sheet-pad`.
 - §7: проп `pixelSize`.

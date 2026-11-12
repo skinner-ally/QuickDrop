@@ -37,9 +37,9 @@ export class ErrorBoundary extends Component<Props, State> {
 /** Фолбэк верхнего уровня: не зависит ни от БД, ни от ThemeProvider, ни от Toaster. */
 export function StorageErrorFallback({ error }: { error: Error }) {
   return (
-    <div role="alert" className="flex min-h-dvh w-full items-center justify-center bg-background p-6 text-foreground">
-      <div className="flex max-w-md flex-col gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Не удалось открыть локальное хранилище</h1>
+    <div role="alert" className="flex min-h-dvh w-full items-center justify-center bg-background p-6 text-foreground pixel:bg-wood-dark">
+      <div className="flex max-w-md flex-col gap-3 px-panel pixel:max-w-md">
+        <h1 className="font-heading text-lg font-semibold tracking-tight pixel:tracking-normal">Не удалось открыть локальное хранилище</h1>
         <p className="text-sm text-muted-foreground">
           Проверьте, что в браузере разрешено хранение данных сайта (не приватный режим, cookie не заблокированы) и на
           диске есть место.
@@ -50,7 +50,7 @@ export function StorageErrorFallback({ error }: { error: Error }) {
         <div>
           <button
             type="button"
-            className="h-8 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
+            className="h-8 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground px-btn"
             onClick={() => window.location.reload()}
           >
             Перезагрузить
@@ -64,9 +64,9 @@ export function StorageErrorFallback({ error }: { error: Error }) {
 /** Небольшой фолбэк для сбоя загрузки ленивого куска интерфейса. */
 export function RetryFallback({ message, reset }: { message: string; reset: () => void }) {
   return (
-    <div role="alert" className="flex flex-col items-start gap-2 p-4 text-sm">
+    <div role="alert" className="flex flex-col items-start gap-2 p-4 text-sm pixel:p-2.5">
       <p className="text-muted-foreground">{message}</p>
-      <button type="button" className="h-8 rounded-lg border px-3 text-sm font-medium" onClick={reset}>
+      <button type="button" className="h-8 rounded-lg border px-3 text-sm font-medium px-btn" onClick={reset}>
         Повторить
       </button>
     </div>

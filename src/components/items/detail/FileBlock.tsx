@@ -13,7 +13,7 @@ function Lightbox({ item, open, onOpenChange }: { item: Item; open: boolean; onO
   const name = item.fileName || item.title || 'Изображение'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="top-0 left-0 flex h-dvh max-h-none w-screen max-w-none translate-x-0 translate-y-0 items-center justify-center rounded-none bg-black/90 p-4 text-white ring-0 sm:max-w-none">
+      <DialogContent data-skin="none" className="top-0 left-0 flex h-dvh max-h-none w-screen max-w-none translate-x-0 translate-y-0 items-center justify-center rounded-none bg-black/90 p-4 text-white ring-0 sm:max-w-none">
         <DialogTitle className="sr-only">{name}</DialogTitle>
         <DialogDescription className="sr-only">Просмотр изображения</DialogDescription>
         {url && (

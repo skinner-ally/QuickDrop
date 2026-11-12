@@ -54,7 +54,7 @@ function TypeSwitch({ item }: { item: Item }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`Тип записи: ${label}. Сменить`}
-        className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-colors outline-none select-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-expanded:bg-muted"
+        className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-colors outline-none select-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 aria-expanded:bg-muted px-btn px-btn-ghost pixel:h-7.5"
       >
         <TypeIcon type={item.type} />
         <span>{label}</span>
@@ -120,36 +120,35 @@ function Meta({ item }: { item: Item }) {
 function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
   return (
     <div className="@container flex h-full min-h-0 flex-col bg-background">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center gap-1 border-b border-border bg-background px-2 py-1.5">
-        <Button variant="ghost" size="icon-sm" aria-label="Назад" onClick={onClose} className="pointer-coarse:size-9 md:hidden">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center gap-1 border-b border-border bg-background px-2 py-1.5 pixel:gap-1.5 pixel:border-b-2 pixel:px-0.5 pixel:pt-0.5 pixel:pb-2">
+        <Button variant="ghost" size="icon-sm" aria-label="Назад" onClick={onClose} className="pointer-coarse:size-9 md:hidden px-btn pixel:size-7.5 pixel:max-md:size-9 pixel:pointer-coarse:size-9">
           <Icon name="arrow-left" className="size-4" />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <TypeSwitch item={item} />
-          <span className="hidden h-5 items-center rounded-md bg-muted px-1.5 text-xs text-muted-foreground @sm:inline-flex">
+          <span className="hidden h-5 items-center rounded-md bg-muted px-1.5 text-xs text-muted-foreground @sm:inline-flex px-chip pixel:h-auto pixel:min-h-6">
             {STATUS_LABEL[item.status]}
           </span>
         </div>
         <Button
           variant="ghost"
           size="icon-sm"
-          className="pointer-coarse:size-9"
+          className="pointer-coarse:size-9 px-btn pixel:size-7.5 pixel:max-md:size-9 pixel:pointer-coarse:size-9"
           aria-label={item.favorite ? 'Убрать из избранного' : 'В избранное'}
           aria-pressed={item.favorite === 1}
           onClick={() => void actToggleFavorite(item)}
         >
-          {/* pixel:text-inherit: в пиксельных сценах нажатая кнопка сама золотая, значок берёт её цвет текста */}
-          <Icon name="star" className={cn('size-4', item.favorite === 1 && 'fill-gold text-gold pixel:text-inherit')} />
+          <Icon name="star" className={cn('size-4', item.favorite === 1 && 'fill-gold text-gold')} />
         </Button>
         <PrimaryAction item={item} />
         <ItemMenu item={item} variant="detail" />
-        <Button variant="ghost" size="icon-sm" aria-label="Закрыть" onClick={onClose} className="hidden pointer-coarse:size-9 md:inline-flex">
+        <Button variant="ghost" size="icon-sm" aria-label="Закрыть" onClick={onClose} className="hidden pointer-coarse:size-9 md:inline-flex px-btn pixel:size-7.5 pixel:max-md:size-9 pixel:pointer-coarse:size-9">
           <Icon name="x" className="size-4" />
         </Button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex flex-col gap-5 px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+        <div className="flex flex-col gap-5 px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pixel:gap-3.5 pixel:px-2 pixel:pt-2.5">
           <TitleField item={item} />
           <ItemContent item={item} />
           <AiSummary item={item} />
@@ -170,7 +169,7 @@ function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
           <LinkedItems item={item} />
           <AiSuggest item={item} />
 
-          <div className="border-t border-border pt-3">
+          <div className="border-t border-border pt-3 pixel:border-t-2">
             <Meta item={item} />
           </div>
         </div>

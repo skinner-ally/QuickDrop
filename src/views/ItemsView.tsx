@@ -17,6 +17,13 @@ export interface ItemsViewProps {
   emptyState: ReactNode
 }
 
+const KEY_HINT: Record<ItemsViewProps['variant'], string> = {
+  inbox: 'J/K — выбор · E — в базу знаний · F — избранное · A — архив',
+  library: 'J/K — выбор · Enter — открыть · F — избранное · A — архив',
+  favorites: 'J/K — выбор · Enter — открыть · F — избранное · A — архив',
+  archive: 'J/K — выбор · Enter — открыть · E — вернуть · Del — удалить',
+}
+
 /** Общая основа разделов: заголовок, счётчик, панель фильтров и список. */
 export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsViewProps) {
   const { hits, total, loading } = useVisibleItems(base)
@@ -51,16 +58,19 @@ export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsV
   return (
     <section
       aria-label={title}
-      className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6"
+      className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6 pixel:gap-2.5 pixel:px-2.5 pixel:pt-2.5 pixel:md:px-2.5"
     >
       <header className="flex flex-col gap-0.5">
         <div className="flex items-baseline gap-2">
-          <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+          <h1 className="font-heading text-lg font-semibold tracking-tight pixel:text-2xl pixel:tracking-normal">{title}</h1>
           {!loading && total > 0 && (
             <span className="text-2sm text-muted-foreground tabular-nums" aria-live="polite">
               {hits.length} из {total}
             </span>
           )}
+          <span className="ml-auto hidden min-w-0 truncate text-2sm text-muted-foreground pixel:lg:pointer-fine:inline">
+            {KEY_HINT[variant]}
+          </span>
         </div>
         {subtitle && <p className="text-2sm text-muted-foreground">{subtitle}</p>}
       </header>

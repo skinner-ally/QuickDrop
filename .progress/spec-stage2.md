@@ -26,7 +26,7 @@
 | Р11 | Экспорт Markdown — плоская папка: `<Имя>.md` в корне, вложения в `attachments/` | Вики-ссылки `[[Имя]]` разрешаются по имени файла без путей (Obsidian) |
 | Р12 | `ItemSource` получает `'extension'` сейчас (этап 7) | `types.ts` правится один раз; цена — одна строка в `ItemDetail.tsx` (см. 1.8) |
 | Р13 | Состояние графа — отдельный стор `src/store/graph.ts` (zustand), камера дублируется в `localStorage` (`qd-graph-camera`), в БД не пишется | Переживает смену раздела и перезапуск; не трогает liveQuery |
-| Р14 | Локальные пути, токен расширения и всё, что включает сетевые запросы, — в `PRIVATE_SETTINGS` (не экспортируется и не импортируется) | Чужая копия не должна перенаправить автобэкап в произвольную папку или включить отправку картинок в ИИ |
+| Р14 | Локальные пути, токен расширения и всё, что включает сетевые запросы, — в `PRIVATE_SETTINGS` (не экспортируется и не импортируется) | Чужая копия не должна перенаправить автобэкап в произвольную папку или включить отправку картинок в ИИ. (обновлено после ревью этапов 1–2) Сюда же `backupEvery`/`backupKeep`: чужая копия не должна включить или отключить автокопирование на этом компьютере |
 
 ---
 
@@ -506,6 +506,12 @@ makeSnippet(item: Item, terms: string[], maxLen?: number): string  // изм. (o
     разборе `from` расширяется до начала своих суток, `to` — до конца (диапазон не сужается).
 - `composeQuery` = `[serializeFilter(filter, …), query.trim()].filter(Boolean).join(' ')`. Известное ограничение: если
   и в `query`, и в `filter` задана категория, побеждает `cat:` из `query` (последний в строке).
+  (обновлено после ревью этапов 1–2) Типы: если они есть и в фильтре, и в строке (`type:`/`has:`), пишется их
+  пересечение одним оператором, а `type:`/`has:` из строки убираются (`parseQuery` объединяет типы строки в «любой
+  из»); пустое пересечение записать нечем — побеждают типы строки (как `cat:`). Сигнатура:
+  `composeQuery(query, filter, categories, now?, options?: SerializeOptions)`; `serializeFilter(…, now, options)` тоже.
+  `SerializeOptions.relativeDates: false` — пара `from`/`to` всегда пишется датами (для своего диапазона в FilterBar:
+  диапазон, случайно равный «неделе», не должен превратиться в относительный `date:week`); по умолчанию — как описано выше.
 - `resolveQueryFilter` — `{ ...parsed.filter }` + `categoryId` из `parsed.categoryName` (через `resolveCategoryName`).
 - `searchItems`:
   - корзина: `options.trash === 'any'` → записи проверяются `matchesFilterIgnoringTrash`; иначе `matchesFilter` с
@@ -513,7 +519,11 @@ makeSnippet(item: Item, terms: string[], maxLen?: number): string  // изм. (o
   - индекс: поле `ocrText` (`item.ocrText`, обрезка до `MAX_INDEXED_CONTENT`), в `FIELDS` — последним, вес 1;
     `Entry` получает `ocrAt: number` (`item.ocrAt ?? 0`); запись переиндексируется, если изменился `updatedAt`, имя
     категории **или `ocrAt`**. Точные фразы ищутся и в `ocrText` (через общий haystack);
-  - `parseQuery(raw, options.now)`.
+  - `parseQuery(raw, options.now)`;
+  - (обновлено после ревью этапов 1–2) индекс заранее: `prepareSearchIndexAsync(items, categories)` строит его порциями
+    (100 записей или 200 тыс. символов) с передачей управления; не ставит индекс поверх сброса или поверх уже
+    построенного поиском; `isSearchIndexReady()`. `useAllItems` после снимка, пока индекса нет, в
+    `requestIdleCallback` (запасной `setTimeout`) читает категории тем же запросом, что `useCategories`, и строит его.
 - `makeSnippet`: источники по порядку — `content`, `linkMeta.description`, `ocrText`; первое совпадение — в любом из них
   (в этом порядке); без совпадений — начало первого непустого. Для записей всех типов, кроме `code`, `content`
   предварительно проходит `stripMarkdown`. Длина и многоточия — как сейчас.
@@ -576,21 +586,37 @@ export interface BackupData { …; positions?: NodePosition[]; searches?: SavedS
 - **`sanitizeItem`**: `deletedAt` — через `ts()`; `ocrText` — строка → `cleanOcrText`, пустая не пишется; `ocrAt` — `ts()`;
   `source` — по `ITEM_SOURCES` из `@/types` (локальный список удалить).
 - **Положения**: `sanitizePoint` + непустой строковый `id`; дубли id — первый; негодные → `skipped`.
+  (обновлено после ревью этапов 1–2) Положение из копии пишется, только если его клетка (`snapToGrid`) свободна от всех
+  локальных положений (включая скрытые записи) и от уже принятых из той же копии (в порядке копии; действует и при
+  `replace`); отвергнутое → `skipped`, место даст автораскладка. Положение для записи, которой нет в разделе `items`
+  копии, не берётся.
 - **Поиски**: `id` непустой, `name`/`query` после `trim` непустые и в пределах `SAVED_SEARCH_*_MAX` (иначе `skipped`),
   `order` — число или индекс, `createdAt` — `ts() ?? now`.
+- **Корзина из копии** (обновлено после ревью этапов 1–2): `IMPORTED_TRASH_GRACE_DAYS = 7`. Перед записью у победивших
+  записей с `deletedAt` старше `now − (trashDays − min(trashDays, 7))·сутки` отметка поднимается до этой границы:
+  запись живёт в корзине ещё 7 суток (или весь срок, если он короче), иначе первая же автоочистка стёрла бы её. Срок —
+  тот, что действует после импорта: `replace` — из копии (без него здешний), `merge` — здешний. `trashDays = 0` —
+  отметки не трогаются; непросроченные переносятся точно.
 - **`replace`**: дополнительно `positions.clear()`, `searches.clear()`; затем пишутся положения тех id, что есть в
   `items` после импорта, и все поиски (имена-дубли внутри копии получают суффикс ` (2)`…).
 - **`merge`**: положение из копии пишется, только если у записи **нет локального** и запись существует после слияния
-  (локальная раскладка сильнее); поиск: тот же `id` — остаётся локальный (`skipped`); то же имя (`searchNameKey`) и тот
+  (локальная раскладка сильнее); (обновлено после ревью этапов 1–2) по Р8: если победила версия из копии с другой
+  категорией — локальное положение удаляется; положение из копии пишется только при совпадении категории записи в
+  копии с итоговой (после `repairIntegrity`, поэтому блок положений идёт после починки целостности); поиск: тот же `id` — остаётся локальный (`skipped`); то же имя (`searchNameKey`) и тот
   же запрос — `skipped`; то же имя, другой запрос — импортируется с суффиксом ` (2)`…; новые встают после локальных
   (`order = max + 1…`). Запись побеждает по `updatedAt` как сейчас — `deletedAt` приходит вместе с победившей версией.
+  (обновлено после ревью этапов 1–2) Распознанный текст при слиянии (`withNewerOcr`): для того же `fileId` берётся более
+  свежий `ocrAt` (с `ocrText` или без — «пробовали, текста нет») из проигравшей версии — в обе стороны; у локальной
+  записи он дописывается без смены `updatedAt`.
 - **`repairIntegrity`**: дополнительно удалить `positions`, чьих записей нет. Связи с записями в корзине — корректные.
 - **Настройки**: `sanitizeSettings` использует `isValidSetting` (частный случай `theme` убрать). В `PRIVATE_SETTINGS`
   добавить: `backupDir, backupLastAt, mdExportDir` (пути и состояние этого компьютера), `aiAutoOcr, aiVisionModel`
   (включают отправку данных в сеть), `extEnabled, extPort, extToken`. Экспортируются и импортируются: `theme,
-  globalShortcut, scene, font, ambient, trashDays, backupEvery, backupKeep, closeToTray`.
+  globalShortcut, scene, font, ambient, trashDays, closeToTray`. (обновлено после ревью этапов 1–2) `backupEvery` и
+  `backupKeep` в `PRIVATE_SETTINGS` тоже: не экспортируются и не импортируются.
 - **`seed.ts`**: `clearAllData` очищает также `positions` и `searches`; в `CLEARED_SETTINGS` добавить `aiVisionModel,
-  aiAutoOcr, extEnabled, extToken, backupLastAt`. `isPristineDemo` — дополнительно
+  aiAutoOcr, extEnabled, extToken`. (обновлено после ревью этапов 1–2) `backupLastAt` НЕ сбрасывается:
+  иначе первая запись после стирания вызвала бы автокопию почти пустой базы и обрезку рабочих копий. `isPristineDemo` — дополнительно
   `existing.deletedAt === undefined` (демо-запись в корзине считается тронутой пользователем и повторным засевом не
   воскрешается).
 
@@ -744,7 +770,7 @@ export const PDF_MAX_CHARS = 200_000            // = MAX_OCR_TEXT
 export const PDF_MAX_BYTES = 50 * 1024 * 1024
 export const PDF_TIMEOUT_MS = 30_000
 export interface PdfDocLike { numPages: number; pageText(page: number): Promise<string>; close(): Promise<void> }
-export interface PdfEngine { open(data: Uint8Array): Promise<PdfDocLike> }
+export interface PdfEngine { open(data: Uint8Array, signal?: AbortSignal): Promise<PdfDocLike> }   // signal — (обновлено после ревью этапов 1–2)
 export interface PdfTextOptions { maxPages?: number; maxChars?: number; signal?: AbortSignal; engine?: () => Promise<PdfEngine> }
 export interface PdfTextResult {
   status: 'ok' | 'empty' | 'failed' | 'aborted'
@@ -753,6 +779,7 @@ export interface PdfTextResult {
   readPages: number
   truncated: boolean      // упёрлись в предел страниц, символов или времени
   error?: string          // русский текст для status === 'failed'
+  permanent?: true        // (обновлено после ревью этапов 1–2): отказ неустранимый (больше 50 МБ, пароль, битый файл) — повтор бессмыслен
 }
 export function isPdf(file: { mimeType?: string; fileName?: string }): boolean      // application/pdf или расширение .pdf
 export function extractPdfText(data: Blob, options?: PdfTextOptions): Promise<PdfTextResult>
@@ -765,6 +792,15 @@ export function extractPdfText(data: Blob, options?: PdfTextOptions): Promise<Pd
   текст страниц склеивается через пустую строку; меньше 20 непробельных символов на все прочитанные страницы → `empty`
   (скан без текстового слоя — кандидат на распознавание ИИ); любое исключение (битый файл, пароль, нет worker) →
   `failed` с понятным текстом («PDF защищён паролем», «Не удалось прочитать PDF»). `close()` — в `finally`.
+- (обновлено после ревью этапов 1–2) Неустранимые отказы (`permanent: true`): размер > `PDF_MAX_BYTES`,
+  `PasswordException`, `InvalidPDFException`. Тайм-аут и сбои движка — временные (без `permanent`). `pdfText` по
+  прерыванию и по времени на этапе открытия абортит сигнал, переданный в `engine.open(data, signal)`: движок
+  уничтожает worker.
+- (обновлено после ревью этапов 1–2) `createPdfEngine(pdfjs, makeWorker?)`: на каждый документ создаётся свой `Worker`
+  (`PDFWorker.create({ port })`, `getDocument({ worker })`, `disableWorkerRendering: true`); уборка единая:
+  `task.destroy()` ждётся не дольше `PDF_DESTROY_WAIT_MS` (1 с), затем `PDFWorker.destroy()` и `worker.terminate()`.
+  Ошибка загрузки worker отклоняет открытие (pdf.js не переходит на разбор в главном потоке). Без `makeWorker`
+  (тесты в Node) — поведение прежнее.
 - `pdfEngine.ts`: `import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'`; `loadPdfEngine()` делает
   `await import('pdfjs-dist')`, ставит `GlobalWorkerOptions.workerSrc = workerUrl`, открывает документ через
   `getDocument({ data, isEvalSupported: false, disableFontFace: true, useSystemFonts: false })`. `pageText` — элементы
@@ -832,15 +868,26 @@ export interface ExtractOutcome { status: 'ok' | 'empty' | 'failed' | 'skipped';
 export function textSourceOf(item: Pick<Item, 'type' | 'mimeType' | 'fileName' | 'fileId'>): TextSource | null
 export function extractItemText(item: Item, options?: { vision?: boolean; force?: boolean; signal?: AbortSignal }): Promise<ExtractOutcome>
 export function backfillPdfText(limit?: number): Promise<number>     // по умолчанию 10
+export function drainPdfBackfill(pauseMs?: number): Promise<number>   // (обновлено после ревью этапов 1–2): порции по 10 с паузой (3000 мс)
 ```
 
 - `textSourceOf`: `pdf` — запись с `fileId` и `isPdf`; `image` — `type === 'image'` с `fileId`; иначе `null`.
 - `extractItemText` (не бросает): нет источника → `skipped`; `ocrAt` уже есть и нет `force` → `skipped`; PDF →
-  `getFile` → `extractPdfText` → при `ok`/`empty` вызвать `setOcrText(id, text)`; `failed`/`aborted` — `ocrAt` не
-  ставится (можно повторить). Ветка `image` и PDF со статусом `empty` при `vision: true` — **этап 8**: на этапе 2
+  `getFile` → `extractPdfText` → при `ok`/`empty` вызвать `setOcrText(id, text)`; `aborted` — `ocrAt` не ставится.
+  (обновлено после ревью этапов 1–2) `failed` с `permanent` и «Файл не найден» — ставится отметка `ocrAt` без текста
+  (уже извлечённый текст при повторе с `force` не затирается), возвращается `failed` с текстом; временный `failed`
+  (тайм-аут, сбой движка) — отметки нет, можно повторить.
+  Все разборы идут по одной общей очереди (создание записи и фоновый обход); `running` ставится до очереди, повторный
+  вызов по той же записи возвращает тот же промис; в очереди запись читается заново (могла исчезнуть или получить
+  `ocrAt`); сигнал, прерванный во время ожидания, даёт `skipped`; отсчёт 30 с и чтение файла начинаются, когда
+  подошла очередь. Ветка `image` и PDF со статусом `empty` при `vision: true` — **этап 8**: на этапе 2
   возвращает `skipped`.
 - `backfillPdfText`: PDF-записи без `ocrAt` (включая архив, без корзины), по одной, не больше `limit` за вызов;
-  возвращает число обработанных.
+  возвращает число обработанных. (обновлено после ревью этапов 1–2) Без `.limit()` в запросе: перебираются все
+  кандидаты; `limit` считает обработанные, неудач за вызов тоже не больше `limit`; записи, давшие неудачу, до
+  перезапуска не пробуются (`Set` в модуле). `drainPdfBackfill(pauseMs = 3000)` — порции по 10 с паузой, пока есть что
+  пробовать (завершается: каждая попытка ставит `ocrAt` или исключает запись до конца сеанса); повторный вызов во
+  время работы возвращает 0.
 
 Контракт этапа 8 (для сведения, на этапе 2 не реализуется): `lib/ai.ts` —
 `recognizeText(image: Blob, settings: Settings, signal?: AbortSignal): Promise<string>` (OpenAI-совместимый
@@ -1040,7 +1087,7 @@ export function backfillPdfText(limit?: number): Promise<number>     // по у�
   `setView` по статусу найденной записи + `select(id)`.
 - `TopBar`/`FilterBar` (этап 4): «Сохранить поиск» → `composeQuery(query, filter, categories)` → `actSaveSearch`;
   быстрые периоды задавать через `relativeRange(…)` (обе границы — тогда сохранённый поиск остаётся относительным);
-  свой период — `startOfDay(from)` / `endOfDay(to)`.
+  свой период — `startOfDay(from)` / `endOfDay(to)` и `composeQuery(…, now, { relativeDates: false })` (обновлено после ревью этапов 1–2).
 - Списки (этап 4): разделители по дням — `formatDayLabel`; точная дата в подсказке — `formatDateTime`.
 - Детали записи (этап 4): после сохранения текста — `applyWikiLinks(id, content, useAllItems())`; просмотр Markdown
   разрешает `[[…]]` через `buildTitleIndex`/`resolveWikiLink`.
@@ -1066,7 +1113,7 @@ export function backfillPdfText(limit?: number): Promise<number>     // по у�
    модульный worker загрузится. После `npm run build` убедиться, что `pdf.worker.min-*.mjs` попал в precache:
    workbox молча пропускает файлы больше 2 МиБ — если worker больше, добавить в `workbox`
    `maximumFileSizeToCacheInBytes: 4 * 1024 * 1024`.
-3. `src/main.tsx`: `startTrashCleanup()` и отложенный (`requestIdleCallback` или таймер 10 с) `void backfillPdfText()`.
+3. `src/main.tsx`: `startTrashCleanup()` и отложенный (`requestIdleCallback` или таймер 10 с) `void drainPdfBackfill()` (обновлено после ревью этапов 1–2: вместо одиночного `backfillPdfText()`).
 4. `CLAUDE.md`: после этапа — дописать контракты из раздела 2 и структуру (новые файлы).
 5. Настройки копий, экспорта и этапа 7 уже сведены с `.progress/spec-tauri.md` (п. 1.9, 2.9): шаг 0 этой
    спецификации закрывает предусловие агента `tauri-backup` и пункт «основная сессия (до запуска)» этапа 7 по

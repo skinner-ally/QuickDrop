@@ -165,17 +165,20 @@ export function InboxView() {
   return (
     <section
       aria-label="Входящие"
-      className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6"
+      className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-6 pixel:gap-2.5 pixel:px-2.5 pixel:pt-2.5 pixel:md:px-2.5"
     >
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold tracking-tight">Входящие</h1>
+        <div className="flex min-w-0 flex-col gap-0.5 pixel:flex-1">
+          <div className="flex items-center gap-2 pixel:items-baseline">
+            <h1 className="font-heading text-lg font-semibold tracking-tight pixel:text-2xl pixel:tracking-normal">Входящие</h1>
             {counts.inbox > 0 && (
-              <span className="rounded-full bg-brand-soft px-2 py-px text-xs font-medium text-brand tabular-nums">
+              <span className="rounded-full bg-brand-soft px-2 py-px text-xs font-medium text-brand tabular-nums px-count">
                 {counts.inbox}
               </span>
             )}
+            <span className="ml-auto hidden min-w-0 truncate text-2sm text-muted-foreground pixel:lg:pointer-fine:inline">
+              J/K — выбор · E — в базу знаний · F — избранное · A — архив
+            </span>
           </div>
           <p className="text-2sm text-muted-foreground" aria-live="polite">
             {waitingText(counts.inbox)}

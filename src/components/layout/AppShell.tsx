@@ -88,7 +88,7 @@ function ActiveView({ view }: { view: View }) {
 function ViewErrorFallback({ view, reset }: { view: View; reset: () => void }) {
   const setView = useUi((s) => s.setView)
   return (
-    <div role="alert" className="flex max-w-md flex-col items-start gap-2 p-6 text-sm">
+    <div role="alert" className="flex max-w-md flex-col items-start gap-2 p-6 text-sm pixel:p-2.5">
       <p className="font-medium">Не удалось показать раздел</p>
       <p className="text-muted-foreground">
         Возможно, среди записей есть повреждённая. Попробуйте ещё раз или откройте настройки: там можно сделать
@@ -177,25 +177,34 @@ export function AppShell() {
   ) : null
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] text-foreground">
+    <div className="flex h-dvh w-full overflow-hidden bg-background pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] text-foreground pixel:gap-1.5 pixel:bg-wood-dark pixel:pt-[calc(6px+env(safe-area-inset-top))] pixel:pr-[calc(6px+env(safe-area-inset-right))] pixel:pb-[calc(6px+env(safe-area-inset-bottom))] pixel:pl-[calc(6px+env(safe-area-inset-left))]">
       {desktop && (
-        <aside ref={sideRef} className="w-[232px] shrink-0 border-r border-sidebar-border bg-sidebar">
+        <aside ref={sideRef} className="w-[232px] shrink-0 border-r border-sidebar-border bg-sidebar px-panel pixel:w-[236px]">
           <Sidebar />
         </aside>
       )}
 
-      <div ref={columnRef} className="flex min-w-0 flex-1 flex-col">
+      <div ref={columnRef} className="flex min-w-0 flex-1 flex-col pixel:gap-1.5">
         <TopBar mobile={!desktop} />
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] max-md:pb-[calc(env(safe-area-inset-bottom)+5rem)]">
-          {/* key: при переходе в другой раздел граница сбрасывается сама. */}
-          <ErrorBoundary key={view} fallback={(_e, reset) => <ViewErrorFallback view={view} reset={reset} />}>
-            <ActiveView view={view} />
-          </ErrorBoundary>
+        <main className="flex min-h-0 flex-1 flex-col px-panel pixel:[--px-pad:8px]">
+          {/* Прокрутка во внутреннем блоке: px-panel рисует раму внутренней тенью. */}
+          <div
+            data-scroll-root
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] max-md:pb-[calc(env(safe-area-inset-bottom)+5rem)] pixel:pb-0 pixel:max-md:pb-20"
+          >
+            {/* key: при переходе в другой раздел граница сбрасывается сама. */}
+            <ErrorBoundary key={view} fallback={(_e, reset) => <ViewErrorFallback view={view} reset={reset} />}>
+              <ActiveView view={view} />
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
 
       {sideDetail && detail && (
-        <aside aria-label="Подробности записи" className="h-full w-[460px] shrink-0 overflow-y-auto border-l bg-background">
+        <aside
+          aria-label="Подробности записи"
+          className="h-full w-[460px] shrink-0 overflow-y-auto border-l bg-background px-panel pixel:overflow-hidden pixel:[--px-pad:8px]"
+        >
           {detail}
         </aside>
       )}
@@ -205,14 +214,14 @@ export function AppShell() {
       {modalDetail && detail && (
         <>
           {desktop && (
-            <div aria-hidden className="fixed inset-0 z-40 bg-black/20" onClick={() => select(null)} />
+            <div aria-hidden className="fixed inset-0 z-40 bg-black/20 px-scrim" onClick={() => select(null)} />
           )}
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Подробности записи"
             data-detail-sheet
-            className="fixed inset-0 z-40 overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] md:left-auto md:w-[min(460px,100%)] md:border-l md:shadow-xl"
+            className="fixed inset-0 z-40 overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] md:left-auto md:w-[min(460px,100%)] md:border-l md:shadow-xl px-panel px-sheet pixel:overflow-hidden pixel:[--px-pad:8px] pixel:md:top-[calc(6px+env(safe-area-inset-top))] pixel:md:right-[calc(6px+env(safe-area-inset-right))] pixel:md:bottom-[calc(6px+env(safe-area-inset-bottom))]"
           >
             {detail}
           </div>
@@ -227,9 +236,9 @@ export function AppShell() {
       </ErrorBoundary>
 
       {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-6">
-          <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-brand px-10 py-8 text-brand">
-            <Icon name="upload" size={24} className="size-6" />
+        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-6 px-scrim">
+          <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-brand px-10 py-8 text-brand px-pop pixel:text-foreground">
+            <Icon name="upload" size={24} pixelSize={32} className="size-6" />
             <span className="text-sm font-medium">Отпустите, чтобы добавить</span>
           </div>
         </div>

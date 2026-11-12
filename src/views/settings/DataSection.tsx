@@ -16,7 +16,7 @@ const fail = (e: unknown) => toast.error(describeError(e))
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-lg border px-3 py-2">
+    <div className="flex flex-col gap-0.5 rounded-lg border px-3 py-2 px-well">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="text-2sm font-medium tabular-nums">{value}</dd>
     </div>
@@ -24,7 +24,10 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function reportText(r: ImportReport): string {
-  return `Записей: ${r.items}, файлов: ${r.files}, категорий: ${r.categories}, пропущено: ${r.skipped}`
+  let text = `Записей: ${r.items}, файлов: ${r.files}, категорий: ${r.categories}`
+  if (r.positions > 0) text += `, положений на графе: ${r.positions}`
+  if (r.searches > 0) text += `, сохранённых поисков: ${r.searches}`
+  return `${text}, пропущено: ${r.skipped}`
 }
 
 export function DataSection() {

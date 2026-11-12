@@ -19,8 +19,9 @@ export function TagChip({
   const label = `#${tag}`
   return (
     <span
+      data-on={active ? 'true' : undefined}
       className={cn(
-        'inline-flex h-5 max-w-full items-center rounded-md text-xs leading-none',
+        'px-chip inline-flex h-5 max-w-full items-center rounded-md text-xs leading-none pixel:h-auto pixel:min-h-6 pixel:leading-tight',
         active ? 'bg-brand-soft text-foreground' : 'bg-muted text-muted-foreground',
         className,
       )}

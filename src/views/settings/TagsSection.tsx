@@ -74,7 +74,7 @@ export function TagsSection() {
           {filtered.length === 0 ? (
             <p className="text-2sm text-muted-foreground">Ничего не найдено.</p>
           ) : (
-            <ul className="max-h-80 divide-y overflow-y-auto rounded-lg border">
+            <ul className="max-h-80 divide-y overflow-y-auto rounded-lg border px-well pixel:divide-y-2">
               {filtered.map(({ tag, count }) => (
                 <li key={tag} className="flex flex-col gap-1 px-2 py-1">
                   {editing === tag ? (
