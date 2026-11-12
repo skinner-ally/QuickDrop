@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pencil } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AutoTextarea } from './AutoTextarea'
@@ -101,7 +101,7 @@ export function ContentEditor({
         aria-label={`Изменить: ${label}`}
         className="mt-1 text-muted-foreground"
       >
-        <Pencil strokeWidth={1.75} className="size-4" aria-hidden />
+        <Icon name="pencil" className="size-4" />
         Изменить
       </Button>
     </div>

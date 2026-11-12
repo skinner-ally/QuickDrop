@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -73,7 +73,7 @@ export function AiSection({ settings }: { settings: Settings }) {
       description="Предлагает заголовок, краткое описание и теги для записи. Работает с любым OpenAI-совместимым API."
     >
       <Row>
-        <label htmlFor="ai-enabled" className="text-[13px]">
+        <label htmlFor="ai-enabled" className="text-2sm">
           Включить ИИ-помощника
         </label>
         <Switch
@@ -126,7 +126,7 @@ export function AiSection({ settings }: { settings: Settings }) {
               aria-pressed={showKey}
               onClick={() => setShowKey((s) => !s)}
             >
-              {showKey ? <EyeOff strokeWidth={1.75} /> : <Eye strokeWidth={1.75} />}
+              <Icon name={showKey ? 'eye-off' : 'eye'} />
             </Button>
           }
         />
@@ -134,11 +134,11 @@ export function AiSection({ settings }: { settings: Settings }) {
 
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" onClick={() => void test()} disabled={testing || !settings.aiApiKey.trim()}>
-          {testing && <Loader2 className="animate-spin" strokeWidth={1.75} />}
+          {testing && <Icon name="loader" className="animate-spin" />}
           Проверить подключение
         </Button>
         {result && (
-          <p role="status" className={result.ok ? 'text-[13px] text-muted-foreground' : 'text-[13px] text-destructive'}>
+          <p role="status" className={result.ok ? 'text-2sm text-muted-foreground' : 'text-2sm text-destructive'}>
             {result.text}
           </p>
         )}

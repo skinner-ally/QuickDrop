@@ -1,4 +1,3 @@
-import { Star } from 'lucide-react'
 import { EmptyState } from '@/components/items/EmptyState'
 import { ItemsView } from './ItemsView'
 
@@ -10,7 +9,7 @@ export function FavoritesView() {
       variant="favorites"
       emptyState={
         <EmptyState
-          icon={Star}
+          icon="star"
           title="Избранного пока нет"
           description={
             <>

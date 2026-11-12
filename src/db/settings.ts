@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
+import { isValidSetting } from '@/lib/settingsSchema'
 import { DEFAULT_SETTINGS, type MetaRecord, type Settings } from '@/types'
 
 function isSettingKey(key: string): key is keyof Settings {
@@ -15,7 +16,7 @@ export function mergeSettings(records: readonly MetaRecord[]): Settings {
   const target = result as unknown as Record<string, unknown>
   for (const { key, value } of records) {
     if (!isSettingKey(key)) continue
-    if (typeof value !== typeof DEFAULT_SETTINGS[key]) continue
+    if (!isValidSetting(key, value)) continue
     target[key] = value
   }
   return result

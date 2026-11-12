@@ -89,6 +89,23 @@ export function formatRelative(ts: number, now: number = Date.now()): string {
   return formatShortDate(ts, now)
 }
 
+/** Подпись дня для разделителей списка: «Сегодня», «Вчера», «12 ноября», «12 ноября 2025» (год — если не текущий). */
+export function formatDayLabel(ts: number, now: number = Date.now()): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
+  // round: сутки при переводе часов длятся 23 или 25 часов.
+  const days = Math.round((dayStart(now) - dayStart(ts)) / 86_400_000)
+  if (days === 0) return 'Сегодня'
+  if (days === 1) return 'Вчера'
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear()
+  return new Intl.DateTimeFormat('ru', {
+    day: 'numeric',
+    month: 'long',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })
+    .format(ts)
+    .replace(/\s?г\.$/, '')
+}
+
 export function formatDateTime(ts: number): string {
   if (!isValidTs(ts)) return NO_DATE
   return new Intl.DateTimeFormat('ru', {

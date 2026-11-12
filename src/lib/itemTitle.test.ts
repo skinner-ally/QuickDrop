@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { titleFromUrl } from './linkMeta'
-import { displayTitle, formatBytes, formatDateTime, formatRelative, NO_DATE, TYPE_LABEL } from './itemTitle'
+import {
+  displayTitle,
+  formatBytes,
+  formatDateTime,
+  formatDayLabel,
+  formatRelative,
+  NO_DATE,
+  TYPE_LABEL,
+} from './itemTitle'
 
 const base = { title: '', content: '' }
 
@@ -37,6 +45,44 @@ describe('formatRelative', () => {
   it('дата', () => {
     expect(formatRelative(new Date(2025, 2, 12).getTime(), now)).toBe('12 мар')
     expect(formatRelative(new Date(2024, 2, 12).getTime(), now)).toBe('12 мар 2024')
+  })
+})
+
+describe('formatDayLabel', () => {
+  const now = new Date(2026, 10, 11, 12, 0).getTime()
+
+  it('сегодня и вчера — по календарным суткам, а не по прошедшим часам', () => {
+    expect(formatDayLabel(new Date(2026, 10, 11, 0, 0).getTime(), now)).toBe('Сегодня')
+    expect(formatDayLabel(new Date(2026, 10, 11, 23, 59, 59, 999).getTime(), now)).toBe('Сегодня')
+    expect(formatDayLabel(now, now)).toBe('Сегодня')
+    expect(formatDayLabel(new Date(2026, 10, 10, 23, 59).getTime(), now)).toBe('Вчера')
+    expect(formatDayLabel(new Date(2026, 10, 10, 0, 0).getTime(), now)).toBe('Вчера')
+    // Через границу года.
+    expect(formatDayLabel(new Date(2025, 11, 31, 18, 0).getTime(), new Date(2026, 0, 1, 0, 5).getTime())).toBe('Вчера')
+  })
+
+  it('дата: месяц словом, год — только если не текущий', () => {
+    expect(formatDayLabel(new Date(2026, 10, 9, 23, 59).getTime(), now)).toBe('9 ноября')
+    expect(formatDayLabel(new Date(2026, 0, 1).getTime(), now)).toBe('1 января')
+    expect(formatDayLabel(new Date(2025, 10, 12, 8, 0).getTime(), now)).toBe('12 ноября 2025')
+    expect(formatDayLabel(new Date(2025, 11, 30).getTime(), new Date(2026, 0, 1, 9, 0).getTime())).toBe('30 декабря 2025')
+    // Завтрашний и более поздние дни (часы на другом устройстве спешили) — тоже датой.
+    expect(formatDayLabel(new Date(2026, 10, 12, 0, 0).getTime(), now)).toBe('12 ноября')
+    expect(formatDayLabel(new Date(2027, 2, 8).getTime(), now)).toBe('8 марта 2027')
+  })
+
+  it('now по умолчанию — текущее время', () => {
+    expect(formatDayLabel(Date.now())).toBe('Сегодня')
+  })
+
+  it('негодная отметка — заглушка', () => {
+    for (const bad of [9e15, -9e15, Number.NaN, Infinity]) {
+      expect(formatDayLabel(bad, now)).toBe(NO_DATE)
+      expect(formatDayLabel(now, bad)).toBe(NO_DATE)
+    }
+    expect(formatDayLabel(undefined as unknown as number, now)).toBe(NO_DATE)
+    expect(formatDayLabel(8.64e15, now)).not.toBe(NO_DATE)
+    expect(formatDayLabel(-8.64e15, now)).not.toBe(NO_DATE)
   })
 })
 

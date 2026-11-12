@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { actDownload } from '@/lib/actions'
@@ -61,7 +61,7 @@ export function FileBlock({ item }: { item: Item }) {
         </div>
         {isImage && (
           <Button variant="outline" size="sm" onClick={() => void actDownload(item)}>
-            <Download strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="download" className="size-4" />
             Скачать
           </Button>
         )}

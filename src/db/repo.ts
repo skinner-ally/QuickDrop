@@ -2,27 +2,36 @@ import { newId } from '@/lib/id'
 import { db } from './db'
 import {
   CATEGORY_COLORS,
+  SAVED_SEARCH_NAME_MAX,
+  SAVED_SEARCH_QUERY_MAX,
   type Category,
   type CategoryColor,
+  type GraphPoint,
   type Item,
   type ItemPatch,
   type ItemStatus,
   type LinkMeta,
   type NewItemInput,
+  type NodePosition,
+  type SavedSearch,
   type SortMode,
   type StoredFile,
 } from '@/types'
+import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { normalizeUrl } from '@/lib/detect'
 import { readableError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import {
   categoryNameKey,
+  cleanOcrText,
   hasForeignScheme,
   normalizeTag,
   normalizeTags,
   safeBlobType,
   safeImageUrl,
   safeLinkUrl,
+  sanitizePoint,
+  searchNameKey,
   settleLinkMeta,
 } from '@/lib/normalize'
 
@@ -34,15 +43,25 @@ export { matchesFilter } from '@/lib/filter'
  * Репозиторий — единственная точка записи в БД (кроме seed, импорта и настроек).
  * Держит инварианты: нормализованные теги, двунаправленные связи, каскад файлов,
  * prevStatus/processedAt, updatedAt на каждой мутации.
+ *
+ * Исключения из «updatedAt на каждой мутации» — правки, которые пользователь не делал руками и которые
+ * не должны переиндексировать поиск и влиять на слияние копий: корзина (deletedAt), распознанный
+ * текст (ocrText/ocrAt), техническая чистка связей при окончательном удалении.
  */
 
-/** Снимок удалённой записи для «Отменить». */
+/**
+ * Снимок записи на момент переноса в корзину — для «Отменить». Пока запись лежит в корзине,
+ * отмена просто снимает deletedAt; file и linkedIds нужны, если запись успели удалить окончательно.
+ */
 export type DeletedSnapshot = {
+  /** Запись до переноса в корзину (без deletedAt). */
   item: Item
   file?: StoredFile
-  /** Записи, которые ссылались на удалённую (обратные связи). */
+  /** Связанные записи: links самой записи и обратные ссылки на неё. */
   linkedIds: string[]
 }
+
+const DAY_MS = 86_400_000
 
 /** Максимальный размер превью по большей стороне, px. */
 export const THUMB_MAX = 480
@@ -283,16 +302,20 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<void> {
   if (typeof patch.url === 'string') changes.url = checkedLinkUrl(patch.url)
   if (patch.linkMeta) changes.linkMeta = cleanLinkMeta(patch.linkMeta)
   changes.updatedAt = Date.now()
+  const urlChange = typeof changes.url === 'string' && !Object.hasOwn(patch, 'linkMeta')
+  const categoryChange = Object.hasOwn(changes, 'categoryId')
   try {
-    if (typeof changes.url !== 'string' || Object.hasOwn(patch, 'linkMeta')) {
+    if (!urlChange && !categoryChange) {
       await db.items.update(id, changes as Partial<Item>)
       return
     }
-    await db.transaction('rw', db.items, async () => {
+    await db.transaction('rw', db.items, db.positions, async () => {
       const current = await db.items.get(id)
       // Метаданные описывали прежнюю страницу: с новым адресом её заголовок и картинка неверны.
-      if (current && current.url !== changes.url) changes.linkMeta = undefined
+      if (urlChange && current && current.url !== changes.url) changes.linkMeta = undefined
       await db.items.update(id, changes as Partial<Item>)
+      // Нода графа стоит в зоне своей категории: с новой категорией место подберёт раскладка.
+      if (categoryChange && current && current.categoryId !== changes.categoryId) await db.positions.delete(id)
     })
   } catch (e) {
     throw readableError(e)
@@ -321,61 +344,83 @@ export function getFile(fileId: string): Promise<StoredFile | undefined> {
   return db.files.get(fileId)
 }
 
-/** Удаляет запись, её файл и обратные связи. Бросает, если записи нет. */
-export async function deleteItem(id: string): Promise<DeletedSnapshot> {
-  const [snapshot] = await deleteItems([id])
-  if (!snapshot) throw new Error('Запись не найдена')
+// ───────────────────────── корзина ─────────────────────────
+
+/**
+ * Снимок записи для «Отменить». Вызывать внутри транзакции по items и files, ДО любых правок:
+ * иначе у связанных записей одного пакета в снимок попало бы уже изменённое состояние.
+ */
+async function takeSnapshot(item: Item): Promise<DeletedSnapshot> {
+  // Файл ищем и по itemId, и по fileId: при рассинхроне одного из полей он всё равно попадёт в снимок.
+  const byItem = await db.files.where('itemId').equals(item.id).toArray()
+  const file = item.fileId
+    ? (byItem.find((f) => f.id === item.fileId) ?? (await db.files.get(item.fileId)))
+    : byItem[0]
+  const backRefs = await db.items.where('links').equals(item.id).primaryKeys()
+  const snapshot: DeletedSnapshot = {
+    item,
+    linkedIds: unique([...item.links, ...backRefs]).filter((x) => x !== item.id),
+  }
+  if (file) snapshot.file = file
   return snapshot
 }
 
+/** Переносит запись в корзину. Бросает, если записи нет или она уже в корзине. */
+export async function deleteItem(id: string): Promise<DeletedSnapshot> {
+  return db.transaction('rw', db.items, db.files, async () => {
+    const [snapshot] = await deleteItems([id])
+    if (snapshot) return snapshot
+    throw new Error((await db.items.get(id)) ? 'Запись уже в корзине' : 'Запись не найдена')
+  })
+}
+
 /**
- * Пакетное удаление в одной транзакции. Несуществующие id пропускаются.
- * Обратные ссылки убираются у оставшихся записей без смены их updatedAt: это техническая правка
- * связей (как repairIntegrity при импорте), пользователь эти записи не менял.
+ * Пакетный перенос в корзину в одной транзакции. Несуществующие и уже лежащие в корзине id пропускаются.
+ * Меняется только deletedAt: updatedAt, status, связи (свои и у соседей), файл и положение на графе
+ * остаются как были — восстановление возвращает запись байт-в-байт, а поиск её не переиндексирует.
  */
 export async function deleteItems(ids: string[]): Promise<DeletedSnapshot[]> {
   const list = unique(ids)
   return db.transaction('rw', db.items, db.files, async () => {
-    // Снимки строим из исходных записей ДО любых правок: иначе у связанных записей одного пакета
-    // в снимок попали бы уже урезанные links, и отмена вернула бы их не такими, какими они были.
-    const items = (await db.items.bulkGet(list)).filter((x): x is Item => !!x)
+    const items = (await db.items.bulkGet(list)).filter((x): x is Item => !!x && x.deletedAt === undefined)
     if (!items.length) return []
-    const gone = new Set(items.map((it) => it.id))
-
     const snapshots: DeletedSnapshot[] = []
-    const fileIds: string[] = []
-    for (const item of items) {
-      // Файл ищем и по itemId, и по fileId: на случай рассинхрона удаляем оба.
-      const byItem = await db.files.where('itemId').equals(item.id).toArray()
-      const file = item.fileId
-        ? (byItem.find((f) => f.id === item.fileId) ?? (await db.files.get(item.fileId)))
-        : byItem[0]
-      fileIds.push(...byItem.map((f) => f.id), ...(item.fileId ? [item.fileId] : []))
-
-      const backRefs = await db.items.where('links').equals(item.id).primaryKeys()
-      const linkedIds = unique([...item.links, ...backRefs]).filter((x) => x !== item.id)
-      const snapshot: DeletedSnapshot = { item, linkedIds }
-      if (file) snapshot.file = file
-      snapshots.push(snapshot)
-    }
-
-    const neighbourIds = unique(snapshots.flatMap((s) => s.linkedIds)).filter((x) => !gone.has(x))
-    for (const other of await db.items.bulkGet(neighbourIds)) {
-      if (!other) continue
-      const links = other.links.filter((l) => !gone.has(l))
-      if (links.length !== other.links.length) await db.items.update(other.id, { links })
-    }
-
-    await db.files.bulkDelete(unique(fileIds))
-    await db.items.bulkDelete([...gone])
+    for (const item of items) snapshots.push(await takeSnapshot(item))
+    const deletedAt = Date.now()
+    for (const item of items) await db.items.update(item.id, { deletedAt })
     return snapshots
   })
 }
 
 /**
- * Отмена удаления: возвращает запись (с исходными датами), файл и связи —
- * только с теми записями, что ещё существуют. Исчезнувшая категория сбрасывается в null.
- * updatedAt соседей не меняется: удаление его не трогало, отмена — «как будто ничего не было».
+ * Возвращает запись из корзины; false — она и не была в корзине. Вызывать внутри транзакции по items.
+ * Кроме deletedAt ничего не трогается: в БД — истина, запись могли править, пока она лежала в корзине.
+ */
+async function takeOutOfTrash(current: Item): Promise<boolean> {
+  if (current.deletedAt === undefined) return false
+  const changes: Partial<Item> = { deletedAt: undefined }
+  // Загрузка метаданных, шедшая во время удаления, могла оборваться: без этого «загрузка» висела бы
+  // вечно. Если запрос ещё идёт, его результат запишется поверх.
+  if (current.linkMeta?.status === 'pending') changes.linkMeta = settleLinkMeta(current.linkMeta)
+  await db.items.update(current.id, changes)
+  return true
+}
+
+/** Возвращает записи из корзины. Несуществующие и не лежащие в корзине id пропускаются. */
+export async function restoreFromTrash(ids: string | string[]): Promise<void> {
+  const list = toIds(ids)
+  await db.transaction('rw', db.items, async () => {
+    for (const it of await db.items.bulkGet(list)) {
+      if (it) await takeOutOfTrash(it)
+    }
+  })
+}
+
+/**
+ * Отмена удаления. Запись ещё в корзине — возвращается оттуда как есть. Её успели удалить
+ * окончательно — воссоздаётся из снимка: исходные даты, файл, связи — только с теми записями,
+ * что ещё существуют; исчезнувшая категория сбрасывается в null; положение на графе не возвращается.
+ * updatedAt соседей не меняется: отмена — «как будто ничего не было».
  */
 export async function restoreItem(snapshot: DeletedSnapshot): Promise<void> {
   await restoreItems([snapshot])
@@ -391,18 +436,25 @@ export async function restoreItems(snapshots: DeletedSnapshot[]): Promise<void> 
 
 async function restoreItemsTx(snapshots: DeletedSnapshot[]): Promise<void> {
   await db.transaction('rw', [db.items, db.files, db.categories], async () => {
-    // Сначала кладём все записи, чтобы связи между восстанавливаемыми тоже вернулись.
-    for (const { item, file } of snapshots) {
+    // Сначала кладём все записи, чтобы связи между воссоздаваемыми тоже вернулись.
+    const recreated: DeletedSnapshot[] = []
+    for (const snapshot of snapshots) {
+      const { item, file } = snapshot
+      const current = await db.items.get(item.id)
+      if (current) {
+        await takeOutOfTrash(current)
+        continue
+      }
       const categoryId =
         item.categoryId && (await db.categories.get(item.categoryId)) ? item.categoryId : null
       const restored: Item = { ...item, categoryId, links: [] }
-      // Ответ загрузки, шедшей во время удаления, мог прийти и пропасть: без этого «загрузка» висела бы
-      // вечно. Если запрос ещё идёт, его результат запишется поверх.
+      delete restored.deletedAt
       if (restored.linkMeta) restored.linkMeta = settleLinkMeta(restored.linkMeta)
       await db.items.put(restored)
       if (file) await db.files.put(file)
+      recreated.push(snapshot)
     }
-    for (const { item, linkedIds } of snapshots) {
+    for (const { item, linkedIds } of recreated) {
       const candidates = unique([...item.links, ...linkedIds]).filter((x) => x !== item.id)
       const existing = (await db.items.bulkGet(candidates)).filter((x): x is Item => !!x)
       const self = await db.items.get(item.id)
@@ -415,6 +467,61 @@ async function restoreItemsTx(snapshots: DeletedSnapshot[]): Promise<void> {
       }
     }
   })
+}
+
+/**
+ * Окончательное удаление любых существующих записей (в корзине или нет) в одной транзакции:
+ * файлы, положения на графе и ссылки на удалённые у оставшихся записей. Возвращает число удалённых.
+ * Ссылки убираются без смены updatedAt соседей: это техническая правка связей (как repairIntegrity
+ * при импорте), пользователь эти записи не менял.
+ */
+export async function purgeItems(ids: string | string[]): Promise<number> {
+  const list = toIds(ids)
+  return db.transaction('rw', db.items, db.files, db.positions, async () => {
+    const items = (await db.items.bulkGet(list)).filter((x): x is Item => !!x)
+    if (!items.length) return 0
+    const gone = new Set(items.map((it) => it.id))
+    const goneIds = [...gone]
+
+    // Файл ищем и по itemId, и по fileId: на случай рассинхрона удаляем оба.
+    const fileIds = await db.files.where('itemId').anyOf(goneIds).primaryKeys()
+    for (const it of items) {
+      if (it.fileId) fileIds.push(it.fileId)
+    }
+
+    const backRefs = await db.items.where('links').anyOf(goneIds).primaryKeys()
+    const neighbourIds = unique([...items.flatMap((it) => it.links), ...backRefs]).filter((x) => !gone.has(x))
+    for (const other of await db.items.bulkGet(neighbourIds)) {
+      if (!other) continue
+      const links = other.links.filter((l) => !gone.has(l))
+      if (links.length !== other.links.length) await db.items.update(other.id, { links })
+    }
+
+    await db.files.bulkDelete(unique(fileIds))
+    await db.positions.bulkDelete(goneIds)
+    await db.items.bulkDelete(goneIds)
+    return items.length
+  })
+}
+
+/** Окончательно удаляет всё, что лежит в корзине. Возвращает число удалённых записей. */
+export async function emptyTrash(): Promise<number> {
+  return db.transaction('rw', db.items, db.files, db.positions, async () =>
+    purgeItems(await db.items.where('deletedAt').above(0).primaryKeys()),
+  )
+}
+
+/**
+ * Автоочистка: окончательно удаляет записи, пролежавшие в корзине days суток и дольше
+ * (граница включительно). days не конечное или ≤ 0 — автоочистка выключена, возвращает 0.
+ */
+export async function purgeExpired(days: number, now: number = Date.now()): Promise<number> {
+  if (!Number.isFinite(days) || days <= 0) return 0
+  const limit = now - days * DAY_MS
+  if (!Number.isFinite(limit)) return 0
+  return db.transaction('rw', db.items, db.files, db.positions, async () =>
+    purgeItems(await db.items.where('deletedAt').between(0, limit, false, true).primaryKeys()),
+  )
 }
 
 // ───────────────────────── статусы ─────────────────────────
@@ -483,13 +590,17 @@ export async function setFavorite(ids: string | string[], favorite: boolean): Pr
 
 export async function setCategory(ids: string | string[], categoryId: string | null): Promise<void> {
   const list = toIds(ids)
-  await db.transaction('rw', db.items, async () => {
+  await db.transaction('rw', db.items, db.positions, async () => {
     const items = await db.items.bulkGet(list)
     const now = Date.now()
+    const moved: string[] = []
     for (const it of items) {
       if (!it || it.categoryId === categoryId) continue
       await db.items.update(it.id, { categoryId, updatedAt: now })
+      moved.push(it.id)
     }
+    // Нода графа стоит в зоне своей категории: с новой категорией место подберёт раскладка.
+    await db.positions.bulkDelete(moved)
   })
 }
 
@@ -554,12 +665,12 @@ export async function deleteTag(tag: string): Promise<void> {
 
 // ───────────────────────── связи ─────────────────────────
 
-/** Двунаправленная связь. Самоссылки и связи с несуществующими записями игнорируются. */
+/** Двунаправленная связь. Самоссылки, связи с несуществующими записями и с записями в корзине игнорируются. */
 export async function linkItems(a: string, b: string): Promise<void> {
   if (a === b) return
   await db.transaction('rw', db.items, async () => {
     const [ia, ib] = await db.items.bulkGet([a, b])
-    if (!ia || !ib) return
+    if (!ia || !ib || ia.deletedAt !== undefined || ib.deletedAt !== undefined) return
     const now = Date.now()
     if (!ia.links.includes(b)) await db.items.update(a, { links: [...ia.links, b], updatedAt: now })
     if (!ib.links.includes(a)) await db.items.update(b, { links: [...ib.links, a], updatedAt: now })
@@ -635,13 +746,175 @@ export async function updateCategory(
   })
 }
 
-/** Удаляет категорию; её записи остаются «без категории». */
+/** Удаляет категорию; её записи (в т.ч. в корзине) остаются «без категории» и теряют место на графе. */
 export async function deleteCategory(id: string): Promise<void> {
-  await db.transaction('rw', db.categories, db.items, async () => {
+  await db.transaction('rw', db.categories, db.items, db.positions, async () => {
     const now = Date.now()
+    const ids = await db.items.where('categoryId').equals(id).primaryKeys()
     await db.items.where('categoryId').equals(id).modify({ categoryId: null, updatedAt: now })
+    await db.positions.bulkDelete(ids)
     await db.categories.delete(id)
   })
+}
+
+// ───────────────────────── положения нод графа ─────────────────────────
+
+/**
+ * Сохраняет положения нод. Негодные точки и id, которых нет среди записей, пропускаются.
+ * Таблица items только читается: updatedAt не меняется, список записей не перечитывается.
+ */
+export async function setPositions(map: Record<string, GraphPoint>): Promise<void> {
+  const rows: NodePosition[] = []
+  for (const [id, raw] of Object.entries(map)) {
+    const point = sanitizePoint(raw)
+    if (id && point) rows.push({ id, x: point.x, y: point.y })
+  }
+  if (!rows.length) return
+  await db.transaction('rw', db.positions, db.items, async () => {
+    const known = new Set(
+      await db.items
+        .where('id')
+        .anyOf(rows.map((r) => r.id))
+        .primaryKeys(),
+    )
+    await db.positions.bulkPut(rows.filter((r) => known.has(r.id)))
+  })
+}
+
+export async function getPositions(): Promise<Record<string, GraphPoint>> {
+  const rows = await db.positions.toArray()
+  // fromEntries создаёт собственные свойства: id «__proto__» не подменит прототип объекта.
+  return Object.fromEntries(rows.map((r) => [r.id, { x: r.x, y: r.y }]))
+}
+
+export async function removePositions(ids: string | string[]): Promise<void> {
+  await db.positions.bulkDelete(toIds(ids))
+}
+
+/** Удаляет все положения («Разложить заново») и возвращает прежние — для «Отменить» через setPositions. */
+export async function clearPositions(): Promise<Record<string, GraphPoint>> {
+  return db.transaction('rw', db.positions, async () => {
+    const previous = await getPositions()
+    await db.positions.clear()
+    return previous
+  })
+}
+
+// ───────────────────────── сохранённые поиски ─────────────────────────
+
+export function listSavedSearches(): Promise<SavedSearch[]> {
+  return db.searches.orderBy('order').toArray()
+}
+
+function checkedSearchName(raw: string): string {
+  const name = raw.trim()
+  if (!name) throw new Error('Название не может быть пустым')
+  if (name.length > SAVED_SEARCH_NAME_MAX) throw new Error('Слишком длинное название')
+  return name
+}
+
+function checkedSearchQuery(raw: string): string {
+  const query = raw.trim()
+  if (!query) throw new Error('Запрос пуст — сохранять нечего')
+  if (query.length > SAVED_SEARCH_QUERY_MAX) throw new Error('Слишком длинный запрос')
+  return query
+}
+
+/** Поиск с таким же именем (по searchNameKey) среди all, кроме записи exceptId. */
+function findSearchByName(all: readonly SavedSearch[], name: string, exceptId?: string): SavedSearch | undefined {
+  const key = searchNameKey(name)
+  return all.find((s) => s.id !== exceptId && searchNameKey(s.name) === key)
+}
+
+/** Бросает Error с русским текстом: пустое или слишком длинное имя/запрос, имя занято другим поиском. */
+export async function createSavedSearch(name: string, query: string): Promise<SavedSearch> {
+  const search: SavedSearch = {
+    id: uid(),
+    name: checkedSearchName(name),
+    query: checkedSearchQuery(query),
+    order: 0,
+    createdAt: Date.now(),
+  }
+  return db.transaction('rw', db.searches, async () => {
+    const all = await db.searches.toArray()
+    const clash = findSearchByName(all, search.name)
+    if (clash) throw new Error(`Поиск «${clash.name}» уже есть`)
+    search.order = all.reduce((max, s) => Math.max(max, s.order), -1) + 1
+    await db.searches.add(search)
+    return search
+  })
+}
+
+/** undefined в патче — «не менять»; несуществующий id — ничего. Ошибки — как у createSavedSearch. */
+export async function updateSavedSearch(
+  id: string,
+  patch: Partial<Pick<SavedSearch, 'name' | 'query'>>,
+): Promise<void> {
+  await db.transaction('rw', db.searches, async () => {
+    const all = await db.searches.toArray()
+    if (!all.some((s) => s.id === id)) return
+    const changes: Partial<Pick<SavedSearch, 'name' | 'query'>> = {}
+    if (patch.name !== undefined) {
+      changes.name = checkedSearchName(patch.name)
+      const clash = findSearchByName(all, changes.name, id)
+      if (clash) throw new Error(`Поиск «${clash.name}» уже есть`)
+    }
+    if (patch.query !== undefined) changes.query = checkedSearchQuery(patch.query)
+    if (Object.keys(changes).length) await db.searches.update(id, changes)
+  })
+}
+
+export async function deleteSavedSearch(id: string): Promise<void> {
+  await db.searches.delete(id)
+}
+
+/**
+ * Новый порядок: перечисленные id — в начале, в заданном порядке; не перечисленные — после них
+ * в прежнем относительном порядке. Неизвестные id игнорируются.
+ */
+export async function reorderSavedSearches(ids: string[]): Promise<void> {
+  await db.transaction('rw', db.searches, async () => {
+    const all = await db.searches.orderBy('order').toArray()
+    const byId = new Map(all.map((s) => [s.id, s]))
+    const head = unique(ids).filter((id) => byId.has(id))
+    const listed = new Set(head)
+    const next = [...head, ...all.filter((s) => !listed.has(s.id)).map((s) => s.id)]
+    for (const [order, id] of next.entries()) {
+      if (byId.get(id)?.order !== order) await db.searches.update(id, { order })
+    }
+  })
+}
+
+/** Отмена удаления поиска: возвращает его как есть; если имя за это время заняли — с суффиксом « (2)», « (3)»… */
+export async function restoreSavedSearch(search: SavedSearch): Promise<void> {
+  await db.transaction('rw', db.searches, async () => {
+    const all = await db.searches.toArray()
+    let name = search.name
+    for (let n = 2; findSearchByName(all, name, search.id); n++) name = `${search.name} (${n})`
+    await db.searches.put({ ...search, name })
+  })
+}
+
+// ───────────────────────── распознанный текст и дубли ссылок ─────────────────────────
+
+/**
+ * Записывает текст, извлечённый из вложения. Пустой (после очистки) текст удаляет ocrText, но отметка
+ * ocrAt остаётся: «пробовали, текста нет» — автораспознавание не повторяется.
+ * updatedAt не меняется (пользователь запись не правил); поиск узнаёт об изменении по ocrAt.
+ * false — записи нет.
+ */
+export async function setOcrText(id: string, text: string, at?: number): Promise<boolean> {
+  const ocrText = cleanOcrText(text)
+  return db.transaction('rw', db.items, async () => {
+    if (!(await db.items.get(id))) return false
+    await db.items.update(id, { ocrText: ocrText || undefined, ocrAt: at ?? Date.now() })
+    return true
+  })
+}
+
+/** Запись с тем же адресом (правила — lib/dedupe): без корзины и без excludeId. */
+export async function findDuplicateLink(url: string, excludeId?: string): Promise<Item | undefined> {
+  return findDuplicateLinkIn(await db.items.where('type').equals('link').toArray(), url, excludeId)
 }
 
 // ───────────────────────── сортировка (чистая) ─────────────────────────

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
-import { FolderOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCategories } from '@/hooks/useItems'
@@ -448,7 +447,7 @@ export function ItemList({
   }, [hits, shown, grouped])
 
   if (hits.length === 0) {
-    return <>{emptyState ?? <EmptyState icon={FolderOpen} title="Здесь пока пусто" />}</>
+    return <>{emptyState ?? <EmptyState icon="folder-open" title="Здесь пока пусто" />}</>
   }
 
   const tabbableId = cursorId && ids.includes(cursorId) ? cursorId : ids[0]

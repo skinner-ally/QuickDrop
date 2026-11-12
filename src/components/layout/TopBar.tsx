@@ -1,4 +1,4 @@
-import { Menu, Search, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { matchKey } from '@/lib/keys'
@@ -21,13 +21,12 @@ export function TopBar({ mobile }: { mobile: boolean }) {
     <header className="box-content flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 pt-[env(safe-area-inset-top)]">
       {mobile && (
         <Button variant="ghost" size="icon" aria-label="Открыть меню" onClick={() => setNavOpen(true)}>
-          <Menu strokeWidth={1.75} />
+          <Icon name="menu" />
         </Button>
       )}
       <div className="relative min-w-0 flex-1">
-        <Search
-          aria-hidden
-          strokeWidth={1.75}
+        <Icon
+          name="search"
           className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
         />
         <input
@@ -50,7 +49,7 @@ export function TopBar({ mobile }: { mobile: boolean }) {
         <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center">
           {query ? (
             <Button variant="ghost" size="icon-xs" aria-label="Очистить поиск" onClick={() => setQuery('')}>
-              <X strokeWidth={1.75} />
+              <Icon name="x" />
             </Button>
           ) : (
             !mobile && (

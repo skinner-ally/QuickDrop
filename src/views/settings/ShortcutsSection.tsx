@@ -8,7 +8,7 @@ import { CommitInput, Field, Section } from './Section'
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border bg-muted px-1 font-mono text-[11px] text-foreground/80">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border bg-muted px-1 font-mono text-2xs text-foreground/80">
       {children}
     </kbd>
   )
@@ -57,7 +57,7 @@ export function ShortcutsSection({ settings }: { settings: Settings }) {
             key={r.label}
             className="flex flex-col gap-1 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
           >
-            <span className="text-[13px]">{r.label}</span>
+            <span className="text-2sm">{r.label}</span>
             <Keys keys={r.keys} />
           </li>
         ))}

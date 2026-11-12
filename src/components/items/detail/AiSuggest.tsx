@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Sparkles } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { TagChip } from '@/components/items/TagChip'
 import { Button } from '@/components/ui/button'
@@ -59,7 +59,7 @@ export function AiSuggest({ item }: { item: Item }) {
     <section className="flex flex-col gap-2" aria-label="ИИ-помощник">
       <div>
         <Button variant="outline" size="sm" disabled={pending} onClick={() => void run()}>
-          {pending ? <Loader2 strokeWidth={1.75} className="size-4 animate-spin" aria-hidden /> : <Sparkles strokeWidth={1.75} className="size-4" aria-hidden />}
+          {pending ? <Icon name="loader" className="size-4 animate-spin" /> : <Icon name="sparkles" className="size-4" />}
           Предложить заголовок и теги
         </Button>
       </div>

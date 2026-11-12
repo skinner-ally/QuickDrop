@@ -3,7 +3,7 @@
  * Модуль ни от чего не зависит, поэтому его можно импортировать откуда угодно без циклов.
  */
 
-import type { LinkMeta } from '@/types'
+import type { GraphPoint, LinkMeta } from '@/types'
 
 /** Сворачивает строку для сравнения «как человек»: NFKC, нижний регистр, ё = е. Идемпотентна. */
 export function foldText(s: string): string {
@@ -125,4 +125,53 @@ export function hasLinkContent(meta: LinkMeta | undefined): boolean {
 export function settleLinkMeta(meta: LinkMeta): LinkMeta {
   if (meta.status !== 'pending') return meta
   return { ...meta, status: hasLinkContent(meta) ? 'ok' : 'failed' }
+}
+
+// ───────────────────────── распознанный текст, граф, сохранённые поиски ─────────────────────────
+
+/** Предел распознанного текста одной записи, символов. */
+export const MAX_OCR_TEXT = 200_000
+
+/** \r\n → \n, без управляющих символов (кроме \n и \t), 3+ пустых строк → 2, trim, обрезка до MAX_OCR_TEXT. */
+export function cleanOcrText(raw: string): string {
+  let text = raw
+    .replace(/\r\n?/g, '\n')
+    // \p{Cc} — управляющие C0, DEL и C1; двойное отрицание оставляет из них только \n и \t.
+    .replace(/[^\P{Cc}\n\t]/gu, '')
+    // Строка из одних пробелов и табуляций тоже пустая.
+    .replace(/\n(?:[ \t]*\n){3,}/g, '\n\n\n')
+    .trim()
+  if (text.length > MAX_OCR_TEXT) {
+    text = text.slice(0, MAX_OCR_TEXT)
+    // Обрезка могла разорвать суррогатную пару: половина символа в базе и в JSON копии — мусор.
+    const last = text.charCodeAt(text.length - 1)
+    if (last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1)
+    // Иначе повторная очистка (импорт копии) дала бы другой текст.
+    text = text.trimEnd()
+  }
+  return text
+}
+
+/** Предел координаты ноды графа, px. */
+export const MAX_GRAPH_COORD = 1_000_000
+
+function sanitizeCoord(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null
+  // + 0 превращает −0 в 0: в IndexedDB и JSON они неразличимы, а при сравнении — разные.
+  const v = Math.round(raw) + 0
+  return Math.abs(v) <= MAX_GRAPH_COORD ? v : null
+}
+
+/** Точка графа из произвольного значения: конечные числа, округление до целого, |v| ≤ MAX_GRAPH_COORD; иначе null. */
+export function sanitizePoint(raw: unknown): GraphPoint | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const { x, y } = raw as { x?: unknown; y?: unknown }
+  const sx = sanitizeCoord(x)
+  const sy = sanitizeCoord(y)
+  return sx === null || sy === null ? null : { x: sx, y: sy }
+}
+
+/** Ключ уникальности имени сохранённого поиска: foldText, пробелы схлопнуты, trim. */
+export function searchNameKey(name: string): string {
+  return foldText(name).replace(/\s+/g, ' ').trim()
 }

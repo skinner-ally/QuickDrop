@@ -1,14 +1,5 @@
 import { useMemo, useState } from 'react'
-import {
-  CalendarDays,
-  Check,
-  Folder,
-  LayoutGrid,
-  List,
-  Tag,
-  X,
-  type LucideIcon,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -64,11 +55,11 @@ const CAT_ALL = '__all'
 const CAT_NONE = '__none'
 
 function FilterButton({
-  icon: Icon,
+  icon,
   label,
   active,
   ...props
-}: { icon: LucideIcon; label: string; active?: boolean } & React.ComponentProps<typeof Button>) {
+}: { icon: IconName; label: string; active?: boolean } & React.ComponentProps<typeof Button>) {
   return (
     <Button
       variant="outline"
@@ -76,7 +67,7 @@ function FilterButton({
       className={cn('shrink-0', active && 'border-foreground/30 bg-muted')}
       {...props}
     >
-      <Icon strokeWidth={1.75} aria-hidden />
+      <Icon name={icon} />
       {label}
     </Button>
   )
@@ -103,7 +94,7 @@ function TypeChips() {
             aria-pressed={on}
             onClick={() => toggle(t)}
             className={cn(
-              'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[13px] pointer-coarse:h-9 transition-colors',
+              'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-2sm pointer-coarse:h-9 transition-colors',
               on
                 ? 'border-foreground/30 bg-muted text-foreground'
                 : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -133,7 +124,7 @@ function CategoryFilter() {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <FilterButton icon={Folder} label={label} active={categoryId !== undefined} aria-label="Фильтр по категории" />
+          <FilterButton icon="folder" label={label} active={categoryId !== undefined} aria-label="Фильтр по категории" />
         }
       />
       <DropdownMenuContent className="w-56">
@@ -181,7 +172,7 @@ function TagsFilter() {
       <PopoverTrigger
         render={
           <FilterButton
-            icon={Tag}
+            icon="tag"
             label={count ? `Теги: ${count}` : 'Теги'}
             active={count > 0}
             aria-label="Фильтр по тегам"
@@ -194,18 +185,18 @@ function TagsFilter() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Найти тег"
           aria-label="Найти тег"
-          className="h-7 text-[13px] pointer-coarse:h-9"
+          className="h-7 text-2sm pointer-coarse:h-9"
         />
         <div className="max-h-64 overflow-y-auto" role="group" aria-label="Теги">
           {shown.length === 0 ? (
-            <p className="px-1.5 py-3 text-center text-[13px] text-muted-foreground">
+            <p className="px-1.5 py-3 text-center text-2sm text-muted-foreground">
               {allTags.length === 0 ? 'Тегов пока нет' : 'Тег не найден'}
             </p>
           ) : (
             shown.map(({ tag, count: n }) => (
               <label
                 key={tag}
-                className="flex cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-[13px] hover:bg-muted"
+                className="flex cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-2sm hover:bg-muted"
               >
                 <Checkbox checked={!!tags?.includes(tag)} onCheckedChange={() => toggle(tag)} />
                 <span className="min-w-0 flex-1 truncate">#{tag}</span>
@@ -229,7 +220,7 @@ function PeriodFilter() {
       <DropdownMenuTrigger
         render={
           <FilterButton
-            icon={CalendarDays}
+            icon="calendar"
             label={key && key !== 'all' ? (label ?? 'Период') : 'Период'}
             active={from !== undefined}
             aria-label="Фильтр по периоду"
@@ -277,7 +268,7 @@ function ActiveChip({
           focusRing,
         )}
       >
-        <X size={12} strokeWidth={1.75} aria-hidden />
+        <Icon name="x" size={12} />
       </button>
     </span>
   )
@@ -315,20 +306,20 @@ export function FilterBar({ className }: { className?: string }) {
           aria-pressed={!!filter.untagged}
           onClick={() => setFilter({ untagged: filter.untagged ? undefined : true })}
           className={cn(
-            'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] pointer-coarse:h-9 transition-colors',
+            'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-2sm pointer-coarse:h-9 transition-colors',
             filter.untagged
               ? 'border-foreground/30 bg-muted text-foreground'
               : 'border-border text-foreground hover:bg-muted dark:border-input',
             focusRing,
           )}
         >
-          {filter.untagged && <Check size={14} strokeWidth={1.75} aria-hidden />}
+          {filter.untagged && <Icon name="check" size={14} />}
           Без тегов и категории
         </button>
         <PeriodFilter />
         <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
           <Select value={sort} onValueChange={(v) => v && setSort(v as SortMode)} items={SORT_ITEMS}>
-            <SelectTrigger size="sm" aria-label="Сортировка" className="text-[13px]">
+            <SelectTrigger size="sm" aria-label="Сортировка" className="text-2sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false} align="end" className="min-w-44">
@@ -346,10 +337,10 @@ export function FilterBar({ className }: { className?: string }) {
           >
             {(
               [
-                ['list', List, 'Список'],
-                ['grid', LayoutGrid, 'Карточки'],
+                ['list', 'list', 'Список'],
+                ['grid', 'grid', 'Карточки'],
               ] as const
-            ).map(([mode, Icon, label]) => (
+            ).map(([mode, icon, label]) => (
               <button
                 key={mode}
                 type="button"
@@ -362,7 +353,7 @@ export function FilterBar({ className }: { className?: string }) {
                   focusRing,
                 )}
               >
-                <Icon size={14} strokeWidth={1.75} aria-hidden />
+                <Icon name={icon} size={14} />
               </button>
             ))}
           </div>

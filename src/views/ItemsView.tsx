@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { SearchX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
@@ -31,7 +30,7 @@ export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsV
 
   const noResults = (
     <EmptyState
-      icon={SearchX}
+      icon="search-x"
       title="Ничего не найдено"
       description="Попробуйте изменить запрос или ослабить фильтры."
       action={
@@ -58,12 +57,12 @@ export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsV
         <div className="flex items-baseline gap-2">
           <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
           {!loading && total > 0 && (
-            <span className="text-[13px] text-muted-foreground tabular-nums" aria-live="polite">
+            <span className="text-2sm text-muted-foreground tabular-nums" aria-live="polite">
               {hits.length} из {total}
             </span>
           )}
         </div>
-        {subtitle && <p className="text-[13px] text-muted-foreground">{subtitle}</p>}
+        {subtitle && <p className="text-2sm text-muted-foreground">{subtitle}</p>}
       </header>
 
       <FilterBar />

@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Link2 } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { linkItems } from '@/db/repo'
-import { useAllItems, useCategories } from '@/hooks/useItems'
+import { useAllItems, useCategories, useItemsWithTrash } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { searchItems } from '@/search'
@@ -17,6 +17,7 @@ const LIMIT = 8
 /** Поповер выбора записи для связи: поиск, при пустом запросе — недавние. */
 export function LinkPicker({ item }: { item: Item }) {
   const all = useAllItems()
+  const allWithTrash = useItemsWithTrash()
   const categories = useCategories()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -26,10 +27,10 @@ export function LinkPicker({ item }: { item: Item }) {
     const skip = new Set([item.id, ...item.links])
     const pool = (all ?? []).filter((i) => !skip.has(i.id))
     if (!query.trim()) return [...pool].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, LIMIT)
-    return searchItems(pool, query, categories)
+    return searchItems(allWithTrash ?? pool, query, categories, { within: pool })
       .slice(0, LIMIT)
       .map((h) => h.item)
-  }, [open, all, categories, item.id, item.links, query])
+  }, [open, all, allWithTrash, categories, item.id, item.links, query])
 
   async function pick(other: Item) {
     setOpen(false)
@@ -50,7 +51,7 @@ export function LinkPicker({ item }: { item: Item }) {
       }}
     >
       <PopoverTrigger render={<Button variant="outline" size="sm" />}>
-        <Link2 strokeWidth={1.75} className="size-4" aria-hidden />
+        <Icon name="link" className="size-4" />
         Связать…
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(20rem,calc(100vw-2rem))] gap-0 p-0">

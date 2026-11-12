@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronsUpDown, Plus } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -85,7 +85,7 @@ export function CategorySelect({
             <span className="truncate text-muted-foreground">{placeholder}</span>
           )}
         </span>
-        <ChevronsUpDown size={14} strokeWidth={1.75} className="text-muted-foreground" aria-hidden />
+        <Icon name="chevrons-up-down" size={14} className="text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-60 p-0">
         <Command>
@@ -100,7 +100,7 @@ export function CategorySelect({
             <CommandGroup>
               <CommandItem value={NONE} keywords={['без категории']} onSelect={() => choose(null)}>
                 <span className="text-muted-foreground">Без категории</span>
-                {!value && <Check size={14} strokeWidth={1.75} className="ml-auto" aria-hidden />}
+                {!value && <Icon name="check" size={14} className="ml-auto" />}
               </CommandItem>
               {categories.map((c) => (
                 <CommandItem
@@ -111,12 +111,12 @@ export function CategorySelect({
                 >
                   <CategoryDot color={c.color} />
                   <span className="truncate">{c.name}</span>
-                  {c.id === value && <Check size={14} strokeWidth={1.75} className="ml-auto" aria-hidden />}
+                  {c.id === value && <Icon name="check" size={14} className="ml-auto" />}
                 </CommandItem>
               ))}
               {canCreate && (
                 <CommandItem value={CREATE} forceMount onSelect={() => void create()}>
-                  <Plus size={14} strokeWidth={1.75} aria-hidden />
+                  <Icon name="plus" size={14} />
                   <span className="truncate">Создать «{name}»</span>
                 </CommandItem>
               )}

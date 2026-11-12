@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { cn } from '@/lib/utils'
 
 const focusRing = 'outline-none focus-visible:ring-2 focus-visible:ring-ring/60'
@@ -57,7 +57,7 @@ export function TagChip({
             focusRing,
           )}
         >
-          <X size={12} strokeWidth={1.75} aria-hidden />
+          <Icon name="x" size={12} />
         </button>
       )}
     </span>

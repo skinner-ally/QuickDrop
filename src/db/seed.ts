@@ -211,6 +211,8 @@ function isPristineDemo(existing: Item, fresh: Item): boolean {
   const same = (k: keyof Item) => (existing[k] ?? null) === (fresh[k] ?? null)
   return (
     existing.source === 'demo' &&
+    // Запись в корзине тронута пользователем: повторный засев не должен её воскрешать.
+    existing.deletedAt === undefined &&
     (['type', 'title', 'content', 'url', 'language', 'categoryId', 'status', 'prevStatus', 'favorite', 'fileId'] as const).every(same) &&
     sameSet(existing.tags, fresh.tags) &&
     sameSet(existing.links, fresh.links)
@@ -301,7 +303,11 @@ export async function seedDemoData(force = false): Promise<boolean> {
 /**
  * Настройки, которые «Удалить все данные» стирает вместе с записями: ключ API хранится открытым
  * текстом, а в адресе ИИ и шаблоне прокси может быть токен — следующему пользователю устройства
- * они не должны достаться. Оформление и горячая клавиша остаются.
+ * они не должны достаться. То же с секретом расширения браузера (и самим приёмом записей от него)
+ * и распознаванием через ИИ. Оформление и горячая клавиша остаются.
+ * backupLastAt не сбрасывается: иначе первая же запись после стирания (или демо) вызвала бы автокопию
+ * почти пустой базы, а обрезка по backupKeep вытеснила бы рабочие копии — единственный способ
+ * откатить ошибочное «Удалить все данные». Следующая копия придёт по обычному расписанию.
  */
 const CLEARED_SETTINGS: ReadonlyArray<keyof Settings> = [
   'aiApiKey',
@@ -309,13 +315,20 @@ const CLEARED_SETTINGS: ReadonlyArray<keyof Settings> = [
   'aiModel',
   'aiEnabled',
   'linkProxyUrl',
+  'aiVisionModel',
+  'aiAutoOcr',
+  'extEnabled',
+  'extToken',
 ]
 
 export async function clearAllData(): Promise<void> {
-  await db.transaction('rw', db.items, db.files, db.categories, db.meta, async () => {
+  const tables = [db.items, db.files, db.categories, db.meta, db.positions, db.searches]
+  await db.transaction('rw', tables, async () => {
     await db.items.clear()
     await db.files.clear()
     await db.categories.clear()
+    await db.positions.clear()
+    await db.searches.clear()
     await db.meta.bulkDelete([...CLEARED_SETTINGS])
     // seeded остаётся true, чтобы демо не вернулись сами
     await db.meta.put({ key: 'seeded', value: true })

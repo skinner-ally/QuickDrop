@@ -43,7 +43,7 @@ function BadgeView({
     <span
       className={cn(
         'inline-flex max-w-full items-center gap-1.5 rounded-md font-medium text-foreground',
-        size === 'sm' ? 'h-5 px-1.5 text-xs' : 'h-6 px-2 text-[13px]',
+        size === 'sm' ? 'h-5 px-1.5 text-xs' : 'h-6 px-2 text-2sm',
         className,
       )}
       style={{ background: `var(--cat-${cat.color}-soft)` }}

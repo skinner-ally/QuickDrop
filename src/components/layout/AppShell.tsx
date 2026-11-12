@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, type ReactNode, type RefObject } from 'react'
-import { Upload } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { QuickCapture } from '@/components/capture/QuickCapture'
 import { Button } from '@/components/ui/button'
 import { useHotkeys } from '@/hooks/useHotkeys'
@@ -229,7 +229,7 @@ export function AppShell() {
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-6">
           <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-brand px-10 py-8 text-brand">
-            <Upload className="size-6" strokeWidth={1.75} />
+            <Icon name="upload" size={24} className="size-6" />
             <span className="text-sm font-medium">Отпустите, чтобы добавить</span>
           </div>
         </div>

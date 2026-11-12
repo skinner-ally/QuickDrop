@@ -1,18 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { matchKey } from '@/lib/keys'
-import {
-  Archive,
-  ChevronDown,
-  ChevronRight,
-  Inbox,
-  Library,
-  Monitor,
-  Moon,
-  Plus,
-  Settings as SettingsIcon,
-  Star,
-  Sun,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -49,7 +37,7 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none transition-colors',
+        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-2sm outline-none transition-colors',
         'hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
         active ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-sidebar-foreground/85',
       )}
@@ -81,7 +69,6 @@ function SectionHeader({
   onToggle: () => void
   action?: ReactNode
 }) {
-  const Chevron = open ? ChevronDown : ChevronRight
   return (
     <div className="mt-3 flex items-center justify-between pr-1 pl-2">
       <button
@@ -90,7 +77,7 @@ function SectionHeader({
         aria-expanded={open}
         className="flex items-center gap-1 rounded text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
-        <Chevron className="size-3.5" strokeWidth={1.75} />
+        <Icon name={open ? 'chevron-down' : 'chevron-right'} className="size-3.5" />
         {title}
       </button>
       {action}
@@ -108,7 +95,7 @@ const THEME_LABEL: Record<Settings['theme'], string> = {
 function ThemeToggle() {
   const { setTheme } = useTheme()
   const current = useSettings()?.theme ?? 'system'
-  const Icon = current === 'dark' ? Moon : current === 'light' ? Sun : Monitor
+  const themeIcon: IconName = current === 'dark' ? 'moon' : current === 'light' ? 'sun' : 'monitor'
   const next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length]
   return (
     <Button
@@ -121,7 +108,7 @@ function ThemeToggle() {
         setSetting('theme', next).catch((e: unknown) => toast.error(describeError(e)))
       }}
     >
-      <Icon strokeWidth={1.75} />
+      <Icon name={themeIcon} />
     </Button>
   )
 }
@@ -159,7 +146,7 @@ function NewCategory({ onDone }: { onDone: () => void }) {
       onBlur={() => void submit()}
       placeholder="Название категории"
       aria-label="Название новой категории"
-      className="mx-1 my-0.5 h-7 w-[calc(100%-0.5rem)] rounded-md border border-input bg-background px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 md:text-[13px]"
+      className="mx-1 my-0.5 h-7 w-[calc(100%-0.5rem)] rounded-md border border-input bg-background px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 md:text-2sm"
     />
   )
 }
@@ -233,7 +220,7 @@ export function Sidebar() {
             <path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3.5 13.5h9" />
           </svg>
         </span>
-        <span className="text-[15px] font-semibold tracking-tight">QuickDrop</span>
+        <span className="text-md font-semibold tracking-tight">QuickDrop</span>
       </div>
 
       <div className="px-3 pb-2">
@@ -242,7 +229,7 @@ export function Sidebar() {
           onClick={() => openCapture()}
         >
           <span className="flex items-center gap-1.5">
-            <Plus strokeWidth={1.75} />
+            <Icon name="plus" />
             Добавить
           </span>
           <Kbd tone="inherit">N</Kbd>
@@ -254,7 +241,7 @@ export function Sidebar() {
           <NavButton
             active={view === 'inbox'}
             onClick={() => go('inbox')}
-            icon={<Inbox className="size-4" strokeWidth={1.75} />}
+            icon={<Icon name="inbox" className="size-4" />}
             label="Входящие"
             count={counts.inbox}
             accent={counts.inbox > 0}
@@ -262,21 +249,21 @@ export function Sidebar() {
           <NavButton
             active={plainLibrary}
             onClick={() => go('library')}
-            icon={<Library className="size-4" strokeWidth={1.75} />}
+            icon={<Icon name="library" className="size-4" />}
             label="База знаний"
             count={counts.library}
           />
           <NavButton
             active={view === 'favorites'}
             onClick={() => go('favorites')}
-            icon={<Star className="size-4" strokeWidth={1.75} />}
+            icon={<Icon name="star" className="size-4" />}
             label="Избранное"
             count={counts.favorites}
           />
           <NavButton
             active={view === 'archive'}
             onClick={() => go('archive')}
-            icon={<Archive className="size-4" strokeWidth={1.75} />}
+            icon={<Icon name="archive" className="size-4" />}
             label="Архив"
             count={counts.archive}
           />
@@ -297,7 +284,7 @@ export function Sidebar() {
                 setCreating(true)
               }}
             >
-              <Plus strokeWidth={1.75} />
+              <Icon name="plus" />
             </Button>
           }
         />
@@ -363,7 +350,7 @@ export function Sidebar() {
           <NavButton
             active={view === 'settings'}
             onClick={() => go('settings')}
-            icon={<SettingsIcon className="size-4" strokeWidth={1.75} />}
+            icon={<Icon name="settings" className="size-4" />}
             label="Настройки"
           />
         </div>

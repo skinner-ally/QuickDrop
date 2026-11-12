@@ -1,38 +1,53 @@
 import { db } from '@/db/db'
 import { normalizeUrl } from '@/lib/detect'
 import { readableError } from '@/lib/errors'
+import { snapToGrid } from '@/lib/graphLayout'
 import {
   categoryNameKey,
+  cleanOcrText,
   hasForeignScheme,
   normalizeTags,
   safeBlobType,
   safeLinkUrl,
   safeThumbType,
+  sanitizePoint,
+  searchNameKey,
   settleLinkMeta,
 } from '@/lib/normalize'
+import { isValidSetting } from '@/lib/settingsSchema'
 import {
   CATEGORY_COLORS,
   DEFAULT_SETTINGS,
+  ITEM_SOURCES,
   ITEM_STATUSES,
   ITEM_TYPES,
+  SAVED_SEARCH_NAME_MAX,
+  SAVED_SEARCH_QUERY_MAX,
   type AiMeta,
   type Category,
+  type GraphPoint,
   type Item,
-  type ItemSource,
   type LinkMeta,
   type MetaRecord,
+  type NodePosition,
+  type SavedSearch,
   type Settings,
   type StoredFile,
 } from '@/types'
 
 /**
  * Резервная копия QuickDrop: один JSON-файл, бинарники внутри в base64.
- * Секреты (aiApiKey), служебный флаг seeded и сетевые настройки в копию не попадают никогда
- * (см. PRIVATE_SETTINGS).
+ * Секреты (aiApiKey), служебный флаг seeded, сетевые настройки, локальные пути и состояние этого
+ * компьютера в копию не попадают никогда (см. PRIVATE_SETTINGS).
+ *
+ * Версии формата (читаются все, от 1 до текущей):
+ *  1 — настройки, категории, записи, файлы;
+ *  2 — добавлены разделы positions (положения нод графа) и searches (сохранённые поиски),
+ *      у записей — deletedAt (корзина), ocrText, ocrAt. Оба раздела необязательны в любой версии.
  */
 
 export const BACKUP_APP = 'quickdrop'
-export const BACKUP_VERSION = 1
+export const BACKUP_VERSION = 2
 
 /**
  * Предельный размер копии. Импорт читает файл одной строкой (file.text() + JSON.parse), а строка
@@ -42,7 +57,14 @@ export const BACKUP_VERSION = 1
 export const MAX_BACKUP_BYTES = 480 * 1024 * 1024
 
 export type ImportMode = 'merge' | 'replace'
-export type ImportReport = { items: number; files: number; categories: number; skipped: number }
+export type ImportReport = {
+  items: number
+  files: number
+  categories: number
+  skipped: number
+  positions: number
+  searches: number
+}
 
 export interface BackupFileEntry {
   id: string
@@ -66,6 +88,10 @@ export interface BackupData {
   settings?: Partial<Settings>
   categories: Category[]
   items: Item[]
+  /** Положения нод графа (с версии 2); только для записей из items. */
+  positions?: NodePosition[]
+  /** Сохранённые поиски (с версии 2), по order. */
+  searches?: SavedSearch[]
   files: BackupFileEntry[]
 }
 
@@ -75,6 +101,11 @@ export interface BackupData {
  * отправили бы локальный ключ и содержимое записей на чужой хост, linkProxyUrl — каждую новую ссылку
  * на чужой прокси, autoFetchLinkTitle — включил бы запросы, которые пользователь выключил;
  * к тому же шаблон прокси может содержать токен, которому не место в файле копии.
+ * По той же причине: aiAutoOcr/aiVisionModel включили бы отправку картинок в ИИ, extEnabled/extPort/
+ * extToken — приём записей по сети с чужим секретом. backupDir/mdExportDir/backupLastAt — пути и
+ * состояние этого компьютера: чужая копия направила бы автоматические копии в произвольную папку.
+ * backupEvery/backupKeep действуют вместе с локальной папкой: меньшее число копий из импортированной
+ * базы стёрло бы при ближайшей автокопии здешнюю историю — единственную страховку от ошибочного «Заменить».
  */
 export const PRIVATE_SETTINGS: ReadonlySet<string> = new Set<keyof Settings>([
   'aiApiKey',
@@ -84,9 +115,17 @@ export const PRIVATE_SETTINGS: ReadonlySet<string> = new Set<keyof Settings>([
   'aiModel',
   'linkProxyUrl',
   'autoFetchLinkTitle',
+  'backupDir',
+  'backupLastAt',
+  'backupEvery',
+  'backupKeep',
+  'mdExportDir',
+  'aiAutoOcr',
+  'aiVisionModel',
+  'extEnabled',
+  'extPort',
+  'extToken',
 ])
-const THEMES: readonly Settings['theme'][] = ['system', 'light', 'dark']
-const ITEM_SOURCES: readonly ItemSource[] = ['manual', 'paste', 'drop', 'import', 'demo']
 const LINK_META_STATUSES: readonly LinkMeta['status'][] = ['pending', 'ok', 'failed']
 
 // ───────────────────────── имя файла ─────────────────────────
@@ -188,12 +227,19 @@ export interface ExportOptions {
 /** Бросает Error с понятным текстом, если копия получилась бы невосстановимо большой. */
 export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
   const maxBytes = options.maxBytes ?? MAX_BACKUP_BYTES
-  const snapshot = await db.transaction('r', [db.items, db.categories, db.files, db.meta], async () => ({
-    items: await db.items.toArray(),
-    categories: await db.categories.orderBy('order').toArray(),
-    files: await db.files.toArray(),
-    meta: await db.meta.toArray(),
-  }))
+  const snapshot = await db.transaction(
+    'r',
+    [db.items, db.categories, db.files, db.meta, db.positions, db.searches],
+    async () => ({
+      items: await db.items.toArray(),
+      categories: await db.categories.orderBy('order').toArray(),
+      files: await db.files.toArray(),
+      meta: await db.meta.toArray(),
+      positions: await db.positions.toArray(),
+      searches: await db.searches.orderBy('order').toArray(),
+    }),
+  )
+  const itemIds = new Set(snapshot.items.map((it) => it.id))
 
   const header: Omit<BackupData, 'files'> = {
     app: BACKUP_APP,
@@ -202,9 +248,12 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
     settings: settingsFromMeta(snapshot.meta),
     categories: snapshot.categories,
     // Незавершённая загрузка метаданных в копию не попадает: восстановленная, она висела бы вечно.
+    // Записи корзины идут как есть (с deletedAt): копия возвращает и корзину.
     items: snapshot.items.map((it) =>
       it.linkMeta?.status === 'pending' ? { ...it, linkMeta: settleLinkMeta(it.linkMeta) } : it,
     ),
+    positions: snapshot.positions.filter((p) => itemIds.has(p.id)),
+    searches: snapshot.searches,
   }
   const tooBig = (bytes?: number) =>
     new Error(
@@ -263,6 +312,20 @@ function num(v: unknown): number | undefined {
 
 const DAY_MS = 86_400_000
 
+/** Сколько суток запись корзины из копии гарантированно пролежит до автоочистки (или весь срок, если он короче). */
+export const IMPORTED_TRASH_GRACE_DAYS = 7
+
+/**
+ * Самая ранняя отметка удаления, с которой запись корзины из копии ещё проживёт IMPORTED_TRASH_GRACE_DAYS.
+ * Автоочистка считает срок от deletedAt: без этого запись, уже просроченная к моменту импорта, была бы
+ * стёрта первым же проходом — а копию импортируют как раз затем, чтобы вернуть стёртое.
+ * 0 — автоочистка выключена, отметки не трогаем.
+ */
+function importedTrashFloor(trashDays: number, now: number): number {
+  if (!(trashDays > 0)) return 0
+  return now - (trashDays - Math.min(trashDays, IMPORTED_TRASH_GRACE_DAYS)) * DAY_MS
+}
+
 /**
  * Отметка времени из копии: от 1970 года до «завтра». Дата за пределами диапазона Date
  * (|v| > 8.64e15) роняла бы форматирование при каждом показе записи, а дата из далёкого
@@ -276,15 +339,14 @@ function ts(v: unknown, now: number): number | undefined {
 // Те же правила уникальности имени, что в repo.createCategory/updateCategory и cat: в поиске.
 const nameKey = categoryNameKey
 
-/** Только допустимые ключи с правильными типами; приватные ключи отбрасываются. */
+/** Только допустимые ключи с годными значениями (isValidSetting); приватные ключи отбрасываются. */
 export function sanitizeSettings(raw: unknown): Partial<Settings> {
   const out: Rec = {}
   if (!isRec(raw)) return out as Partial<Settings>
   for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>) {
     if (PRIVATE_SETTINGS.has(key) || !Object.hasOwn(raw, key)) continue
     const value = raw[key]
-    if (typeof value !== typeof DEFAULT_SETTINGS[key]) continue
-    if (key === 'theme' && !isOneOf(THEMES, value)) continue
+    if (!isValidSetting(key, value)) continue
     out[key] = value
   }
   return out as Partial<Settings>
@@ -384,6 +446,16 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   if (processedAt !== undefined) item.processedAt = processedAt
   const ai = sanitizeAi(raw.ai, now)
   if (ai) item.ai = ai
+  const ocrText = str(raw.ocrText)
+  if (ocrText !== undefined) {
+    const clean = cleanOcrText(ocrText)
+    if (clean) item.ocrText = clean
+  }
+  const ocrAt = ts(raw.ocrAt, now)
+  if (ocrAt !== undefined) item.ocrAt = ocrAt
+  // 0 не годится: корзину выбирают по индексу deletedAt > 0, запись с нулём выпала бы из «Очистить корзину».
+  const deletedAt = ts(raw.deletedAt, now)
+  if (deletedAt !== undefined && deletedAt > 0) item.deletedAt = deletedAt
   return item
 }
 
@@ -398,6 +470,47 @@ function sanitizeCategory(raw: unknown, index: number, now: number): Category | 
     color: isOneOf(CATEGORY_COLORS, raw.color) ? raw.color : 'slate',
     order: num(raw.order) ?? index,
     createdAt: ts(raw.createdAt, now) ?? now,
+  }
+}
+
+/** Положение ноды из копии; null — негодное (нет id, координаты не числа или за пределом). */
+function sanitizePosition(raw: unknown): NodePosition | null {
+  if (!isRec(raw)) return null
+  const id = idStr(raw.id)
+  const point = sanitizePoint(raw)
+  return id && point ? { id, ...point } : null
+}
+
+/** Клетка сетки графа, в которой стоит нода: та же, что автораскладка считает занятой. */
+function cellOf(p: GraphPoint): string {
+  const { x, y } = snapToGrid(p)
+  return `${x},${y}`
+}
+
+/** Сохранённый поиск из копии; null — негодный (нет id, пустые или слишком длинные имя/запрос). */
+function sanitizeSearch(raw: unknown, index: number, now: number): SavedSearch | null {
+  if (!isRec(raw)) return null
+  const id = idStr(raw.id)
+  const name = str(raw.name)?.trim()
+  const query = str(raw.query)?.trim()
+  if (!id || !name || !query) return null
+  if (name.length > SAVED_SEARCH_NAME_MAX || query.length > SAVED_SEARCH_QUERY_MAX) return null
+  return { id, name, query, order: num(raw.order) ?? index, createdAt: ts(raw.createdAt, now) ?? now }
+}
+
+/**
+ * Свободное имя поиска: «Имя (2)», «Имя (3)»… Основа укорачивается, чтобы имя с суффиксом
+ * осталось в пределах SAVED_SEARCH_NAME_MAX — иначе поиск нельзя было бы пересохранить.
+ */
+function freeSearchName(name: string, taken: ReadonlySet<string>): string {
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`
+    let base = name.slice(0, SAVED_SEARCH_NAME_MAX - suffix.length)
+    // Обрезка могла разорвать суррогатную пару.
+    const last = base.charCodeAt(base.length - 1)
+    if (last >= 0xd800 && last <= 0xdbff) base = base.slice(0, -1)
+    const candidate = base.trimEnd() + suffix
+    if (!taken.has(searchNameKey(candidate))) return candidate
   }
 }
 
@@ -447,6 +560,8 @@ interface ParsedBackup {
   items: unknown[]
   categories: unknown[]
   files: unknown[]
+  positions: unknown[]
+  searches: unknown[]
   settings: unknown
 }
 
@@ -493,6 +608,9 @@ async function readBackup(file: Blob): Promise<ParsedBackup> {
     items: data.items as unknown[],
     categories: data.categories as unknown[],
     files: data.files as unknown[],
+    // Этих разделов нет в копиях версии 1, а в чужой копии они могут быть чем угодно: не повод отказывать.
+    positions: Array.isArray(data.positions) ? (data.positions as unknown[]) : [],
+    searches: Array.isArray(data.searches) ? (data.searches as unknown[]) : [],
     settings: data.settings,
   }
 }
@@ -504,11 +622,27 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
+ * Победившая при слиянии версия записи с распознанным текстом того же вложения из другой версии, если тот
+ * свежее. setOcrText не меняет updatedAt, поэтому распознавание в выборе версии не участвует и иначе
+ * терялось бы: текст пропал бы из поиска, а автораспознавание отправило бы картинку в ИИ повторно.
+ */
+function withNewerOcr(winner: Item, other: Item): Item {
+  if (!winner.fileId || winner.fileId !== other.fileId || other.ocrAt === undefined) return winner
+  if (winner.ocrAt !== undefined && winner.ocrAt >= other.ocrAt) return winner
+  const next: Item = { ...winner, ocrAt: other.ocrAt }
+  // ocrAt без ocrText — «пробовали, текста нет»
+  if (other.ocrText !== undefined) next.ocrText = other.ocrText
+  else delete next.ocrText
+  return next
+}
+
+/**
  * Целостность всей базы после импорта: связи только на существующие записи и в обе стороны,
  * categoryId только на существующую категорию, fileId только на существующий файл,
- * файлы, на которые не ссылается ни одна запись, удаляются.
+ * файлы, на которые не ссылается ни одна запись, и положения нод без записи удаляются.
+ * Связи с записями в корзине — корректные: корзина хранит связи до окончательного удаления.
  * updatedAt не трогаем: это техническая починка, а не правка пользователя.
- * Вызывать только внутри rw-транзакции по items/files/categories.
+ * Вызывать только внутри rw-транзакции по items/files/categories/positions.
  */
 async function repairIntegrity(): Promise<void> {
   const items = await db.items.toArray()
@@ -554,6 +688,8 @@ async function repairIntegrity(): Promise<void> {
   if (changed.length) await db.items.bulkPut(changed)
   const orphans = fileIds.filter((id) => !referencedFiles.has(id))
   if (orphans.length) await db.files.bulkDelete(orphans)
+  const strayPositions = (await db.positions.toCollection().primaryKeys()).filter((id) => !byId.has(id))
+  if (strayPositions.length) await db.positions.bulkDelete(strayPositions)
 }
 
 export async function importBackup(file: Blob, mode: ImportMode): Promise<ImportReport> {
@@ -608,15 +744,39 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
     files.set(f.id, f)
   }
 
+  // Положения: при дублях id остаётся первое.
+  const positions = new Map<string, NodePosition>()
+  for (const raw of backup.positions) {
+    const pos = sanitizePosition(raw)
+    if (!pos || positions.has(pos.id)) {
+      skipped++
+      continue
+    }
+    positions.set(pos.id, pos)
+  }
+
+  const searches = new Map<string, SavedSearch>()
+  backup.searches.forEach((raw, index) => {
+    const search = sanitizeSearch(raw, index, now)
+    if (!search || searches.has(search.id)) {
+      skipped++
+      return
+    }
+    searches.set(search.id, search)
+  })
+
   const settings = sanitizeSettings(backup.settings)
 
-  const write = db.transaction('rw', [db.items, db.files, db.categories, db.meta], async () => {
-    const report: ImportReport = { items: 0, files: 0, categories: 0, skipped }
+  const tables = [db.items, db.files, db.categories, db.meta, db.positions, db.searches]
+  const write = db.transaction('rw', tables, async () => {
+    const report: ImportReport = { items: 0, files: 0, categories: 0, skipped, positions: 0, searches: 0 }
 
     if (mode === 'replace') {
       await db.items.clear()
       await db.files.clear()
       await db.categories.clear()
+      await db.positions.clear()
+      await db.searches.clear()
     }
 
     // ── категории ──
@@ -653,21 +813,40 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
       return target === item.categoryId ? item : { ...item, categoryId: target }
     })
     const existing = mode === 'merge' ? await db.items.bulkGet(incoming.map((i) => i.id)) : []
+    // Срок корзины, который будет действовать после импорта: replace не очищает meta, поэтому значение
+    // из копии ложится поверх здешнего, а без него остаётся здешнее; merge настройки не переносит.
+    const storedDays = (await db.meta.get('trashDays'))?.value
+    const localDays = isValidSetting('trashDays', storedDays) ? storedDays : DEFAULT_SETTINGS.trashDays
+    const trashFloor = importedTrashFloor((mode === 'replace' ? settings.trashDays : undefined) ?? localDays, now)
     const itemsToPut: Item[] = []
+    // Оставшиеся локальные записи, которым из копии пришёл только более свежий распознанный текст.
+    const ocrOnly: Item[] = []
+    // Слияние сменило категорию: локальное положение стоит в зоне прежней категории, а перевести ноду
+    // в другую зону может только смена категории со снятием положения (Р8).
+    const recategorized: string[] = []
     // fileId → итоговая запись-владелец (импортированная или оставшаяся локальная)
     const fileOwner = new Map<string, { item: Item; imported: boolean }>()
-    incoming.forEach((item, i) => {
+    incoming.forEach((raw, i) => {
       const loc = existing[i]
       // при равном updatedAt остаётся локальная
-      if (loc && item.updatedAt <= loc.updatedAt) {
+      if (loc && raw.updatedAt <= loc.updatedAt) {
         report.skipped++
+        const kept = withNewerOcr(loc, raw)
+        if (kept !== loc) ocrOnly.push(kept)
         if (loc.fileId) fileOwner.set(loc.fileId, { item: loc, imported: false })
         return
+      }
+      let item =
+        raw.deletedAt !== undefined && raw.deletedAt < trashFloor ? { ...raw, deletedAt: trashFloor } : raw
+      if (loc) {
+        item = withNewerOcr(item, loc)
+        if ((loc.categoryId ?? null) !== item.categoryId) recategorized.push(item.id)
       }
       itemsToPut.push(item)
       if (item.fileId) fileOwner.set(item.fileId, { item, imported: true })
     })
-    if (itemsToPut.length) await db.items.bulkPut(itemsToPut)
+    if (itemsToPut.length || ocrOnly.length) await db.items.bulkPut([...itemsToPut, ...ocrOnly])
+    if (recategorized.length) await db.positions.bulkDelete(recategorized)
     report.items = itemsToPut.length
 
     // ── файлы ──
@@ -683,7 +862,59 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
     report.files = filesToPut.length
     report.skipped += files.size - filesToPut.length
 
+    // ── сохранённые поиски ──
+    const localSearches = mode === 'merge' ? await db.searches.toArray() : []
+    const localSearchIds = new Set(localSearches.map((s) => s.id))
+    const localQueryByName = new Map(localSearches.map((s) => [searchNameKey(s.name), s.query]))
+    const takenNames = new Set(localQueryByName.keys())
+    let nextSearchOrder = localSearches.reduce((max, s) => Math.max(max, s.order), -1) + 1
+    const searchesToPut: SavedSearch[] = []
+    // По order копии: при слиянии новые встают после локальных в том же взаимном порядке.
+    for (const search of [...searches.values()].sort((a, b) => a.order - b.order)) {
+      const key = searchNameKey(search.name)
+      // Тот же id — остаётся локальный; то же имя и тот же запрос — это тот же поиск.
+      if (localSearchIds.has(search.id) || localQueryByName.get(key) === search.query) {
+        report.skipped++
+        continue
+      }
+      const name = takenNames.has(key) ? freeSearchName(search.name, takenNames) : search.name
+      takenNames.add(searchNameKey(name))
+      searchesToPut.push(mode === 'merge' ? { ...search, name, order: nextSearchOrder++ } : { ...search, name })
+    }
+    if (searchesToPut.length) await db.searches.bulkPut(searchesToPut)
+    report.searches = searchesToPut.length
+
     await repairIntegrity()
+
+    // ── положения нод ──
+    // После починки целостности: нужна итоговая категория записи. Положение из копии — только для записей,
+    // которые есть после импорта (в т.ч. в корзине: оттуда запись возвращается на своё место), и только
+    // если категория итоговой записи та же, что у записи в копии: положение — место в зоне категории (Р8).
+    // При слиянии локальная раскладка сильнее: положение из копии — лишь там, где своего нет и клетка
+    // свободна. Раскладка на каждом устройстве растёт от начала координат, так что положения двух устройств
+    // совпадают систематически, а сохранённые положения автораскладка не разводит. Занятость считается
+    // и внутри самой копии (в порядке копии); отвергнутая нода получит место автораскладкой.
+    const copyCategory = new Map(incoming.map((it) => [it.id, it.categoryId]))
+    const posIds = [...positions.keys()]
+    const finals = posIds.length ? await db.items.bulkGet(posIds) : []
+    // После replace таблица пуста. Скрытые записи (архив, корзина) тоже держат клетку: они на неё вернутся.
+    const localPositions = posIds.length ? await db.positions.toArray() : []
+    const withLocalPos = new Set(localPositions.map((p) => p.id))
+    const takenCells = new Set(localPositions.map(cellOf))
+    const positionsToPut: NodePosition[] = []
+    posIds.forEach((id, i) => {
+      const final = finals[i]
+      if (!final || withLocalPos.has(id) || !copyCategory.has(id)) return
+      if (copyCategory.get(id) !== final.categoryId) return
+      const pos = positions.get(id)!
+      const cell = cellOf(pos)
+      if (takenCells.has(cell)) return
+      takenCells.add(cell)
+      positionsToPut.push(pos)
+    })
+    if (positionsToPut.length) await db.positions.bulkPut(positionsToPut)
+    report.positions = positionsToPut.length
+    report.skipped += positions.size - positionsToPut.length
 
     if (mode === 'replace') {
       const rows: MetaRecord[] = Object.entries(settings).map(([key, value]) => ({ key, value }))

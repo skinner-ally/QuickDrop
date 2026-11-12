@@ -1,19 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import {
-  Archive,
-  Folder,
-  Hash,
-  Inbox,
-  Library,
-  Monitor,
-  Moon,
-  Plus,
-  Search,
-  Settings as SettingsIcon,
-  Star,
-  Sun,
-  type LucideIcon,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { toast } from 'sonner'
 import {
   CommandDialog,
@@ -28,7 +14,7 @@ import {
 import { CategoryDot } from '@/components/items/CategoryBadge'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { setSetting } from '@/db/settings'
-import { useAllItems, useAllTags, useCategories } from '@/hooks/useItems'
+import { useAllItems, useAllTags, useCategories, useItemsWithTrash } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { fold, makeSnippet, searchItems } from '@/search'
@@ -54,14 +40,14 @@ const STATUS_VIEW: Record<ItemStatus, View> = {
 interface PaletteAction {
   id: string
   label: string
-  icon: LucideIcon
+  icon: IconName
   run: () => void
   shortcut?: string
 }
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="rounded border border-border bg-muted px-1 font-sans text-[11px] leading-4 text-muted-foreground">
+    <kbd className="rounded border border-border bg-muted px-1 font-sans text-2xs leading-4 text-muted-foreground">
       {children}
     </kbd>
   )
@@ -86,6 +72,8 @@ export function CommandPalette() {
   const [input, setInput] = useState('')
 
   const items = useAllItems()
+  // Индекс поиска синхронизируется с полным набором (с корзиной); выдача сужается через within
+  const itemsWithTrash = useItemsWithTrash()
   const categories = useCategories()
   const allTags = useAllTags()
 
@@ -119,20 +107,20 @@ export function CommandPalette() {
       {
         id: 'new',
         label: 'Новая запись',
-        icon: Plus,
+        icon: 'plus',
         run: () => {
           close()
           useUi.getState().openCapture()
         },
       },
-      { id: 'go-inbox', label: 'Перейти: Входящие', icon: Inbox, run: () => go('inbox') },
-      { id: 'go-library', label: 'Перейти: База знаний', icon: Library, run: () => go('library') },
-      { id: 'go-favorites', label: 'Перейти: Избранное', icon: Star, run: () => go('favorites') },
-      { id: 'go-archive', label: 'Перейти: Архив', icon: Archive, run: () => go('archive') },
-      { id: 'go-settings', label: 'Перейти: Настройки', icon: SettingsIcon, run: () => go('settings') },
-      { id: 'theme-light', label: 'Тема: светлая', icon: Sun, run: () => setTheme('light') },
-      { id: 'theme-dark', label: 'Тема: тёмная', icon: Moon, run: () => setTheme('dark') },
-      { id: 'theme-system', label: 'Тема: как в системе', icon: Monitor, run: () => setTheme('system') },
+      { id: 'go-inbox', label: 'Перейти: Входящие', icon: 'inbox', run: () => go('inbox') },
+      { id: 'go-library', label: 'Перейти: База знаний', icon: 'library', run: () => go('library') },
+      { id: 'go-favorites', label: 'Перейти: Избранное', icon: 'star', run: () => go('favorites') },
+      { id: 'go-archive', label: 'Перейти: Архив', icon: 'archive', run: () => go('archive') },
+      { id: 'go-settings', label: 'Перейти: Настройки', icon: 'settings', run: () => go('settings') },
+      { id: 'theme-light', label: 'Тема: светлая', icon: 'sun', run: () => setTheme('light') },
+      { id: 'theme-dark', label: 'Тема: тёмная', icon: 'moon', run: () => setTheme('dark') },
+      { id: 'theme-system', label: 'Тема: как в системе', icon: 'monitor', run: () => setTheme('system') },
     ],
     // close/go/setTheme зависят только от стабильных zustand-действий и setInput
     [],
@@ -148,11 +136,11 @@ export function CommandPalette() {
         .map((item) => ({ item, snippet: makeSnippet(item, [], 90) }))
       return { hits: recent, recent: true }
     }
-    const hits = searchItems(items, trimmed, categories)
+    const hits = searchItems(itemsWithTrash ?? items, trimmed, categories, { within: items })
       .slice(0, MAX_HITS)
       .map((h) => ({ item: h.item, snippet: makeSnippet(h.item, h.terms, 90) }))
     return { hits, recent: false }
-  }, [items, categories, trimmed])
+  }, [items, itemsWithTrash, categories, trimmed])
 
   const needle = fold(trimmed)
   const shownActions = trimmed ? actions.filter((a) => fold(a.label).includes(needle)) : actions
@@ -202,14 +190,14 @@ export function CommandPalette() {
             <CommandGroup heading="Действия">
               {shownActions.map((a) => (
                 <CommandItem key={a.id} value={`action-${a.id}`} onSelect={a.run}>
-                  <a.icon strokeWidth={1.75} aria-hidden />
+                  <Icon name={a.icon} />
                   {a.label}
                   {a.shortcut && <CommandShortcut>{a.shortcut}</CommandShortcut>}
                 </CommandItem>
               ))}
               {trimmed && (
                 <CommandItem value="action-search-library" onSelect={() => toLibrary({}, trimmed)}>
-                  <Search strokeWidth={1.75} aria-hidden />
+                  <Icon name="search" />
                   <span className="truncate">Искать «{trimmed}» в базе знаний</span>
                 </CommandItem>
               )}
@@ -220,7 +208,7 @@ export function CommandPalette() {
             <CommandGroup heading="Категории">
               {matchedCategories.map((c) => (
                 <CommandItem key={c.id} value={`cat-${c.id}`} onSelect={() => toLibrary({ categoryId: c.id })}>
-                  <Folder strokeWidth={1.75} aria-hidden />
+                  <Icon name="folder" />
                   <span className="truncate">{c.name}</span>
                   <CategoryDot color={c.color} className="ml-auto" />
                 </CommandItem>
@@ -232,7 +220,7 @@ export function CommandPalette() {
             <CommandGroup heading="Теги">
               {matchedTags.map((t) => (
                 <CommandItem key={t.tag} value={`tag-${t.tag}`} onSelect={() => toLibrary({ tags: [t.tag] })}>
-                  <Hash strokeWidth={1.75} aria-hidden />
+                  <Icon name="hash" />
                   <span className="truncate">{t.tag}</span>
                   <span className="ml-auto text-xs text-muted-foreground tabular-nums">{t.count}</span>
                 </CommandItem>

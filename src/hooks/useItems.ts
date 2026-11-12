@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { liveQuery, type Subscription } from 'dexie'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/db'
-import { getFile } from '@/db/repo'
+import { getFile, getPositions } from '@/db/repo'
+import { addDays, startOfDay } from '@/lib/dates'
+import { isSearchIndexReady, prepareSearchIndexAsync } from '@/search'
 import { useUi } from '@/store/ui'
-import type { Category, Item, ItemFilter } from '@/types'
+import type { Category, GraphPoint, Item, ItemFilter, SavedSearch } from '@/types'
 import { computeVisible } from './computeVisible'
 import type { VisibleResult } from './computeVisible'
 
@@ -64,6 +66,31 @@ function scheduleRetry(): void {
   retryDelay = Math.min(retryDelay * 2, ITEMS_RETRY_MAX_MS)
 }
 
+/** Запас для requestIdleCallback: индекс строится не позже, даже если простоя не было. */
+export const SEARCH_PREPARE_TIMEOUT_MS = 3000
+
+/**
+ * Индекс поиска строится в простое после снимка, а не на первом введённом символе. Повторные
+ * вызовы до готовности индекса склеивает prepareSearchIndexAsync. Категории читаются тем же
+ * запросом, что в useCategories: тогда поиск сразу берёт готовый индекс.
+ */
+function schedulePrepareIndex(): void {
+  if (isSearchIndexReady()) return
+  const run = () => {
+    const items = snapshot
+    if (!items || isSearchIndexReady()) return
+    void db.categories
+      .orderBy('order')
+      .toArray()
+      .then((categories) => prepareSearchIndexAsync(items, categories))
+      .catch(() => {
+        // необязательная подготовка: поиск построит индекс сам
+      })
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: SEARCH_PREPARE_TIMEOUT_MS })
+  else setTimeout(run, 0)
+}
+
 function subscribeItems(): void {
   subscription = liveQuery(() => db.items.toArray()).subscribe({
     next: (items) => {
@@ -71,6 +98,7 @@ function subscribeItems(): void {
       failed = false
       retryDelay = ITEMS_RETRY_MIN_MS
       emit()
+      schedulePrepareIndex()
     },
     error: (err: unknown) => {
       console.error('QuickDrop: не удалось прочитать записи', err)
@@ -103,13 +131,59 @@ export function subscribeAllItems(listener: () => void): () => void {
   }
 }
 
-/** Текущий снимок общего списка; undefined — первое чтение ещё не завершилось. */
-export function getAllItemsSnapshot(): Item[] | undefined {
+// Срезы снимка считаются один раз на снимок, а их ссылки стабильны: этого требует
+// useSyncExternalStore, и на этом держится быстрый путь индекса поиска (тот же массив — без сверки).
+type Slices = { live: Item[]; trashed: Item[] }
+const NO_ITEMS: Item[] = []
+const slicesCache = new WeakMap<Item[], Slices>()
+
+function slicesOf(all: Item[]): Slices {
+  const cached = slicesCache.get(all)
+  if (cached) return cached
+  let slices: Slices
+  if (all.some((it) => it.deletedAt !== undefined)) {
+    const live: Item[] = []
+    const trashed: Item[] = []
+    for (const it of all) (it.deletedAt === undefined ? live : trashed).push(it)
+    trashed.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+    slices = { live, trashed }
+  } else {
+    // Корзина пуста — срез «без корзины» и есть полный снимок: производные кэши и индекс не раздваиваются.
+    slices = { live: all, trashed: NO_ITEMS }
+  }
+  slicesCache.set(all, slices)
+  return slices
+}
+
+/** Все записи, включая корзину (для поиска); undefined — первое чтение ещё не завершилось. */
+export function getItemsWithTrashSnapshot(): Item[] | undefined {
   return snapshot
+}
+
+/** Записи вне корзины; undefined — первое чтение ещё не завершилось. */
+export function getAllItemsSnapshot(): Item[] | undefined {
+  return snapshot && slicesOf(snapshot).live
+}
+
+/** Только корзина, недавно удалённые — первыми. */
+export function getTrashedItemsSnapshot(): Item[] | undefined {
+  return snapshot && slicesOf(snapshot).trashed
 }
 
 export function useAllItems(): Item[] | undefined {
   return useSyncExternalStore(subscribeAllItems, getAllItemsSnapshot, getAllItemsSnapshot)
+}
+
+export function useTrashedItems(): Item[] | undefined {
+  return useSyncExternalStore(subscribeAllItems, getTrashedItemsSnapshot, getTrashedItemsSnapshot)
+}
+
+export function useItemsWithTrash(): Item[] | undefined {
+  return useSyncExternalStore(subscribeAllItems, getItemsWithTrashSnapshot, getItemsWithTrashSnapshot)
+}
+
+export function useTrashCount(): number {
+  return useTrashedItems()?.length ?? 0
 }
 
 /** true — последнее чтение записей завершилось ошибкой (чтение повторяется само). */
@@ -126,6 +200,7 @@ export function useAllItemsFailed(): boolean {
 type TagCount = { tag: string; count: number }
 const NO_TAGS: TagCount[] = []
 const NO_COUNTS = { inbox: 0, library: 0, favorites: 0, archive: 0 }
+const NO_SEARCHES: SavedSearch[] = []
 const tagsCache = new WeakMap<Item[], TagCount[]>()
 const countsCache = new WeakMap<Item[], typeof NO_COUNTS>()
 
@@ -162,21 +237,88 @@ export function useCategories(): Category[] {
   return useLiveQuery(() => db.categories.orderBy('order').toArray(), []) ?? []
 }
 
+export function usePositions(): Record<string, GraphPoint> | undefined {
+  return useLiveQuery(getPositions, [])
+}
+
+export function useSavedSearches(): SavedSearch[] {
+  return useLiveQuery(() => db.searches.orderBy('order').toArray(), []) ?? NO_SEARCHES
+}
+
+// ───────────────── текущие сутки ─────────────────
+
+const dayListeners = new Set<() => void>()
+let dayTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Начало текущих локальных суток. */
+export function getDayKey(): number {
+  return startOfDay(Date.now())
+}
+
+function notifyDay(): void {
+  for (const listener of [...dayListeners]) listener()
+}
+
+function armDayTimer(): void {
+  if (dayTimer !== undefined) clearTimeout(dayTimer)
+  // Сработал чуть раньше полуночи — ключ ещё прежний, новый таймер встанет на остаток.
+  const next = startOfDay(addDays(getDayKey(), 1))
+  dayTimer = setTimeout(onDayTimer, Math.max(next - Date.now(), 0))
+}
+
+function onDayTimer(): void {
+  dayTimer = undefined
+  notifyDay()
+  if (dayListeners.size > 0) armDayTimer()
+}
+
+/** После сна устройства таймер запаздывает: при возврате в окно сверяемся заново. */
+function onDayWake(): void {
+  if (document.visibilityState !== 'visible') return
+  notifyDay()
+  armDayTimer()
+}
+
+/** Подписка на смену суток (для useSyncExternalStore и тестов). */
+export function subscribeDayKey(listener: () => void): () => void {
+  dayListeners.add(listener)
+  if (dayListeners.size === 1) {
+    armDayTimer()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onDayWake)
+  }
+  return () => {
+    dayListeners.delete(listener)
+    if (dayListeners.size > 0) return
+    if (dayTimer !== undefined) clearTimeout(dayTimer)
+    dayTimer = undefined
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onDayWake)
+  }
+}
+
+/** Начало текущих локальных суток; обновляется в полночь. */
+export function useDayKey(): number {
+  return useSyncExternalStore(subscribeDayKey, getDayKey, getDayKey)
+}
+
 export function useVisibleItems(base: ItemFilter): VisibleResult & { loading: boolean } {
-  const items = useAllItems()
+  // Полный набор, включая корзину: её отсекает фильтр, а индекс поиска не перестраивается при входе в «Корзину».
+  const items = useItemsWithTrash()
   const categories = useCategories()
   const filter = useUi((s) => s.filter)
   const query = useUi((s) => s.query)
   const sort = useUi((s) => s.sort)
+  const dayKey = useDayKey()
 
   // base приходит литералом на каждый рендер — стабилизируем по содержимому.
   const baseKey = JSON.stringify(base)
 
   return useMemo(() => {
+    // Относительные даты запроса («за неделю») считаются от «сейчас»: со сменой суток список пересчитывается.
+    void dayKey
     if (!items) return { hits: [], total: 0, loading: true }
     const stableBase = JSON.parse(baseKey) as ItemFilter
     return { ...computeVisible(items, categories, stableBase, filter, query, sort), loading: false }
-  }, [items, categories, baseKey, filter, query, sort])
+  }, [items, categories, baseKey, filter, query, sort, dayKey])
 }
 
 export function useAllTags(): Array<{ tag: string; count: number }> {
@@ -216,12 +358,13 @@ export function useItem(id: string | null | undefined): Item | undefined {
   return useLiveQuery(() => (id ? db.items.get(id) : undefined), [id])
 }
 
+/** Связанные записи без лежащих в корзине: связь при удалении сохраняется, но в списке её не видно. */
 export function useLinkedItems(item: Pick<Item, 'links'> | undefined | null): Item[] {
   const key = item?.links.join('|') ?? ''
   return (
     useLiveQuery(async () => {
       const found = await db.items.bulkGet(key ? key.split('|') : [])
-      return found.filter((x): x is Item => !!x)
+      return found.filter((x): x is Item => !!x && x.deletedAt === undefined)
     }, [key]) ?? []
   )
 }

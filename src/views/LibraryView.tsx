@@ -1,4 +1,3 @@
-import { Library } from 'lucide-react'
 import { EmptyState } from '@/components/items/EmptyState'
 import { Button } from '@/components/ui/button'
 import { useUi } from '@/store/ui'
@@ -13,7 +12,7 @@ export function LibraryView() {
       variant="library"
       emptyState={
         <EmptyState
-          icon={Library}
+          icon="library"
           title="Здесь появятся разобранные записи"
           description="Разбирайте входящие: записи, перенесённые в базу знаний, остаются здесь навсегда."
           action={

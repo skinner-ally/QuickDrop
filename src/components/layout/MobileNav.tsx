@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { useSelection } from '@/store/selection'
@@ -30,9 +30,9 @@ export function MobileNav() {
         <Button
           aria-label="Добавить запись"
           onClick={() => openCapture()}
-          className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 h-12 gap-1.5 rounded-full bg-brand px-5 text-[15px] text-brand-foreground shadow-md hover:bg-brand/90"
+          className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 h-12 gap-1.5 rounded-full bg-brand px-5 text-md text-brand-foreground shadow-md hover:bg-brand/90"
         >
-          <Plus className="size-5" strokeWidth={1.75} />
+          <Icon name="plus" size={20} className="size-5" />
           Добавить
         </Button>
       )}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ArrowLeft, ChevronDown, Star, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -35,6 +35,7 @@ const SOURCE_LABEL: Record<ItemSource, string> = {
   drop: 'перетаскивание',
   import: 'импорт',
   demo: 'демо',
+  extension: 'Из браузера',
 }
 
 const SWITCHABLE: ItemType[] = ['text', 'idea', 'code']
@@ -57,7 +58,7 @@ function TypeSwitch({ item }: { item: Item }) {
       >
         <TypeIcon type={item.type} />
         <span>{label}</span>
-        <ChevronDown size={14} strokeWidth={1.75} aria-hidden />
+        <Icon name="chevron-down" size={14} />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-auto min-w-36">
         {SWITCHABLE.map((t) => (
@@ -121,7 +122,7 @@ function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
     <div className="@container flex h-full min-h-0 flex-col bg-background">
       <header className="sticky top-0 z-10 flex shrink-0 items-center gap-1 border-b border-border bg-background px-2 py-1.5">
         <Button variant="ghost" size="icon-sm" aria-label="Назад" onClick={onClose} className="pointer-coarse:size-9 md:hidden">
-          <ArrowLeft strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="arrow-left" className="size-4" />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <TypeSwitch item={item} />
@@ -137,12 +138,13 @@ function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
           aria-pressed={item.favorite === 1}
           onClick={() => void actToggleFavorite(item)}
         >
-          <Star strokeWidth={1.75} aria-hidden className={cn('size-4', item.favorite === 1 && 'fill-[var(--cat-amber)] text-[var(--cat-amber)]')} />
+          {/* pixel:text-inherit: в пиксельных сценах нажатая кнопка сама золотая, значок берёт её цвет текста */}
+          <Icon name="star" className={cn('size-4', item.favorite === 1 && 'fill-gold text-gold pixel:text-inherit')} />
         </Button>
         <PrimaryAction item={item} />
         <ItemMenu item={item} variant="detail" />
         <Button variant="ghost" size="icon-sm" aria-label="Закрыть" onClick={onClose} className="hidden pointer-coarse:size-9 md:inline-flex">
-          <X strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="x" className="size-4" />
         </Button>
       </header>
 

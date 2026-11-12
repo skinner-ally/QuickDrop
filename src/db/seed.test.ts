@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '@/db/db'
 import { clearAllData, seedDemoData } from '@/db/seed'
 import { getSettings, setSettings } from '@/db/settings'
-import { DEFAULT_SETTINGS, ITEM_TYPES, type Item } from '@/types'
+import { DEFAULT_SETTINGS, ITEM_TYPES, type Item, type Settings } from '@/types'
 
 async function reset() {
   await db.items.clear()
   await db.files.clear()
   await db.categories.clear()
   await db.meta.clear()
+  await db.positions.clear()
+  await db.searches.clear()
 }
 
 describe('seedDemoData', () => {
@@ -114,12 +116,57 @@ describe('seedDemoData', () => {
     expect(work.length).toBeGreaterThan(0)
   })
 
+  it('демо-запись в корзине не воскрешается повторным засевом', async () => {
+    await seedDemoData()
+    const before = (await db.items.get('demo-06'))!
+    // Перенос в корзину меняет только deletedAt (как repo.deleteItems): остальное совпадает с определением.
+    await db.items.update('demo-06', { deletedAt: 5_000 })
+    await db.positions.put({ id: 'demo-06', x: 32, y: -64 })
+    const files = await db.files.count()
+
+    expect(await seedDemoData(true)).toBe(true)
+
+    expect(await db.items.get('demo-06')).toEqual({ ...before, deletedAt: 5_000 })
+    expect(await db.items.where('deletedAt').above(0).primaryKeys()).toEqual(['demo-06'])
+    // Файл записи в корзине и её место на графе остаются при ней.
+    expect(await db.files.count()).toBe(files)
+    expect((await db.files.get(before.fileId!))?.itemId).toBe('demo-06')
+    expect(await db.positions.toArray()).toEqual([{ id: 'demo-06', x: 32, y: -64 }])
+    // Связи остаются двунаправленными и с записью в корзине.
+    const byId = new Map((await db.items.toArray()).map((i) => [i.id, i]))
+    for (const i of byId.values()) {
+      for (const l of i.links) expect(byId.get(l)?.links, `${i.id} → ${l}`).toContain(i.id)
+    }
+  })
+
+  it('засев не создаёт положений и поисков, повторный — не трогает пользовательские', async () => {
+    await seedDemoData()
+    expect(await db.positions.count()).toBe(0)
+    expect(await db.searches.count()).toBe(0)
+    expect(await db.items.where('deletedAt').above(0).count()).toBe(0)
+
+    const search = { id: 's1', name: 'Мой поиск', query: 'is:fav', order: 0, createdAt: 1 }
+    await db.positions.put({ id: 'demo-01', x: 64, y: 96 })
+    await db.searches.put(search)
+    expect(await seedDemoData(true)).toBe(true)
+    expect(await db.positions.toArray()).toEqual([{ id: 'demo-01', x: 64, y: 96 }])
+    expect(await db.searches.toArray()).toEqual([search])
+  })
+
   it('clearAllData очищает данные, но оставляет seeded', async () => {
     await seedDemoData()
+    await db.items.update('demo-01', { deletedAt: 5_000 })
+    await db.positions.bulkPut([
+      { id: 'demo-01', x: 1, y: 2 },
+      { id: 'demo-02', x: 3, y: 4 },
+    ])
+    await db.searches.put({ id: 's1', name: 'Поиск', query: 'tag:a', order: 0, createdAt: 1 })
     await clearAllData()
     expect(await db.items.count()).toBe(0)
     expect(await db.files.count()).toBe(0)
     expect(await db.categories.count()).toBe(0)
+    expect(await db.positions.count()).toBe(0)
+    expect(await db.searches.count()).toBe(0)
     expect(await seedDemoData()).toBe(false)
   })
 
@@ -143,5 +190,43 @@ describe('seedDemoData', () => {
     expect(s.theme).toBe('dark')
     expect(s.autoFetchLinkTitle).toBe(false)
     expect(s.seeded).toBe(true)
+  })
+
+  it('clearAllData стирает секрет расширения и распознавание; остальное, включая отметку автокопии, оставляет', async () => {
+    const kept = {
+      scene: 'winter',
+      font: 'pixel',
+      ambient: false,
+      trashDays: 7,
+      backupDir: 'C:\Backups',
+      backupEvery: 'weekly',
+      backupKeep: 3,
+      // Сброс отметки сделал бы автокопию «просроченной»: копия почти пустой базы пришла бы сразу
+      // после первой новой записи и вытеснила бы рабочие копии.
+      backupLastAt: 1_700_000_000_000,
+      mdExportDir: 'D:\Vault',
+      closeToTray: false,
+      extPort: 50123,
+      globalShortcut: 'Alt+Q',
+    } satisfies Partial<Settings>
+    await setSettings({
+      ...kept,
+      aiVisionModel: 'vision-x',
+      aiAutoOcr: true,
+      extEnabled: true,
+      extToken: 'tok-secret',
+    })
+    await clearAllData()
+
+    // В meta стёртых ключей нет вовсе (а не «лежит значение по умолчанию»).
+    const keys = (await db.meta.toCollection().primaryKeys()).sort()
+    expect(keys).toEqual([...Object.keys(kept), 'seeded'].sort())
+
+    const s = await getSettings()
+    expect(s).toMatchObject(kept)
+    expect(s.aiVisionModel).toBe('')
+    expect(s.aiAutoOcr).toBe(false)
+    expect(s.extEnabled).toBe(false)
+    expect(s.extToken).toBe('')
   })
 })

@@ -7,13 +7,18 @@ export type { ParsedQuery } from './query'
 export {
   searchItems,
   prepareSearchIndex,
+  prepareSearchIndexAsync,
+  isSearchIndexReady,
   resetSearchIndex,
   getSearchIndexStats,
   resolveCategoryName,
+  resolveQueryFilter,
 } from './engine'
 export type { SearchHit, SearchIndexStats, SearchOptions } from './engine'
+export { serializeFilter, composeQuery } from './serialize'
+export type { SerializeOptions } from './serialize'
 export { highlight, makeSnippet } from './highlight'
 export type { HighlightPart } from './highlight'
 // Та же функция, что repo.matchesFilter (единая реализация в lib/filter).
-export { matchesFilter } from './filter'
+export { matchesFilter, matchesFilterIgnoringTrash } from './filter'
 export { fold, queryWords, tokenize } from './normalize'

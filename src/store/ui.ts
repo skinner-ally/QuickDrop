@@ -2,7 +2,10 @@ import { create } from 'zustand'
 import type { ItemFilter, ItemType, SortMode } from '@/types'
 
 /** Разделы приложения. */
-export type View = 'inbox' | 'library' | 'favorites' | 'archive' | 'settings'
+export type View = 'inbox' | 'library' | 'favorites' | 'archive' | 'graph' | 'trash' | 'settings'
+
+/** Фильтры интерфейса: статус, избранное и корзину задаёт раздел. */
+export type UiFilter = Omit<ItemFilter, 'status' | 'favorite' | 'trashed'>
 
 /** Чем предзаполнить панель быстрого добавления. */
 export interface CaptureDraft {
@@ -18,7 +21,7 @@ interface UiState {
   /** Строка поиска (общая для всех разделов). */
   query: string
   /** Фильтры текущего раздела (статус задаёт сам раздел, здесь — остальное). */
-  filter: Omit<ItemFilter, 'status' | 'favorite'>
+  filter: UiFilter
   sort: SortMode
   layout: 'list' | 'grid'
 
@@ -31,8 +34,10 @@ interface UiState {
   setView: (view: View) => void
   select: (id: string | null) => void
   setQuery: (query: string) => void
-  setFilter: (patch: Partial<UiState['filter']>) => void
+  setFilter: (patch: Partial<UiFilter>) => void
   resetFilter: () => void
+  /** Применить запрос целиком (сохранённый поиск): строка поиска заменяется, фильтры и выбор сбрасываются. */
+  applyQuery: (query: string, view?: View) => void
   setSort: (sort: SortMode) => void
   setLayout: (layout: 'list' | 'grid') => void
   openCapture: (draft?: CaptureDraft) => void
@@ -59,6 +64,8 @@ export const useUi = create<UiState>((set) => ({
   setQuery: (query) => set({ query }),
   setFilter: (patch) => set((s) => ({ filter: { ...s.filter, ...patch } })),
   resetFilter: () => set({ filter: {} }),
+  applyQuery: (query, view) =>
+    set((s) => ({ query, filter: {}, selectedId: null, navOpen: false, view: view ?? s.view })),
   setSort: (sort) => set({ sort }),
   setLayout: (layout) => set({ layout }),
   openCapture: (draft) => set({ captureOpen: true, captureDraft: draft ?? null }),

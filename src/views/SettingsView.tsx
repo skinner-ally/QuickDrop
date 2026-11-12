@@ -26,7 +26,7 @@ export function SettingsView() {
             <AboutSection />
           </>
         ) : (
-          <p className="text-[13px] text-muted-foreground">Загрузка…</p>
+          <p className="text-2sm text-muted-foreground">Загрузка…</p>
         )}
       </div>
     </div>

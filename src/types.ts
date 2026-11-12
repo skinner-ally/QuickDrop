@@ -15,7 +15,8 @@ export type ItemType = (typeof ITEM_TYPES)[number]
 export const ITEM_STATUSES = ['inbox', 'library', 'archive'] as const
 export type ItemStatus = (typeof ITEM_STATUSES)[number]
 
-export type ItemSource = 'manual' | 'paste' | 'drop' | 'import' | 'demo'
+export const ITEM_SOURCES = ['manual', 'paste', 'drop', 'import', 'demo', 'extension'] as const
+export type ItemSource = (typeof ITEM_SOURCES)[number]
 
 /** Метаданные страницы, извлечённые по ссылке. */
 export interface LinkMeta {
@@ -84,6 +85,16 @@ export interface Item {
   processedAt?: number
 
   ai?: AiMeta
+
+  /**
+   * Текст, извлечённый из вложения (PDF с текстовым слоем, распознанная картинка). Участвует в поиске.
+   * Не входит в ItemPatch: пишет только repo.setOcrText, updatedAt при этом не меняется.
+   */
+  ocrText?: string
+  /** Когда текст извлекался в последний раз, в т.ч. безрезультатно (ocrAt есть, ocrText нет). */
+  ocrAt?: number
+  /** С какого момента запись в корзине. Поля нет — запись не в корзине. status, prevStatus и links не меняются. */
+  deletedAt?: number
 }
 
 /** Бинарное содержимое файла/изображения. Хранится отдельно, чтобы списки были лёгкими. */
@@ -99,6 +110,29 @@ export interface StoredFile {
   createdAt: number
 }
 
+/** Точка в мировых координатах графа: центр ноды, px при масштабе 100 %. */
+export interface GraphPoint {
+  x: number
+  y: number
+}
+
+/** Сохранённое положение ноды графа. id — id записи. */
+export interface NodePosition extends GraphPoint {
+  id: string
+}
+
+/** Сохранённый поиск: строка запроса с операторами (см. search.serializeFilter). */
+export interface SavedSearch {
+  id: string
+  name: string
+  query: string
+  order: number
+  createdAt: number
+}
+
+export const SAVED_SEARCH_NAME_MAX = 60
+export const SAVED_SEARCH_QUERY_MAX = 2000
+
 export const CATEGORY_COLORS = [
   'slate', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink',
 ] as const
@@ -111,6 +145,14 @@ export interface Category {
   order: number
   createdAt: number
 }
+
+export const THEMES = ['system', 'light', 'dark'] as const
+export const SCENE_PREFS = ['auto', 'meadow', 'autumn', 'paper', 'winter', 'classic'] as const
+export type ScenePref = (typeof SCENE_PREFS)[number]
+export const FONT_PREFS = ['round', 'plain', 'soft', 'pixel'] as const
+export type FontPref = (typeof FONT_PREFS)[number]
+export const BACKUP_PERIODS = ['off', 'daily', 'weekly'] as const
+export type BackupPeriod = (typeof BACKUP_PERIODS)[number]
 
 /** Ключи таблицы meta (key-value настройки). */
 export interface Settings {
@@ -131,6 +173,39 @@ export interface Settings {
   aiBaseUrl: string
   aiApiKey: string
   aiModel: string
+
+  /** Сцена оформления. 'auto' — по календарю (дек–фев winter, сен–ноя autumn, иначе meadow). */
+  scene: ScenePref
+  /** Шрифт текста; действует только в пиксельных сценах. */
+  font: FontPref
+  /** Живой фон графа. */
+  ambient: boolean
+
+  /** Через сколько дней запись в корзине удаляется окончательно. 0 — не очищать автоматически. */
+  trashDays: number
+
+  /** Папка автоматических резервных копий (только Tauri). Пусто — не выбрана. */
+  backupDir: string
+  backupEvery: BackupPeriod
+  /** Сколько последних автоматических копий хранить. */
+  backupKeep: number
+  /** Когда сделана последняя автоматическая копия (мс), 0 — ни разу. */
+  backupLastAt: number
+  /** Папка экспорта в Markdown (только Tauri). Пусто — не выбрана. */
+  mdExportDir: string
+
+  /** Распознавать текст на новых картинках и сканах автоматически (нужен включённый ИИ). */
+  aiAutoOcr: boolean
+  /** Модель со зрением для распознавания. Пусто — использовать aiModel. */
+  aiVisionModel: string
+
+  /** Этап 7 (Tauri). Закрытие окна сворачивает в трей, а не завершает приложение. */
+  closeToTray: boolean
+  /** Приём записей от расширения браузера (локальный сервер на 127.0.0.1). */
+  extEnabled: boolean
+  extPort: number
+  /** Секрет для расширения браузера; создаётся при первом включении. */
+  extToken: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -143,6 +218,21 @@ export const DEFAULT_SETTINGS: Settings = {
   aiBaseUrl: 'https://api.deepseek.com/v1',
   aiApiKey: '',
   aiModel: 'deepseek-chat',
+  scene: 'auto',
+  font: 'round',
+  ambient: true,
+  trashDays: 30,
+  backupDir: '',
+  backupEvery: 'off',
+  backupKeep: 10,
+  backupLastAt: 0,
+  mdExportDir: '',
+  aiAutoOcr: false,
+  aiVisionModel: '',
+  closeToTray: true,
+  extEnabled: false,
+  extPort: 47821,
+  extToken: '',
 }
 
 export interface MetaRecord {
@@ -186,6 +276,8 @@ export interface ItemFilter {
   /** Диапазон по createdAt (включительно). */
   from?: number
   to?: number
+  /** Корзина: true — только записи в корзине; false или не задано — только записи вне корзины. */
+  trashed?: boolean
 }
 
 export type SortMode = 'newest' | 'oldest' | 'updated' | 'title'

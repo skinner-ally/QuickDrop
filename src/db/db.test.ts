@@ -1,3 +1,4 @@
+import Dexie from 'dexie'
 import { describe, expect, it } from 'vitest'
 import { QuickDropDB } from './db'
 import type { Item } from '@/types'
@@ -40,6 +41,46 @@ describe('открытие базы', () => {
     expect(byId.get('c')!.linkMeta).toEqual({ status: 'ok', title: 'C' })
     // техническая починка, а не правка пользователя
     expect(byId.get('a')!.updatedAt).toBe(1)
+    await next.delete()
+  })
+
+  it('база версии 1 открывается как версия 2 без потери данных', async () => {
+    const name = `quickdrop-v1-${crypto.randomUUID()}`
+    const items = [
+      link('a', { tags: ['x'], links: ['b'], status: 'library', favorite: 1, createdAt: 10, updatedAt: 20 }),
+      link('b', { links: ['a'], linkMeta: { status: 'ok', title: 'B' } }),
+    ]
+
+    // Схема — как в version(1) класса QuickDropDB.
+    const v1 = new Dexie(name)
+    v1.version(1).stores({
+      items:
+        'id, type, status, favorite, categoryId, *tags, *links, createdAt, updatedAt, [status+createdAt]',
+      files: 'id, itemId',
+      categories: 'id, order',
+      meta: 'key',
+    })
+    await v1.table('items').bulkPut(items)
+    await v1.table('meta').put({ key: 'theme', value: 'dark' })
+    expect(v1.verno).toBe(1)
+    v1.close()
+
+    const next = new QuickDropDB(name)
+    await next.open()
+    expect(next.verno).toBe(2)
+    expect(await next.items.orderBy('id').toArray()).toEqual(items)
+    expect(await next.meta.get('theme')).toEqual({ key: 'theme', value: 'dark' })
+    expect(await next.files.count()).toBe(0)
+    expect(await next.categories.count()).toBe(0)
+    expect(await next.positions.toArray()).toEqual([])
+    expect(await next.searches.toArray()).toEqual([])
+
+    // Записи без deletedAt в индекс не попадают: корзина пуста, пока поле не появится.
+    expect(await next.items.where('deletedAt').above(0).count()).toBe(0)
+    await next.items.update('a', { deletedAt: 5 })
+    expect(await next.items.where('deletedAt').above(0).count()).toBe(1)
+    expect(await next.items.where('deletedAt').above(0).primaryKeys()).toEqual(['a'])
+
     await next.delete()
   })
 })

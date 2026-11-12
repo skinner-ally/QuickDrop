@@ -2,10 +2,17 @@ import { toast } from 'sonner'
 import {
   applyLinkMeta,
   createItem,
+  createSavedSearch,
   deleteItems,
+  deleteSavedSearch,
+  emptyTrash,
   getFile,
   getItem,
+  linkItems,
+  purgeItems,
+  restoreFromTrash,
   restoreItems,
+  restoreSavedSearch,
   setStatus,
   toggleFavorite,
   unarchive,
@@ -14,15 +21,18 @@ import { getSettings } from '@/db/settings'
 import { describeError } from '@/lib/errors'
 import { fetchLinkMeta } from '@/lib/linkMeta'
 import { hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
+import { extractItemText, textSourceOf } from '@/lib/ocr'
 import { isTauri } from '@/lib/platform'
-import type { Item, ItemStatus, LinkMeta, NewItemInput } from '@/types'
+import { wikiLinkTargets } from '@/lib/wikiLinks'
+import type { Item, ItemStatus, LinkMeta, NewItemInput, SavedSearch } from '@/types'
 
-/** Оборачивает действие: любая ошибка становится toast.error, наружу не бросает. */
-async function safe(run: () => Promise<void>): Promise<void> {
+/** Оборачивает действие: любая ошибка становится toast.error, наружу не бросает (итог — undefined). */
+async function safe<T>(run: () => Promise<T>): Promise<T | undefined> {
   try {
-    await run()
+    return await run()
   } catch (e) {
     toast.error(describeError(e))
+    return undefined
   }
 }
 
@@ -99,9 +109,13 @@ async function finishLinkMeta(
   }
 }
 
-/** Создаёт запись; для ссылки метаданные подтягиваются в фоне и не задерживают возврат. */
+/**
+ * Создаёт запись; метаданные ссылки и текст PDF подтягиваются в фоне и не задерживают возврат.
+ */
 export async function createAndEnrich(input: NewItemInput): Promise<Item> {
   const item = await createItem(input)
+  // extractItemText не бросает; текст попадёт в поиск, когда будет готов.
+  if (textSourceOf(item) === 'pdf') void extractItemText(item)
   if (item.type !== 'link' || !item.url) return item
   try {
     const settings = await getSettings()
@@ -179,13 +193,22 @@ export const actArchive = (ids: string | string[]) =>
 export const actUnarchive = (ids: string | string[]) =>
   changeStatus(ids, (l) => unarchive(l), 'Возвращено из архива')
 
+export async function actToggleFavorite(item: Item): Promise<void> {
+  await safe(() => toggleFavorite(item.id))
+}
+
+// ───────────────────────── корзина ─────────────────────────
+
+const counted = (message: string, n: number): string => (n > 1 ? `${message}: ${n}` : message)
+
+/** Переносит записи в корзину. */
 export async function actDelete(ids: string | string[]): Promise<void> {
   await safe(async () => {
     const list = toArray(ids)
     if (list.length === 0) return
     const snapshots = await deleteItems(list)
     if (snapshots.length === 0) return
-    toast(snapshots.length > 1 ? `Удалено: ${snapshots.length}` : 'Удалено', {
+    toast(counted('В корзине', snapshots.length), {
       action: {
         label: 'Отменить',
         onClick: () => {
@@ -196,8 +219,84 @@ export async function actDelete(ids: string | string[]): Promise<void> {
   })
 }
 
-export async function actToggleFavorite(item: Item): Promise<void> {
-  await safe(() => toggleFavorite(item.id))
+export async function actRestoreFromTrash(ids: string | string[]): Promise<void> {
+  await safe(async () => {
+    const list = [...new Set(toArray(ids))]
+    // restoreFromTrash молча пропускает то, чего в корзине нет, — считаем сами, что действительно вернётся.
+    let n = 0
+    for (const id of list) {
+      if ((await getItem(id))?.deletedAt !== undefined) n++
+    }
+    if (n === 0) return
+    await restoreFromTrash(list)
+    toast(counted('Восстановлено', n))
+  })
+}
+
+/** Окончательное удаление без отмены; подтверждение — на стороне вызывающего. */
+export async function actPurge(ids: string | string[]): Promise<void> {
+  await safe(async () => {
+    const list = toArray(ids)
+    if (list.length === 0) return
+    const n = await purgeItems(list)
+    if (n > 0) toast(counted('Удалено навсегда', n))
+  })
+}
+
+/** Окончательно удаляет всё из корзины; подтверждение — на стороне вызывающего. */
+export async function actEmptyTrash(): Promise<void> {
+  await safe(async () => {
+    const n = await emptyTrash()
+    if (n > 0) toast(`Корзина очищена: ${n}`)
+  })
+}
+
+// ───────────────────────── сохранённые поиски ─────────────────────────
+
+/** undefined — сохранить не удалось (причина уже показана в toast). */
+export async function actSaveSearch(name: string, query: string): Promise<SavedSearch | undefined> {
+  return safe(async () => {
+    const search = await createSavedSearch(name, query)
+    toast.success('Поиск сохранён')
+    return search
+  })
+}
+
+export async function actDeleteSearch(search: SavedSearch): Promise<void> {
+  await safe(async () => {
+    await deleteSavedSearch(search.id)
+    toast('Поиск удалён', {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => restoreSavedSearch(search))
+        },
+      },
+    })
+  })
+}
+
+// ───────────────────────── вики-ссылки ─────────────────────────
+
+/**
+ * Создаёт связи для [[вики-ссылок]] из текста записи — только недостающие. Возвращает id новых связей.
+ * Связи не снимает: удаление [[…]] из текста связь не рвёт.
+ */
+export async function applyWikiLinks(itemId: string, content: string, items: readonly Item[]): Promise<string[]> {
+  const added: string[] = []
+  await safe(async () => {
+    const targets = wikiLinkTargets(content, items, itemId)
+    if (targets.length === 0) return
+    const self = await getItem(itemId)
+    if (!self) return
+    for (const target of targets) {
+      if (self.links.includes(target)) continue
+      await linkItems(itemId, target)
+      // Снимок items мог устареть: linkItems молча пропускает запись, которой уже нет или которая в корзине.
+      if ((await getItem(itemId))?.links.includes(target)) added.push(target)
+    }
+  })
+  return added
 }
 
 // ───────────────────────── буфер, открытие, скачивание ─────────────────────────

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
-import { InboxIcon, Paperclip, SearchX, Zap } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -75,11 +75,10 @@ function QuickAdd() {
   return (
     <div className="flex items-center gap-2">
       <div className="relative min-w-0 flex-1">
-        <Zap
+        <Icon
+          name="zap"
           size={15}
-          strokeWidth={1.75}
           className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
         />
         <Input
           ref={inputRef}
@@ -101,7 +100,7 @@ function QuickAdd() {
         onClick={() => openCapture(text.trim() ? { text } : undefined)}
         aria-label="Добавить файл или подробную запись"
       >
-        <Paperclip strokeWidth={1.75} className="size-4" aria-hidden />
+        <Icon name="paperclip" className="size-4" />
       </Button>
     </div>
   )
@@ -129,7 +128,7 @@ export function InboxView() {
 
   const noResults = (
     <EmptyState
-      icon={SearchX}
+      icon="search-x"
       title="Ничего не найдено"
       description="Попробуйте изменить запрос или ослабить фильтры."
       action={
@@ -149,7 +148,7 @@ export function InboxView() {
 
   const allClear = (
     <EmptyState
-      icon={InboxIcon}
+      icon="inbox"
       title="Входящие разобраны"
       description={
         <>
@@ -178,7 +177,7 @@ export function InboxView() {
               </span>
             )}
           </div>
-          <p className="text-[13px] text-muted-foreground" aria-live="polite">
+          <p className="text-2sm text-muted-foreground" aria-live="polite">
             {waitingText(counts.inbox)}
           </p>
         </div>

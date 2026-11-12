@@ -1,5 +1,5 @@
 import { memo, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
-import { Archive, ArchiveRestore, Check, Link2, Star, Trash2, type LucideIcon } from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -119,13 +119,13 @@ function snippetOf(item: Item, terms: string[]): Snippet {
 
 function QuickButton({
   label,
-  icon: Icon,
+  icon,
   onClick,
   active,
   destructive,
 }: {
   label: string
-  icon: LucideIcon
+  icon: IconName
   onClick: () => void
   active?: boolean
   destructive?: boolean
@@ -147,11 +147,8 @@ function QuickButton({
           />
         }
       >
-        <Icon
-          strokeWidth={1.75}
-          aria-hidden
-          className={cn(active && 'fill-[var(--cat-amber)] text-[var(--cat-amber)]')}
-        />
+        {/* pixel:text-inherit: в пиксельных сценах нажатая кнопка сама золотая, значок берёт её цвет текста */}
+        <Icon name={icon} className={cn(active && 'fill-gold text-gold pixel:text-inherit')} />
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
@@ -163,20 +160,20 @@ function QuickActions({ item, variant }: { item: Item; variant: ItemVariant }) {
   if (variant === 'archive') {
     return (
       <>
-        <QuickButton label="Вернуть" icon={ArchiveRestore} onClick={() => void actUnarchive(item.id)} />
-        <QuickButton label="Удалить" icon={Trash2} destructive onClick={() => void actDelete(item.id)} />
+        <QuickButton label="Вернуть" icon="archive-restore" onClick={() => void actUnarchive(item.id)} />
+        <QuickButton label="Удалить" icon="trash" destructive onClick={() => void actDelete(item.id)} />
       </>
     )
   }
   return (
     <>
       {variant === 'inbox' && (
-        <QuickButton label="В базу знаний" icon={Check} onClick={() => void actToLibrary(item.id)} />
+        <QuickButton label="В базу знаний" icon="check" onClick={() => void actToLibrary(item.id)} />
       )}
-      <QuickButton label="В архив" icon={Archive} onClick={() => void actArchive(item.id)} />
+      <QuickButton label="В архив" icon="archive" onClick={() => void actArchive(item.id)} />
       <QuickButton
         label={item.favorite ? 'Убрать из избранного' : 'В избранное'}
-        icon={Star}
+        icon="star"
         active={item.favorite === 1}
         onClick={() => void actToggleFavorite(item)}
       />
@@ -187,12 +184,7 @@ function QuickActions({ item, variant }: { item: Item; variant: ItemVariant }) {
 function StarMark({ item }: { item: Item }) {
   if (item.favorite !== 1) return null
   return (
-    <Star
-      size={13}
-      strokeWidth={1.75}
-      className="shrink-0 fill-[var(--cat-amber)] text-[var(--cat-amber)]"
-      aria-label="В избранном"
-    />
+    <Icon name="star" size={13} className="shrink-0 fill-gold text-gold" aria-label="В избранном" />
   )
 }
 
@@ -337,7 +329,7 @@ export const ItemRow = memo(function ItemRow({
           {(snippet.text || snippet.lead) && (
             <div
               className={cn(
-                'flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground',
+                'flex min-w-0 items-center gap-1.5 text-2sm text-muted-foreground',
                 snippet.mono && 'font-mono text-xs',
               )}
             >
@@ -345,7 +337,7 @@ export const ItemRow = memo(function ItemRow({
                 <SafeImg
                   src={favicon}
                   className="size-3.5 shrink-0 rounded-sm"
-                  fallback={<Link2 size={13} strokeWidth={1.75} className="shrink-0" aria-hidden />}
+                  fallback={<Icon name="link" size={13} className="shrink-0" />}
                 />
               )}
               {snippet.lead && <span className="shrink-0 text-foreground/70">{snippet.lead}</span>}
@@ -419,7 +411,7 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
     case 'link': {
       const desc = item.linkMeta?.description?.trim()
       const textFallback = desc ? (
-        <p className="line-clamp-4 px-3 pt-2.5 text-[13px] text-muted-foreground">
+        <p className="line-clamp-4 px-3 pt-2.5 text-2sm text-muted-foreground">
           <Highlighted text={desc} terms={terms} />
         </p>
       ) : null
@@ -433,7 +425,7 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
     }
     default:
       return item.content ? (
-        <p className="line-clamp-6 px-3 pt-2.5 text-[13px] break-words whitespace-pre-wrap text-muted-foreground">
+        <p className="line-clamp-6 px-3 pt-2.5 text-2sm break-words whitespace-pre-wrap text-muted-foreground">
           <Highlighted text={item.content.slice(0, 400)} terms={terms} />
         </p>
       ) : null

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Archive, ArchiveRestore, BookMarked, Tag, Trash2, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -55,25 +55,25 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
       className="pointer-events-none sticky bottom-3 z-20 mt-3 flex justify-center px-2 pb-[env(safe-area-inset-bottom)]"
     >
       <div className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-md">
-        <span className="px-2 text-[13px] font-medium whitespace-nowrap" aria-live="polite">
+        <span className="px-2 text-2sm font-medium whitespace-nowrap" aria-live="polite">
           {selected.size} {plural(selected.size)}
         </span>
         <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
 
         {variant === 'inbox' && (
           <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actToLibrary(ids)} aria-label="В базу знаний">
-            <BookMarked strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="book-marked" className="size-4" />
             <span className="hidden sm:inline">В базу знаний</span>
           </Button>
         )}
         {variant === 'archive' ? (
           <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actUnarchive(ids)} aria-label="Вернуть из архива">
-            <ArchiveRestore strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="archive-restore" className="size-4" />
             <span className="hidden sm:inline">Вернуть</span>
           </Button>
         ) : (
           <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actArchive(ids)} aria-label="В архив">
-            <Archive strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="archive" className="size-4" />
             <span className="hidden sm:inline">В архив</span>
           </Button>
         )}
@@ -88,7 +88,7 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
 
         <Popover open={tagsOpen} onOpenChange={setTagsOpen}>
           <PopoverTrigger render={<Button variant="ghost" size="sm" className="pointer-coarse:h-9" aria-label="Добавить теги" />}>
-            <Tag strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="tag" className="size-4" />
             <span className="hidden sm:inline">Теги</span>
           </PopoverTrigger>
           <PopoverContent side="top" align="center" className="w-80">
@@ -108,13 +108,13 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
           onClick={() => void actDelete(ids)}
           aria-label="Удалить выбранные"
         >
-          <Trash2 strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="trash" className="size-4" />
           <span className="hidden sm:inline">Удалить</span>
         </Button>
 
         <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
         <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-9" onClick={clear} aria-label="Снять выбор">
-          <X strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="x" className="size-4" />
         </Button>
       </div>
     </div>

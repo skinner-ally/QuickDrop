@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from 'react'
-import { Copy } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { copyText } from '@/lib/actions'
 import { LANGUAGES } from '@/lib/detect'
 import { cn } from '@/lib/utils'
@@ -202,7 +202,7 @@ export function CodeView({
             aria-label="Копировать код"
             className="flex h-6 items-center gap-1 rounded-md bg-muted px-1.5 text-xs text-muted-foreground transition-opacity outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 group-hover/code:opacity-100 pointer-fine:opacity-0"
           >
-            <Copy size={12} strokeWidth={1.75} aria-hidden />
+            <Icon name="copy" size={12} />
             Копировать
           </button>
         </div>

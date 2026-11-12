@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Pencil, Search, Trash2, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -55,14 +55,13 @@ export function TagsSection() {
   return (
     <Section id="tags" title="Теги" description="Теги хранятся в записях. Переименование действует на все записи.">
       {tags.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">Тегов пока нет.</p>
+        <p className="text-2sm text-muted-foreground">Тегов пока нет.</p>
       ) : (
         <>
           <div className="relative">
-            <Search
+            <Icon
+              name="search"
               className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-              strokeWidth={1.75}
-              aria-hidden
             />
             <Input
               value={q}
@@ -73,7 +72,7 @@ export function TagsSection() {
             />
           </div>
           {filtered.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">Ничего не найдено.</p>
+            <p className="text-2sm text-muted-foreground">Ничего не найдено.</p>
           ) : (
             <ul className="max-h-80 divide-y overflow-y-auto rounded-lg border">
               {filtered.map(({ tag, count }) => (
@@ -97,7 +96,7 @@ export function TagsSection() {
                           className="h-7"
                         />
                         <Button type="submit" variant="ghost" size="icon-sm" aria-label="Сохранить">
-                          <Check strokeWidth={1.75} />
+                          <Icon name="check" />
                         </Button>
                         <Button
                           type="button"
@@ -106,7 +105,7 @@ export function TagsSection() {
                           aria-label="Отменить"
                           onClick={() => setEditing(null)}
                         >
-                          <X strokeWidth={1.75} />
+                          <Icon name="x" />
                         </Button>
                       </form>
                       {merges && (
@@ -117,7 +116,7 @@ export function TagsSection() {
                     </>
                   ) : (
                     <div className="flex items-center gap-1">
-                      <span className="min-w-0 flex-1 truncate text-[13px]">
+                      <span className="min-w-0 flex-1 truncate text-2sm">
                         <span className="text-muted-foreground">#</span>
                         {tag}
                       </span>
@@ -136,7 +135,7 @@ export function TagsSection() {
                           setDraft(tag)
                         }}
                       >
-                        <Pencil strokeWidth={1.75} />
+                        <Icon name="pencil" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -144,7 +143,7 @@ export function TagsSection() {
                         aria-label={`Удалить тег #${tag}`}
                         onClick={() => setToDelete({ tag, count })}
                       >
-                        <Trash2 strokeWidth={1.75} />
+                        <Icon name="trash" />
                       </Button>
                     </div>
                   )}

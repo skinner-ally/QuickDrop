@@ -1,7 +1,8 @@
-import { isValidElement, type ElementType, type ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
+import { ICON_NAMES, Icon, type IconName } from '@/components/icons'
 import { cn } from '@/lib/utils'
 
-/** icon — либо иконка lucide (компонент), либо готовый элемент. */
+/** icon — либо имя значка, либо готовый элемент. */
 export function EmptyState({
   icon,
   title,
@@ -9,18 +10,13 @@ export function EmptyState({
   action,
   className,
 }: {
-  icon?: ElementType | ReactNode
+  icon?: IconName | ReactElement
   title: string
   description?: ReactNode
   action?: ReactNode
   className?: string
 }) {
-  let iconNode: ReactNode = null
-  if (isValidElement(icon)) iconNode = icon
-  else if (icon && (typeof icon === 'function' || typeof icon === 'object')) {
-    const Icon = icon as ElementType
-    iconNode = <Icon size={20} strokeWidth={1.75} aria-hidden />
-  }
+  const iconNode: ReactNode = typeof icon === 'string' ? ((ICON_NAMES as readonly string[]).includes(icon) ? <Icon name={icon as IconName} size={20} /> : null) : icon
   return (
     <div className={cn('flex flex-col items-center justify-center gap-3 px-6 py-16 text-center', className)}>
       {iconNode && (
@@ -30,7 +26,7 @@ export function EmptyState({
       )}
       <div className="flex max-w-sm flex-col gap-1">
         <h2 className="text-sm font-medium text-foreground">{title}</h2>
-        {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
+        {description && <p className="text-2sm text-muted-foreground">{description}</p>}
       </div>
       {action}
     </div>

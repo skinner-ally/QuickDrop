@@ -2,7 +2,7 @@ import { newId } from '@/lib/id'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import { toast } from 'sonner'
-import { Loader2, Paperclip, Plus, Star, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
@@ -127,11 +127,11 @@ function FileRow({ entry, onRemove }: { entry: FileEntry; onRemove: () => void }
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px]">{entry.file.name}</div>
+        <div className="truncate text-2sm">{entry.file.name}</div>
         <div className="text-xs text-muted-foreground">{formatBytes(entry.file.size)}</div>
       </div>
       <Button type="button" variant="ghost" size="icon-sm" aria-label={`Убрать файл ${entry.file.name}`} onClick={onRemove}>
-        <X strokeWidth={1.75} />
+        <Icon name="x" />
       </Button>
     </li>
   )
@@ -485,7 +485,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
         enterKeyHint={coarse ? 'enter' : undefined}
         className={cn(
           'max-h-[34dvh] min-h-24 resize-none overflow-y-auto sm:max-h-[45dvh]',
-          isCode && 'font-mono text-[13px]',
+          isCode && 'font-mono text-2sm',
         )}
       />
 
@@ -599,7 +599,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
           }}
         />
         <Button type="button" variant="ghost" size="icon" aria-label="Прикрепить файлы" title="Прикрепить файлы" onClick={() => fileInputRef.current?.click()}>
-          <Paperclip strokeWidth={1.75} />
+          <Icon name="paperclip" />
         </Button>
         <Button
           type="button"
@@ -611,9 +611,9 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
           onClick={() => setFavorite((v) => !v)}
           className={cn(favorite && 'text-foreground')}
         >
-          <Star strokeWidth={1.75} className={cn(favorite && 'fill-current')} />
+          <Icon name="star" className={cn(favorite && 'fill-current')} />
         </Button>
-        <label className="flex cursor-pointer items-center gap-2 text-[13px] text-muted-foreground select-none">
+        <label className="flex cursor-pointer items-center gap-2 text-2sm text-muted-foreground select-none">
           <Switch size="sm" checked={toLibrary} onCheckedChange={setToLibrary} aria-label="Сразу в базу знаний" />
           Сразу в базу знаний
         </label>
@@ -632,7 +632,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
             disabled={!canSave}
             onClick={() => void save(true)}
           >
-            <Plus strokeWidth={1.75} />
+            <Icon name="plus" />
           </Button>
           <Button
             type="button"
@@ -640,10 +640,10 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
             onClick={() => void save(false)}
             className="bg-brand px-3 text-brand-foreground hover:bg-brand/90"
           >
-            {saving && <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden />}
+            {saving && <Icon name="loader" strokeWidth={2} className="animate-spin motion-reduce:animate-none" />}
             Сохранить
             {saveHint && (
-              <kbd className="ml-1 rounded bg-brand-foreground/15 px-1 font-sans text-[11px] leading-4">{saveHint}</kbd>
+              <kbd className="ml-1 rounded bg-brand-foreground/15 px-1 font-sans text-2xs leading-4">{saveHint}</kbd>
             )}
           </Button>
         </div>

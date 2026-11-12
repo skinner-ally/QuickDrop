@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { Button } from '@/components/ui/button'
@@ -70,7 +70,7 @@ export function LinkedItems({ item }: { item: Item }) {
                 onClick={() => void run(() => unlinkItems(item.id, l.id), 'Не удалось убрать связь')}
                 className="text-muted-foreground"
               >
-                <X strokeWidth={1.75} className="size-4" aria-hidden />
+                <Icon name="x" className="size-4" />
               </Button>
             </li>
           ))}
@@ -98,7 +98,7 @@ export function LinkedItems({ item }: { item: Item }) {
                   onClick={() => void run(() => linkItems(item.id, s.id), 'Не удалось связать записи')}
                   className="text-muted-foreground"
                 >
-                  <Plus strokeWidth={1.75} className="size-4" aria-hidden />
+                  <Icon name="plus" className="size-4" />
                   Связать
                 </Button>
               </li>

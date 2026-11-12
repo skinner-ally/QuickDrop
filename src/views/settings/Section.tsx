@@ -18,10 +18,10 @@ export function Section({
   return (
     <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t pt-6">
       <header className="flex flex-col gap-1">
-        <h2 id={`${id}-title`} className="font-heading text-[15px] font-medium">
+        <h2 id={`${id}-title`} className="font-heading text-md font-medium">
           {title}
         </h2>
-        {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
+        {description && <p className="text-2sm text-muted-foreground">{description}</p>}
       </header>
       <div className="flex flex-col gap-3">{children}</div>
     </section>
@@ -44,7 +44,7 @@ export function Field({
 }) {
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <label htmlFor={htmlFor} className="text-[13px] font-medium">
+      <label htmlFor={htmlFor} className="text-2sm font-medium">
         {label}
       </label>
       {children}

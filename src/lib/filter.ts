@@ -10,9 +10,17 @@ import { tagKey } from './normalize'
  *  - tags: запись содержит все перечисленные; теги фильтра нормализуются, пустые пропускаются,
  *    сравнение по правилу поиска (регистр и ё/е не важны);
  *  - favorite, untagged: галочки — фильтруют только при true;
- *  - from/to: диапазон по createdAt включительно.
+ *  - from/to: диапазон по createdAt включительно;
+ *  - trashed: true — только корзина, иначе — только вне корзины.
  */
 export function matchesFilter(item: Item, filter: ItemFilter): boolean {
+  // Корзина скрыта отовсюду, пока фильтр явно не просит её.
+  if ((item.deletedAt !== undefined) !== (filter.trashed === true)) return false
+  return matchesFilterIgnoringTrash(item, filter)
+}
+
+/** Все условия фильтра, кроме корзины (для кода, который корзину уже отобрал сам). */
+export function matchesFilterIgnoringTrash(item: Item, filter: ItemFilter): boolean {
   const { status, types, categoryId, tags, favorite, untagged, from, to } = filter
 
   if (status !== undefined) {

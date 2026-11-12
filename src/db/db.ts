@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
 import { settleLinkMeta } from '@/lib/normalize'
-import type { Category, Item, MetaRecord, StoredFile } from '@/types'
+import type { Category, Item, MetaRecord, NodePosition, SavedSearch, StoredFile } from '@/types'
 
 /**
  * 'pending' осмыслен, пока жива сессия, которая ждёт ответа. Если приложение закрыли или перезагрузили
@@ -33,13 +33,18 @@ async function settleStaleLinkMeta(vip: Dexie): Promise<void> {
  *   *tags, *links         — multiEntry-индексы
  *   createdAt, updatedAt  — сортировка
  *   [status+createdAt]    — быстрый список «входящие по дате»
+ *   deletedAt             — корзина (v2): у записи вне корзины поля нет, в индекс она не попадает
  * files: бинарники отдельно от записей; itemId — для каскадного удаления.
+ * positions (v2): сохранённые положения нод графа, id — id записи.
+ * searches (v2): сохранённые поиски, order — порядок в боковой панели.
  */
 export class QuickDropDB extends Dexie {
   items!: EntityTable<Item, 'id'>
   files!: EntityTable<StoredFile, 'id'>
   categories!: EntityTable<Category, 'id'>
   meta!: Table<MetaRecord, string>
+  positions!: EntityTable<NodePosition, 'id'>
+  searches!: EntityTable<SavedSearch, 'id'>
 
   constructor(name = 'quickdrop') {
     super(name)
@@ -49,6 +54,14 @@ export class QuickDropDB extends Dexie {
       files: 'id, itemId',
       categories: 'id, order',
       meta: 'key',
+    })
+    // v2: корзина (индекс deletedAt — записи без поля в индекс не попадают), положения нод графа, сохранённые поиски.
+    // Преобразование данных не нужно, поэтому без upgrade().
+    this.version(2).stores({
+      items:
+        'id, type, status, favorite, categoryId, *tags, *links, createdAt, updatedAt, [status+createdAt], deletedAt',
+      positions: 'id',
+      searches: 'id, order',
     })
     this.on('ready', (vip) => settleStaleLinkMeta(vip))
   }

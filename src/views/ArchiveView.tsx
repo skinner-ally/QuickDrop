@@ -1,4 +1,3 @@
-import { Archive } from 'lucide-react'
 import { EmptyState } from '@/components/items/EmptyState'
 import { ItemsView } from './ItemsView'
 
@@ -11,7 +10,7 @@ export function ArchiveView() {
       variant="archive"
       emptyState={
         <EmptyState
-          icon={Archive}
+          icon="archive"
           title="Архив пуст"
           description="Сюда попадают записи, которые больше не нужны на виду. Их можно вернуть в любой момент."
         />

@@ -1,18 +1,5 @@
 import { Fragment } from 'react'
-import {
-  Archive,
-  ArchiveRestore,
-  BookMarked,
-  Copy,
-  Download,
-  ExternalLink,
-  Inbox,
-  MoreHorizontal,
-  Star,
-  StarOff,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -40,7 +27,7 @@ import type { Item } from '@/types'
 export interface ItemAction {
   id: string
   label: string
-  icon: LucideIcon
+  icon: IconName
   run: () => void
   destructive?: boolean
   /** Подсказка клавиши в списке (E, A, F, Del). */
@@ -51,28 +38,28 @@ export interface ItemAction {
 export function itemActionList(item: Item): ItemAction[] {
   const list: ItemAction[] = []
   if (item.type === 'link' && safeLinkUrl(item.url)) {
-    list.push({ id: 'open', label: 'Открыть ссылку', icon: ExternalLink, run: () => actOpen(item) })
+    list.push({ id: 'open', label: 'Открыть ссылку', icon: 'external-link', run: () => actOpen(item) })
   }
-  list.push({ id: 'copy', label: 'Копировать', icon: Copy, run: () => void actCopy(item) })
+  list.push({ id: 'copy', label: 'Копировать', icon: 'copy', run: () => void actCopy(item) })
   list.push(
     item.favorite
-      ? { id: 'favorite', label: 'Убрать из избранного', icon: StarOff, run: () => void actToggleFavorite(item), shortcut: 'F' }
-      : { id: 'favorite', label: 'В избранное', icon: Star, run: () => void actToggleFavorite(item), shortcut: 'F' },
+      ? { id: 'favorite', label: 'Убрать из избранного', icon: 'star-off', run: () => void actToggleFavorite(item), shortcut: 'F' }
+      : { id: 'favorite', label: 'В избранное', icon: 'star', run: () => void actToggleFavorite(item), shortcut: 'F' },
   )
   if (item.status === 'inbox') {
-    list.push({ id: 'to-library', label: 'В базу знаний', icon: BookMarked, run: () => void actToLibrary(item.id), shortcut: 'E' })
+    list.push({ id: 'to-library', label: 'В базу знаний', icon: 'book-marked', run: () => void actToLibrary(item.id), shortcut: 'E' })
   } else if (item.status === 'library') {
-    list.push({ id: 'to-inbox', label: 'Вернуть во входящие', icon: Inbox, run: () => void actToInbox(item.id) })
+    list.push({ id: 'to-inbox', label: 'Вернуть во входящие', icon: 'inbox', run: () => void actToInbox(item.id) })
   }
   if (item.status === 'archive') {
-    list.push({ id: 'unarchive', label: 'Вернуть из архива', icon: ArchiveRestore, run: () => void actUnarchive(item.id), shortcut: 'A' })
+    list.push({ id: 'unarchive', label: 'Вернуть из архива', icon: 'archive-restore', run: () => void actUnarchive(item.id), shortcut: 'A' })
   } else {
-    list.push({ id: 'archive', label: 'В архив', icon: Archive, run: () => void actArchive(item.id), shortcut: 'A' })
+    list.push({ id: 'archive', label: 'В архив', icon: 'archive', run: () => void actArchive(item.id), shortcut: 'A' })
   }
   if ((item.type === 'file' || item.type === 'image') && item.fileId) {
-    list.push({ id: 'download', label: 'Скачать', icon: Download, run: () => void actDownload(item) })
+    list.push({ id: 'download', label: 'Скачать', icon: 'download', run: () => void actDownload(item) })
   }
-  list.push({ id: 'delete', label: 'Удалить', icon: Trash2, run: () => void actDelete(item.id), destructive: true, shortcut: 'Del' })
+  list.push({ id: 'delete', label: 'Удалить', icon: 'trash', run: () => void actDelete(item.id), destructive: true, shortcut: 'Del' })
   return list
 }
 
@@ -108,7 +95,7 @@ export function ItemMenu({
           />
         }
       >
-        <MoreHorizontal strokeWidth={1.75} aria-hidden />
+        <Icon name="more" />
       </DropdownMenuTrigger>
       {/* Меню рендерится в портале, но события React всплывают к карточке — гасим их здесь. */}
       <DropdownMenuContent align="end" className="min-w-52" onClick={stop} onKeyDown={stop}>
@@ -116,7 +103,7 @@ export function ItemMenu({
           <Fragment key={a.id}>
             {a.destructive && <DropdownMenuSeparator />}
             <DropdownMenuItem variant={a.destructive ? 'destructive' : 'default'} onClick={() => a.run()}>
-              <a.icon strokeWidth={1.75} aria-hidden />
+              <Icon name={a.icon} />
               {a.label}
               {a.shortcut && <DropdownMenuShortcut className="pointer-coarse:hidden">{a.shortcut}</DropdownMenuShortcut>}
             </DropdownMenuItem>

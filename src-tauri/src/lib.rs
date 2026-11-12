@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod backup;
+
 const MAX_BYTES: usize = 512 * 1024;
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
@@ -331,11 +333,24 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            use tauri::Manager;
+            let config_dir = app.path().app_config_dir()?;
+            app.manage(backup::ApprovedDirs::load(config_dir.join("approved-dirs.json")));
+            app.manage(backup::OwnBackups::load(config_dir.join("own-backups.json")));
             create_main_window(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![fetch_link_meta])
+        .invoke_handler(tauri::generate_handler![
+            fetch_link_meta,
+            backup::pick_directory,
+            backup::save_backup,
+            backup::prune_backups,
+            backup::list_backups,
+            backup::write_export_file,
+            backup::discard_export_part
+        ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска QuickDrop");
 }

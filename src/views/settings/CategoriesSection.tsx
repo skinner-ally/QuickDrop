@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -174,7 +174,7 @@ export function CategoriesSection() {
   return (
     <Section id="categories" title="Категории" description="Цвет, название и порядок. Изменения применяются сразу.">
       {categories.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">Категорий пока нет.</p>
+        <p className="text-2sm text-muted-foreground">Категорий пока нет.</p>
       ) : (
         <ul className="flex flex-col divide-y rounded-lg border">
           {categories.map((c, i) => (
@@ -200,7 +200,7 @@ export function CategoriesSection() {
                 disabled={i === 0}
                 onClick={() => void move(i, -1)}
               >
-                <ArrowUp strokeWidth={1.75} />
+                <Icon name="arrow-up" />
               </Button>
               <Button
                 variant="ghost"
@@ -209,7 +209,7 @@ export function CategoriesSection() {
                 disabled={i === categories.length - 1}
                 onClick={() => void move(i, 1)}
               >
-                <ArrowDown strokeWidth={1.75} />
+                <Icon name="arrow-down" />
               </Button>
               <Button
                 variant="ghost"
@@ -217,7 +217,7 @@ export function CategoriesSection() {
                 aria-label={`Удалить категорию «${c.name}»`}
                 onClick={() => setToDelete(c)}
               >
-                <Trash2 strokeWidth={1.75} />
+                <Icon name="trash" />
               </Button>
             </li>
           ))}
@@ -240,7 +240,7 @@ export function CategoriesSection() {
           maxLength={40}
         />
         <Button type="submit" variant="outline" disabled={!newName.trim()}>
-          <Plus strokeWidth={1.75} />
+          <Icon name="plus" />
           Добавить
         </Button>
       </form>

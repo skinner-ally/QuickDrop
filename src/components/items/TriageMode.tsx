@@ -1,17 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  Archive,
-  ArrowLeft,
-  ArrowRight,
-  BookMarked,
-  CircleCheck,
-  ExternalLink,
-  Link2,
-  Sparkles,
-  Star,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
@@ -52,7 +40,7 @@ function isTyping(el: EventTarget | null): boolean {
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="ml-1 hidden rounded border border-current/25 px-1 font-sans text-[11px] leading-4 opacity-70 md:inline-block">
+    <kbd className="ml-1 hidden rounded border border-current/25 px-1 font-sans text-2xs leading-4 opacity-70 md:inline-block">
       {children}
     </kbd>
   )
@@ -105,11 +93,11 @@ function ItemBody({ item }: { item: Item }) {
         <div className="flex flex-col gap-3">
           <LinkImage key={item.id} src={item.linkMeta?.image} />
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Link2 size={14} strokeWidth={1.75} className="shrink-0" aria-hidden />
+            <Icon name="link" size={14} className="shrink-0" />
             <span className="truncate">{domainOf(item.url)}</span>
             {href && (
               <Button variant="ghost" size="xs" onClick={() => actOpen(item)} aria-label="Открыть ссылку">
-                <ExternalLink aria-hidden />
+                <Icon name="external-link" strokeWidth={2} />
                 Открыть
               </Button>
             )}
@@ -121,7 +109,7 @@ function ItemBody({ item }: { item: Item }) {
     }
     default:
       return comment ? (
-        <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90">{item.content}</p>
+        <p className="text-md leading-relaxed break-words whitespace-pre-wrap text-foreground/90">{item.content}</p>
       ) : null
   }
 }
@@ -230,14 +218,14 @@ function AiSuggest({ item }: { item: Item }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button variant="outline" size="sm" onClick={() => void run()} disabled={loading}>
-        <Sparkles aria-hidden />
+        <Icon name="sparkles" strokeWidth={2} />
         {loading ? 'Думаю…' : 'Предложить теги'}
       </Button>
       {title && (
         <button
           type="button"
           onClick={() => void acceptTitle(title)}
-          className="inline-flex h-6 max-w-full items-center rounded-md bg-muted px-2 text-[13px] text-foreground outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="inline-flex h-6 max-w-full items-center rounded-md bg-muted px-2 text-2sm text-foreground outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/60"
           aria-label={`Принять заголовок: ${title}`}
         >
           <span className="truncate">Заголовок: {title}</span>
@@ -255,7 +243,7 @@ function AiSuggest({ item }: { item: Item }) {
 function ActionButton({
   label,
   hint,
-  icon: Icon,
+  icon,
   onClick,
   primary,
   destructive,
@@ -263,7 +251,7 @@ function ActionButton({
 }: {
   label: string
   hint: string
-  icon: LucideIcon
+  icon: IconName
   onClick: () => void
   primary?: boolean
   destructive?: boolean
@@ -280,7 +268,8 @@ function ActionButton({
         primary && 'bg-brand text-brand-foreground hover:bg-brand/90',
       )}
     >
-      <Icon strokeWidth={1.75} aria-hidden className={cn(active && 'fill-[var(--cat-amber)] text-[var(--cat-amber)]')} />
+      {/* pixel:text-inherit: в пиксельных сценах нажатая кнопка сама золотая, значок берёт её цвет текста */}
+      <Icon name={icon} className={cn(active && 'fill-gold text-gold pixel:text-inherit')} />
       {label}
       <Kbd>{hint}</Kbd>
     </Button>
@@ -415,11 +404,11 @@ function TriageBody({ onClose }: { onClose: () => void }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 text-center">
         <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <CircleCheck size={24} strokeWidth={1.5} aria-hidden />
+          <Icon name="circle-check" size={24} strokeWidth={1.5} />
         </div>
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-medium">{total === 0 ? 'Входящие пусты' : 'Всё разобрано'}</h2>
-          <p className="text-[13px] text-muted-foreground">
+          <p className="text-2sm text-muted-foreground">
             {total === 0 ? 'Разбирать пока нечего.' : 'Входящие просмотрены до конца.'}
           </p>
         </div>
@@ -450,7 +439,7 @@ function TriageBody({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 pr-12 text-[13px] text-muted-foreground">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 pr-12 text-2sm text-muted-foreground">
         <TypeIcon type={item.type} />
         <span className="tabular-nums" aria-live="polite">
           {index + 1} из {total}
@@ -491,18 +480,18 @@ function TriageBody({ onClose }: { onClose: () => void }) {
 
       <div className="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-center gap-2">
-          <ActionButton primary label="В базу знаний" hint="E" icon={BookMarked} onClick={() => decide('library')} />
-          <ActionButton label="В архив" hint="A" icon={Archive} onClick={() => decide('archive')} />
-          <ActionButton label="Пропустить" hint="→" icon={ArrowRight} onClick={() => step(1)} />
-          <ActionButton label="Назад" hint="←" icon={ArrowLeft} onClick={() => step(-1)} />
+          <ActionButton primary label="В базу знаний" hint="E" icon="book-marked" onClick={() => decide('library')} />
+          <ActionButton label="В архив" hint="A" icon="archive" onClick={() => decide('archive')} />
+          <ActionButton label="Пропустить" hint="→" icon="arrow-right" onClick={() => step(1)} />
+          <ActionButton label="Назад" hint="←" icon="arrow-left" onClick={() => step(-1)} />
           <ActionButton
             label="Избранное"
             hint="F"
-            icon={Star}
+            icon="star"
             active={item.favorite === 1}
             onClick={() => void actToggleFavorite(item)}
           />
-          <ActionButton destructive label="Удалить" hint="Del" icon={Trash2} onClick={() => decide('deleted')} />
+          <ActionButton destructive label="Удалить" hint="Del" icon="trash" onClick={() => decide('deleted')} />
         </div>
       </div>
     </div>

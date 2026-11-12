@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Download, RefreshCw, ShieldCheck, Trash2, Upload } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -18,7 +18,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5 rounded-lg border px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-[13px] font-medium tabular-nums">{value}</dd>
+      <dd className="text-2sm font-medium tabular-nums">{value}</dd>
     </div>
   )
 }
@@ -149,7 +149,7 @@ export function DataSection() {
               : 'Без защиты браузер, особенно Safari на iPhone, может удалить данные при нехватке места или после долгого простоя.'}
           </p>
           <Button variant="outline" onClick={() => void persist()} disabled={persisted === true}>
-            <ShieldCheck strokeWidth={1.75} />
+            <Icon name="shield-check" />
             {persisted ? 'Защищено' : 'Защитить хранилище от очистки'}
           </Button>
         </Row>
@@ -157,11 +157,11 @@ export function DataSection() {
 
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => void doExport()} disabled={busy !== null}>
-          <Download strokeWidth={1.75} />
+          <Icon name="download" />
           Экспорт резервной копии
         </Button>
         <Button variant="outline" onClick={() => fileInput.current?.click()} disabled={busy !== null}>
-          <Upload strokeWidth={1.75} />
+          <Icon name="upload" />
           Импорт
         </Button>
         <input
@@ -177,11 +177,11 @@ export function DataSection() {
           }}
         />
         <Button variant="outline" onClick={() => void doSeed()} disabled={busy !== null}>
-          <RefreshCw strokeWidth={1.75} />
+          <Icon name="refresh" />
           Загрузить демоданные заново
         </Button>
         <Button variant="destructive" onClick={() => setClearOpen(true)} disabled={busy !== null}>
-          <Trash2 strokeWidth={1.75} />
+          <Icon name="trash" />
           Удалить все данные
         </Button>
       </div>

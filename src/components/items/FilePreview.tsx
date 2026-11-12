@@ -1,17 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  Download,
-  ExternalLink,
-  File as FileIcon,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-  type LucideIcon,
-} from 'lucide-react'
+import { Icon, type IconName } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { getFile } from '@/db/repo'
 import { actDownload } from '@/lib/actions'
@@ -28,16 +16,16 @@ function extOf(name: string | undefined): string {
   return m ? m[1].toLowerCase() : ''
 }
 
-function iconFor(ext: string, mime: string): LucideIcon {
-  if (mime.startsWith('image/')) return FileImage
-  if (mime.startsWith('audio/')) return FileAudio
-  if (mime.startsWith('video/')) return FileVideo
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'tgz'].includes(ext)) return FileArchive
-  if (['xls', 'xlsx', 'csv', 'tsv', 'ods'].includes(ext)) return FileSpreadsheet
+function iconFor(ext: string, mime: string): IconName {
+  if (mime.startsWith('image/')) return 'file-image'
+  if (mime.startsWith('audio/')) return 'file-audio'
+  if (mime.startsWith('video/')) return 'file-video'
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'tgz'].includes(ext)) return 'file-archive'
+  if (['xls', 'xlsx', 'csv', 'tsv', 'ods'].includes(ext)) return 'file-spreadsheet'
   if (['js', 'ts', 'tsx', 'jsx', 'py', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'html', 'css', 'json', 'xml', 'sh'].includes(ext))
-    return FileCode
-  if (['txt', 'md', 'pdf', 'doc', 'docx', 'rtf', 'odt', 'log'].includes(ext)) return FileText
-  return FileIcon
+    return 'file-code'
+  if (['txt', 'md', 'pdf', 'doc', 'docx', 'rtf', 'odt', 'log'].includes(ext)) return 'file-text'
+  return 'file'
 }
 
 function isTextual(item: Item, ext: string): boolean {
@@ -108,7 +96,7 @@ function FileTextBody({ item }: { item: Item }) {
 function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' }) {
   const ext = extOf(item.fileName)
   const mime = item.mimeType ?? ''
-  const Icon = iconFor(ext, mime)
+  const icon = iconFor(ext, mime)
   const isPdf = mime === 'application/pdf' || ext === 'pdf'
   // «Открыть» — только если сам Blob является PDF: тип в записи и расширение имени могут быть подделаны.
   const pdfUrl = usePdfUrl(variant === 'full' && isPdf ? item.fileId : undefined)
@@ -116,7 +104,7 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
   if (variant === 'thumb') {
     return (
       <div className="flex size-full min-h-16 flex-col items-center justify-center gap-1 bg-muted text-muted-foreground">
-        <Icon size={24} strokeWidth={1.5} aria-hidden />
+        <Icon name={icon} size={24} strokeWidth={1.5} />
         {ext && <span className="text-xs">.{ext}</span>}
       </div>
     )
@@ -125,7 +113,7 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 p-3">
-        <Icon size={28} strokeWidth={1.5} className="shrink-0 text-muted-foreground" aria-hidden />
+        <Icon name={icon} size={28} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{item.fileName || item.title || 'Файл'}</div>
           {item.fileSize !== undefined && (
@@ -135,12 +123,12 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
         <div className="flex shrink-0 items-center gap-1">
           {pdfUrl && (
             <Button variant="ghost" size="sm" render={<a href={pdfUrl} target="_blank" rel="noopener noreferrer" />}>
-              <ExternalLink strokeWidth={1.75} className="size-4" aria-hidden />
+              <Icon name="external-link" className="size-4" />
               Открыть
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => void actDownload(item)}>
-            <Download strokeWidth={1.75} className="size-4" aria-hidden />
+            <Icon name="download" className="size-4" />
             Скачать
           </Button>
         </div>

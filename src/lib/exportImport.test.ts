@@ -3,22 +3,43 @@ import { db } from '@/db/db'
 import { QUOTA_MESSAGE } from '@/lib/errors'
 import { formatDateTime, formatRelative } from '@/lib/itemTitle'
 import {
+  BACKUP_VERSION,
   backupFileName,
   base64ToBytes,
   blobToBase64,
   estimateBackupBytes,
   exportBackup,
+  IMPORTED_TRASH_GRACE_DAYS,
   importBackup,
   MAX_BACKUP_BYTES,
+  PRIVATE_SETTINGS,
+  sanitizeItem,
   type BackupData,
+  type ImportReport,
 } from '@/lib/exportImport'
-import type { Category, Item, StoredFile } from '@/types'
+import { snapToGrid } from '@/lib/graphLayout'
+import { MAX_OCR_TEXT } from '@/lib/normalize'
+import { cleanupTrash } from '@/lib/trashCleanup'
+import {
+  DEFAULT_SETTINGS,
+  SAVED_SEARCH_NAME_MAX,
+  SAVED_SEARCH_QUERY_MAX,
+  type Category,
+  type Item,
+  type SavedSearch,
+  type Settings,
+  type StoredFile,
+} from '@/types'
+
+const DAY = 86_400_000
 
 async function reset() {
   await db.items.clear()
   await db.files.clear()
   await db.categories.clear()
   await db.meta.clear()
+  await db.positions.clear()
+  await db.searches.clear()
 }
 
 function makeItem(id: string, patch: Partial<Item> = {}): Item {
@@ -41,6 +62,19 @@ function makeItem(id: string, patch: Partial<Item> = {}): Item {
 
 function makeCategory(id: string, name: string, order = 0): Category {
   return { id, name, color: 'blue', order, createdAt: 1_000 }
+}
+
+function makeSearch(id: string, name: string, query: string, order = 0): SavedSearch {
+  return { id, name, query, order, createdAt: 1_000 }
+}
+
+/** Отчёт импорта: неуказанные счётчики — нули. */
+function rep(patch: Partial<ImportReport> = {}): ImportReport {
+  return { items: 0, files: 0, categories: 0, skipped: 0, positions: 0, searches: 0, ...patch }
+}
+
+async function metaMap(): Promise<Record<string, unknown>> {
+  return Object.fromEntries((await db.meta.toArray()).map((r) => [r.key, r.value]))
 }
 
 /** Детерминированные «случайные» байты, покрывающие все значения 0..255. */
@@ -72,7 +106,7 @@ function backupBlob(data: unknown): Blob {
 function backup(patch: Partial<BackupData> = {}): BackupData {
   return {
     app: 'quickdrop',
-    version: 1,
+    version: BACKUP_VERSION,
     exportedAt: 1_000,
     items: [],
     categories: [],
@@ -171,7 +205,9 @@ describe('exportBackup / importBackup: полный цикл', () => {
     const { blob, data } = await readExport()
     expect(blob.type).toBe('application/json')
     expect(data.app).toBe('quickdrop')
-    expect(data.version).toBe(1)
+    expect(data.version).toBe(2)
+    expect(data.positions).toEqual([])
+    expect(data.searches).toEqual([])
     expect(typeof data.exportedAt).toBe('number')
     expect(data.files).toHaveLength(1)
     expect(typeof data.files[0].data).toBe('string')
@@ -180,7 +216,7 @@ describe('exportBackup / importBackup: полный цикл', () => {
 
     await reset()
     const report = await importBackup(blob, 'replace')
-    expect(report).toEqual({ items: 2, files: 1, categories: 1, skipped: 0 })
+    expect(report).toEqual({ items: 2, files: 1, categories: 1, skipped: 0, positions: 0, searches: 0 })
 
     expect(await db.items.get('img')).toEqual(image)
     expect(await db.items.get('note')).toEqual(note)
@@ -295,7 +331,7 @@ describe('replace', () => {
       'replace',
     )
 
-    expect(report).toEqual({ items: 1, files: 0, categories: 1, skipped: 0 })
+    expect(report).toEqual({ items: 1, files: 0, categories: 1, skipped: 0, positions: 0, searches: 0 })
     expect((await db.items.toArray()).map((i) => i.id)).toEqual(['new'])
     expect((await db.categories.toArray()).map((c) => c.id)).toEqual(['new-cat'])
     expect(await db.files.count()).toBe(0)
@@ -325,7 +361,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 2, files: 0, categories: 0, skipped: 2 })
+    expect(report).toEqual({ items: 2, files: 0, categories: 0, skipped: 2, positions: 0, searches: 0 })
     expect((await db.items.get('a'))?.title).toBe('remote-a')
     expect((await db.items.get('b'))?.title).toBe('local-b')
     expect((await db.items.get('c'))?.title).toBe('local-c')
@@ -354,7 +390,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 3, files: 0, categories: 1, skipped: 2 })
+    expect(report).toEqual({ items: 3, files: 0, categories: 1, skipped: 2, positions: 0, searches: 0 })
     const cats = await db.categories.orderBy('order').toArray()
     expect(cats.map((c) => [c.id, c.name])).toEqual([
       ['c1', 'Работа'],
@@ -414,7 +450,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 1, files: 2, categories: 0, skipped: 3 })
+    expect(report).toEqual({ items: 1, files: 2, categories: 0, skipped: 3, positions: 0, searches: 0 })
     expect((await db.files.toCollection().primaryKeys()).sort()).toEqual(['f-local', 'f-lost', 'f-new'])
     expect([...(await bytesOf((await db.files.get('f-new'))!.blob))]).toEqual([7, 7])
     expect([...(await bytesOf((await db.files.get('f-lost'))!.blob))]).toEqual([5, 5, 5])
@@ -456,7 +492,7 @@ describe('валидация и починка', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 5, files: 0, categories: 1, skipped: 6 })
+    expect(report).toEqual({ items: 5, files: 0, categories: 1, skipped: 6, positions: 0, searches: 0 })
     const a = await db.items.get('a')
     expect(a?.links).toEqual(['b', 'local'])
     expect((await db.items.get('b'))?.links).toEqual(['a'])
@@ -486,7 +522,9 @@ describe('валидация и починка', () => {
       [backupBlob({ app: 'notion', version: 1, items: [], categories: [], files: [] }), /не резервная копия QuickDrop/],
       [backupBlob([1, 2, 3]), /не резервная копия QuickDrop/],
       [backupBlob(null), /не резервная копия QuickDrop/],
-      [backupBlob(backup({ version: 2 })), /более новой версией/],
+      [backupBlob(backup({ version: 3 })), /более новой версией/],
+      [backupBlob(backup({ version: 0 })), /версия формата/],
+      [backupBlob(backup({ version: 1.5 })), /версия формата/],
       [backupBlob(backup({ version: '1' as never })), /версия формата/],
       [backupBlob({ ...backup(), items: {} }), /«записи»/],
       [backupBlob({ ...backup(), files: undefined }), /«файлы»/],
@@ -700,8 +738,915 @@ describe('валидация и починка', () => {
       files: 0,
       categories: 0,
       skipped: 0,
+      positions: 0,
+      searches: 0,
     })
     expect(await db.items.count()).toBe(1)
+  })
+})
+
+describe('версия 2: корзина, распознанный текст, положения, поиски', () => {
+  it('полный цикл возвращает корзину, ocrText/ocrAt, положения и сохранённые поиски', async () => {
+    // Срок корзины не истёк: отметка удаления переносится точно.
+    const deletedAt = Date.now() - 2 * DAY
+    const trashed = makeItem('trashed', { status: 'library', links: ['scan'], updatedAt: 2_000, deletedAt })
+    const scan = makeItem('scan', {
+      type: 'image',
+      links: ['trashed'],
+      ocrText: 'Счёт № 42\nИтого: 1 500',
+      ocrAt: 4_000,
+    })
+    // пробовали распознать, текста не нашлось
+    const tried = makeItem('tried', { ocrAt: 4_500 })
+    await db.items.bulkPut([trashed, scan, tried])
+    await db.positions.bulkPut([
+      { id: 'trashed', x: -120, y: 48 },
+      { id: 'scan', x: 96, y: 0 },
+      { id: 'ghost', x: 1, y: 2 },
+    ])
+    const first = makeSearch('s1', 'Счета', 'tag:счёт type:image', 0)
+    const second = makeSearch('s2', 'Корзина за неделю', 'is:trash date:week', 1)
+    await db.searches.bulkPut([second, first])
+
+    const { blob, text, data } = await readExport()
+    expect(data.version).toBe(2)
+    // Положение без записи в копию не попадает.
+    expect(data.positions).toEqual([
+      { id: 'scan', x: 96, y: 0 },
+      { id: 'trashed', x: -120, y: 48 },
+    ])
+    expect(data.searches).toEqual([first, second])
+    expect(data.items.find((i) => i.id === 'trashed')).toEqual(trashed)
+    expect(data.items.find((i) => i.id === 'scan')).toEqual(scan)
+    // Новые разделы — в заголовке, до файлов.
+    expect(text.indexOf('"positions":')).toBeGreaterThan(0)
+    expect(text.indexOf('"positions":')).toBeLessThan(text.indexOf('"files":'))
+    expect(text.indexOf('"searches":')).toBeLessThan(text.indexOf('"files":'))
+
+    await reset()
+    expect(await importBackup(blob, 'replace')).toEqual(rep({ items: 3, positions: 2, searches: 2 }))
+
+    expect(await db.items.get('trashed')).toEqual(trashed)
+    expect(await db.items.get('scan')).toEqual(scan)
+    expect(await db.items.get('tried')).toEqual(tried)
+    // Корзина находится по индексу, связь с записью в корзине цела в обе стороны.
+    expect(await db.items.where('deletedAt').above(0).primaryKeys()).toEqual(['trashed'])
+    expect(await db.positions.toArray()).toEqual([
+      { id: 'scan', x: 96, y: 0 },
+      { id: 'trashed', x: -120, y: 48 },
+    ])
+    expect(await db.searches.orderBy('order').toArray()).toEqual([first, second])
+  })
+
+  it('replace очищает положения и поиски; имена-дубли поисков из копии получают суффикс', async () => {
+    await db.items.put(makeItem('old'))
+    await db.positions.put({ id: 'old', x: 5, y: 5 })
+    await db.searches.put(makeSearch('old-s', 'Старый', 'tag:old'))
+
+    const report = await importBackup(
+      backupBlob(
+        backup({
+          items: [makeItem('new'), makeItem('trashed-new', { deletedAt: 3_000 })],
+          positions: [
+            { id: 'new', x: 10, y: 20 },
+            { id: 'trashed-new', x: -10, y: -20 },
+            { id: 'ghost', x: 1, y: 1 },
+            { id: 'old', x: 2, y: 2 },
+          ],
+          searches: [
+            makeSearch('s1', 'Важное', 'is:fav', 0),
+            makeSearch('s2', 'ВАЖНОЕ', 'is:fav', 1),
+            makeSearch('s3', 'важное ', 'tag:x', 2),
+          ],
+        }),
+      ),
+      'replace',
+    )
+
+    // ghost и old — положения без записи
+    expect(report).toEqual(rep({ items: 2, positions: 2, searches: 3, skipped: 2 }))
+    expect(await db.positions.toArray()).toEqual([
+      { id: 'new', x: 10, y: 20 },
+      { id: 'trashed-new', x: -10, y: -20 },
+    ])
+    expect((await db.searches.orderBy('order').toArray()).map((s) => [s.id, s.name, s.order])).toEqual([
+      ['s1', 'Важное', 0],
+      ['s2', 'ВАЖНОЕ (2)', 1],
+      ['s3', 'важное (3)', 2],
+    ])
+  })
+
+  it('merge: локальное положение сильнее, положение без записи не пишется', async () => {
+    await db.items.bulkPut([
+      makeItem('both', { updatedAt: 100 }),
+      makeItem('local-wins', { updatedAt: 900 }),
+      makeItem('untouched'),
+    ])
+    await db.positions.bulkPut([
+      { id: 'both', x: 0, y: 0 },
+      { id: 'untouched', x: 64, y: 0 },
+    ])
+
+    const report = await importBackup(
+      backupBlob(
+        backup({
+          items: [
+            makeItem('both', { title: 'из копии', updatedAt: 500 }),
+            makeItem('local-wins', { updatedAt: 100 }),
+            makeItem('fresh'),
+          ],
+          positions: [
+            { id: 'both', x: 320, y: 320 },
+            { id: 'local-wins', x: 128, y: 0 },
+            { id: 'fresh', x: 192, y: 0 },
+            { id: 'ghost', x: 256, y: 0 },
+          ],
+        }),
+      ),
+      'merge',
+    )
+
+    // пропущено: запись local-wins (локальная новее), положения both (есть локальное) и ghost (нет записи)
+    expect(report).toEqual(rep({ items: 2, positions: 2, skipped: 3 }))
+    expect((await db.items.get('both'))?.title).toBe('из копии')
+    expect(await db.positions.toArray()).toEqual([
+      { id: 'both', x: 0, y: 0 },
+      { id: 'fresh', x: 192, y: 0 },
+      // запись осталась локальной, но своего положения у неё не было
+      { id: 'local-wins', x: 128, y: 0 },
+      { id: 'untouched', x: 64, y: 0 },
+    ])
+  })
+
+  it('merge: положение из копии в занятой клетке не пишется — ноды двух устройств не накладываются', async () => {
+    // Раскладка на каждом устройстве растёт от (0, 0): клетки совпадают систематически.
+    await db.items.bulkPut([makeItem('a1'), makeItem('a2'), makeItem('a-hidden', { status: 'archive' })])
+    await db.positions.bulkPut([
+      { id: 'a1', x: 0, y: 0 },
+      { id: 'a2', x: 0, y: -32 },
+      // скрытая запись тоже держит клетку: вернувшись из архива, она встанет на неё
+      { id: 'a-hidden', x: 64, y: 64 },
+    ])
+
+    const report = await importBackup(
+      backupBlob(
+        backup({
+          items: [makeItem('b1'), makeItem('b2'), makeItem('b3'), makeItem('b4'), makeItem('b5')],
+          positions: [
+            // та же клетка, что у a1 (координаты в пределах клетки)
+            { id: 'b1', x: 10, y: -12 },
+            { id: 'b2', x: 0, y: -32 },
+            { id: 'b3', x: 64, y: 64 },
+            { id: 'b4', x: 96, y: 0 },
+            // клетку b4 внутри самой копии — получает первая по порядку копии
+            { id: 'b5', x: 100, y: 5 },
+          ],
+        }),
+      ),
+      'merge',
+    )
+
+    expect(report).toEqual(rep({ items: 5, positions: 1, skipped: 4 }))
+    const positions = await db.positions.toArray()
+    expect(positions).toEqual([
+      { id: 'a-hidden', x: 64, y: 64 },
+      { id: 'a1', x: 0, y: 0 },
+      { id: 'a2', x: 0, y: -32 },
+      { id: 'b4', x: 96, y: 0 },
+    ])
+    const cells = positions.map((p) => JSON.stringify(snapToGrid(p)))
+    expect(new Set(cells).size).toBe(cells.length)
+  })
+
+  it('merge старой копии после окончательного удаления: вернувшаяся запись не встаёт на ноду, занявшую её клетку', async () => {
+    await db.items.put(makeItem('x'))
+    await db.positions.put({ id: 'x', x: 0, y: 0 })
+    const { blob } = await readExport()
+
+    // x удалена окончательно (вместе с положением), её клетку заняла новая запись y.
+    await db.items.delete('x')
+    await db.positions.delete('x')
+    await db.items.put(makeItem('y', { createdAt: 2_000 }))
+    await db.positions.put({ id: 'y', x: 0, y: 0 })
+
+    expect(await importBackup(blob, 'merge')).toEqual(rep({ items: 1, skipped: 1 }))
+    expect(await db.items.get('x')).toBeDefined()
+    expect(await db.positions.toArray()).toEqual([{ id: 'y', x: 0, y: 0 }])
+  })
+
+  it('replace: из положений копии в одной клетке пишется первое', async () => {
+    await importBackup(
+      backupBlob(
+        backup({
+          items: [makeItem('p'), makeItem('q')],
+          positions: [
+            { id: 'p', x: 32, y: 32 },
+            { id: 'q', x: 40, y: 25 },
+          ],
+        }),
+      ),
+      'replace',
+    )
+    expect(await db.positions.toArray()).toEqual([{ id: 'p', x: 32, y: 32 }])
+  })
+
+  it('merge: смена категории версией из копии снимает локальное положение (Р8)', async () => {
+    await db.categories.bulkPut([makeCategory('work', 'Работа', 0), makeCategory('ideas', 'Идеи', 1)])
+    await db.items.bulkPut([
+      makeItem('moved', { categoryId: 'work', updatedAt: 100 }),
+      makeItem('same', { categoryId: 'work', updatedAt: 100 }),
+    ])
+    await db.positions.bulkPut([
+      { id: 'moved', x: 64, y: 96 },
+      { id: 'same', x: 128, y: 96 },
+    ])
+
+    await importBackup(
+      backupBlob(
+        backup({
+          categories: [makeCategory('work', 'Работа', 0), makeCategory('ideas', 'Идеи', 1)],
+          items: [
+            makeItem('moved', { categoryId: 'ideas', updatedAt: 500 }),
+            makeItem('same', { categoryId: 'work', title: 'правка', updatedAt: 500 }),
+          ],
+        }),
+      ),
+      'merge',
+    )
+
+    expect((await db.items.get('moved'))?.categoryId).toBe('ideas')
+    // Прежнее место — в зоне «Работы»: нода получит место в зоне «Идей» автораскладкой.
+    expect(await db.positions.get('moved')).toBeUndefined()
+    expect(await db.positions.get('same')).toEqual({ id: 'same', x: 128, y: 96 })
+  })
+
+  it('merge: положение из копии не пишется, если итоговая категория записи другая', async () => {
+    await db.categories.bulkPut([makeCategory('work', 'Работа', 0), makeCategory('ideas', 'Идеи', 1)])
+    // Локальная версия новее: категорию сменили здесь, и смена сняла положение.
+    await db.items.put(makeItem('x', { categoryId: 'ideas', updatedAt: 900 }))
+
+    const report = await importBackup(
+      backupBlob(
+        backup({
+          categories: [makeCategory('work', 'Работа', 0)],
+          items: [
+            makeItem('x', { categoryId: 'work', updatedAt: 100 }),
+            // категории нет в копии: починка целостности уберёт её у записи
+            makeItem('lost', { categoryId: 'nowhere' }),
+            makeItem('ok', { categoryId: 'work' }),
+          ],
+          positions: [
+            { id: 'x', x: 64, y: 0 },
+            { id: 'lost', x: 128, y: 0 },
+            { id: 'ok', x: 192, y: 0 },
+          ],
+        }),
+      ),
+      'merge',
+    )
+
+    expect(report.positions).toBe(1)
+    expect(await db.positions.toArray()).toEqual([{ id: 'ok', x: 192, y: 0 }])
+    expect((await db.items.get('lost'))?.categoryId).toBeNull()
+  })
+
+  it('merge: поиск-дубль пропущен, одноимённый с другим запросом получает суффикс, новые — после локальных', async () => {
+    const l1 = makeSearch('l1', 'Работа', 'cat:работа', 0)
+    const l2 = makeSearch('l2', 'Ссылки', 'type:link', 5)
+    await db.searches.bulkPut([l1, l2])
+
+    const copy = backupBlob(
+      backup({
+        searches: [
+          // тот же id — остаётся локальный
+          makeSearch('l1', 'Другое имя', 'tag:x', 0),
+          // то же имя (без учёта регистра и пробелов) и тот же запрос
+          makeSearch('r1', '  РАБОТА ', 'cat:работа', 1),
+          makeSearch('r4', 'Новый', 'tag:other', 4),
+          makeSearch('r3', 'Новый', 'tag:new', 3),
+          // то же имя, другой запрос
+          makeSearch('r2', 'ссылки', 'type:link is:fav', 2),
+        ],
+      }),
+    )
+    expect(await importBackup(copy, 'merge')).toEqual(rep({ searches: 3, skipped: 2 }))
+
+    const rows = await db.searches.orderBy('order').toArray()
+    expect(rows.slice(0, 2)).toEqual([l1, l2])
+    expect(rows.slice(2).map((s) => [s.id, s.name, s.query, s.order])).toEqual([
+      ['r2', 'ссылки (2)', 'type:link is:fav', 6],
+      ['r3', 'Новый', 'tag:new', 7],
+      ['r4', 'Новый (2)', 'tag:other', 8],
+    ])
+
+    // Повторный импорт той же копии ничего не плодит.
+    expect(await importBackup(copy, 'merge')).toEqual(rep({ skipped: 5 }))
+    expect(await db.searches.count()).toBe(5)
+  })
+
+  it('суффикс имени поиска: занятые номера пропускаются, ё = е, имя остаётся в пределах длины', async () => {
+    const long = 'я'.repeat(SAVED_SEARCH_NAME_MAX)
+    await db.searches.bulkPut([
+      makeSearch('l1', 'Отчёты', 'tag:a', 0),
+      makeSearch('l2', 'Отчёты (2)', 'tag:b', 1),
+      makeSearch('l3', long, 'tag:c', 2),
+    ])
+    await importBackup(
+      backupBlob(
+        backup({
+          searches: [makeSearch('r1', 'отчеты', 'tag:z', 0), makeSearch('r2', long, 'tag:y', 1)],
+        }),
+      ),
+      'merge',
+    )
+    expect((await db.searches.get('r1'))?.name).toBe('отчеты (3)')
+    const renamed = (await db.searches.get('r2'))!.name
+    expect(renamed).toBe(`${'я'.repeat(SAVED_SEARCH_NAME_MAX - 4)} (2)`)
+    expect(renamed.length).toBe(SAVED_SEARCH_NAME_MAX)
+  })
+
+  it('негодные положения и поиски пропускаются и считаются в skipped', async () => {
+    const before = Date.now()
+    const report = await importBackup(
+      backupBlob({
+        ...backup({ items: [makeItem('a'), makeItem('b')] }),
+        positions: [
+          { id: 'a', x: 10.4, y: -20.6 },
+          // дубль id — остаётся первое
+          { id: 'a', x: 99, y: 99 },
+          // NaN в JSON становится null
+          { id: 'b', x: Number.NaN, y: 1 },
+          { id: 'b', x: '5', y: 5 },
+          { id: 'b', x: 2_000_000, y: 0 },
+          { id: '', x: 1, y: 1 },
+          { x: 1, y: 1 },
+          'мусор',
+          null,
+          { id: 'b', x: 3, y: 4, extra: 'лишнее поле' },
+        ],
+        searches: [
+          { id: 's-ok', name: '  Годный  ', query: '  tag:a  ' },
+          { id: 's-ok', name: 'Дубль id', query: 'tag:b' },
+          { id: '', name: 'Без id', query: 'tag:c' },
+          { id: 's1', name: '   ', query: 'tag:d' },
+          { id: 's2', name: 'Пустой запрос', query: '  ' },
+          { id: 's3', name: 'я'.repeat(SAVED_SEARCH_NAME_MAX + 1), query: 'tag:e' },
+          { id: 's4', name: 'Длинный запрос', query: 'q'.repeat(SAVED_SEARCH_QUERY_MAX + 1) },
+          { id: 's5', name: 5, query: 'tag:f' },
+          'мусор',
+          { id: 's-max', name: 'ю'.repeat(SAVED_SEARCH_NAME_MAX), query: 'q'.repeat(SAVED_SEARCH_QUERY_MAX), order: 7, createdAt: 9e15 },
+        ],
+      }),
+      'replace',
+    )
+    const after = Date.now()
+
+    expect(report).toEqual(rep({ items: 2, positions: 2, searches: 2, skipped: 16 }))
+    expect(await db.positions.toArray()).toEqual([
+      { id: 'a', x: 10, y: -21 },
+      { id: 'b', x: 3, y: 4 },
+    ])
+    const ok = (await db.searches.get('s-ok'))!
+    // порядок — индекс в копии, дата создания — сейчас
+    expect(ok).toMatchObject({ name: 'Годный', query: 'tag:a', order: 0 })
+    expect(ok.createdAt).toBeGreaterThanOrEqual(before)
+    expect(ok.createdAt).toBeLessThanOrEqual(after)
+    const max = (await db.searches.get('s-max'))!
+    expect(max.order).toBe(7)
+    // дата вне допустимого диапазона заменяется
+    expect(max.createdAt).toBeLessThanOrEqual(after)
+    expect(await db.searches.count()).toBe(2)
+  })
+
+  it('починка целостности удаляет положения без записей, положение записи в корзине остаётся', async () => {
+    await db.items.bulkPut([makeItem('keep'), makeItem('in-trash', { deletedAt: 2_000 })])
+    await db.positions.bulkPut([
+      { id: 'keep', x: 1, y: 1 },
+      { id: 'in-trash', x: 2, y: 2 },
+      { id: 'gone', x: 3, y: 3 },
+    ])
+    expect(await importBackup(backupBlob(backup()), 'merge')).toEqual(rep())
+    expect((await db.positions.toCollection().primaryKeys()).sort()).toEqual(['in-trash', 'keep'])
+  })
+
+  it('sanitizeItem: deletedAt, ocrText, ocrAt и source', () => {
+    const now = 1_000_000_000
+    const day = 86_400_000
+    const clean = (patch: Record<string, unknown>) => sanitizeItem({ ...makeItem('x'), ...patch }, now)!
+
+    expect(clean({ deletedAt: 5_000 }).deletedAt).toBe(5_000)
+    for (const bad of [9e15, -1, 0, '5000', null, now + 2 * day, Number.POSITIVE_INFINITY]) {
+      expect(Object.hasOwn(clean({ deletedAt: bad }), 'deletedAt'), String(bad)).toBe(false)
+    }
+
+    expect(clean({ ocrText: 'стр. 1\r\nстр.\u0000 2\u0007' }).ocrText).toBe('стр. 1\nстр. 2')
+    for (const empty of ['', '  \n\t ', 5, null, ['текст']]) {
+      expect(Object.hasOwn(clean({ ocrText: empty }), 'ocrText'), String(empty)).toBe(false)
+    }
+    expect(clean({ ocrText: 'я'.repeat(MAX_OCR_TEXT + 100) }).ocrText).toHaveLength(MAX_OCR_TEXT)
+
+    // ocrAt без ocrText — «пробовали, текста нет»
+    expect(clean({ ocrAt: 7_000 })).toMatchObject({ ocrAt: 7_000 })
+    for (const bad of [9e15, -5, '7000']) {
+      expect(Object.hasOwn(clean({ ocrAt: bad }), 'ocrAt'), String(bad)).toBe(false)
+    }
+
+    expect(clean({ source: 'extension' }).source).toBe('extension')
+    expect(clean({ source: 'telepathy' }).source).toBe('import')
+
+    // Запись прежнего формата новых полей не получает.
+    const old = clean({})
+    for (const key of ['deletedAt', 'ocrText', 'ocrAt']) expect(Object.hasOwn(old, key), key).toBe(false)
+  })
+
+  it('deletedAt вне диапазона дат отбрасывается: запись приходит не в корзину', async () => {
+    const deletedAt = Date.now() - 3 * DAY
+    await importBackup(
+      backupBlob(
+        backup({
+          items: [
+            makeItem('huge', { deletedAt: 9e15 }),
+            makeItem('neg', { deletedAt: -1 }),
+            makeItem('future', { deletedAt: Date.now() + 365 * 86_400_000 }),
+            makeItem('ok', { deletedAt }),
+          ],
+        }),
+      ),
+      'replace',
+    )
+    for (const id of ['huge', 'neg', 'future']) {
+      expect(Object.hasOwn((await db.items.get(id))!, 'deletedAt'), id).toBe(false)
+    }
+    expect((await db.items.get('ok'))?.deletedAt).toBe(deletedAt)
+    expect(await db.items.where('deletedAt').above(0).primaryKeys()).toEqual(['ok'])
+  })
+
+  it('merge: deletedAt приходит вместе с победившей версией записи', async () => {
+    const deletedAt = Date.now() - DAY
+    await db.items.bulkPut([
+      makeItem('a', { updatedAt: 100 }),
+      makeItem('b', { updatedAt: 500 }),
+      makeItem('c', { updatedAt: 100, deletedAt: 700 }),
+    ])
+    await importBackup(
+      backupBlob(
+        backup({
+          items: [
+            makeItem('a', { updatedAt: 200, deletedAt }),
+            // при равном updatedAt остаётся локальная — вне корзины
+            makeItem('b', { updatedAt: 500, deletedAt }),
+            makeItem('c', { updatedAt: 300 }),
+          ],
+        }),
+      ),
+      'merge',
+    )
+    expect((await db.items.get('a'))?.deletedAt).toBe(deletedAt)
+    expect(Object.hasOwn((await db.items.get('b'))!, 'deletedAt')).toBe(false)
+    expect(Object.hasOwn((await db.items.get('c'))!, 'deletedAt')).toBe(false)
+  })
+
+  describe('корзина из копии и автоочистка', () => {
+    const grace = IMPORTED_TRASH_GRACE_DAYS * DAY
+
+    for (const mode of ['merge', 'replace'] as const) {
+      it(`${mode}: запись, просроченная к моменту импорта, не стирается первой же автоочисткой`, async () => {
+        await db.meta.put({ key: 'trashDays', value: 30 })
+        await db.items.bulkPut([makeItem('live'), makeItem('gone', { status: 'library', deletedAt: Date.now() - 31 * DAY })])
+        const { blob } = await readExport()
+        // Автоочистка стёрла запись — копию импортируют, чтобы её вернуть.
+        expect(await cleanupTrash()).toBe(1)
+        expect(await db.items.get('gone')).toBeUndefined()
+
+        const before = Date.now()
+        await importBackup(blob, mode)
+        const after = Date.now()
+
+        const back = (await db.items.get('gone'))!
+        expect(back.deletedAt).toBeGreaterThanOrEqual(before - (30 * DAY - grace))
+        expect(back.deletedAt).toBeLessThanOrEqual(after - (30 * DAY - grace))
+        expect(await cleanupTrash()).toBe(0)
+        expect(await db.items.where('deletedAt').above(0).primaryKeys()).toEqual(['gone'])
+        // Отсрочка — ровно IMPORTED_TRASH_GRACE_DAYS: после неё автоочистка работает как обычно.
+        expect(await cleanupTrash(after + grace - DAY)).toBe(0)
+        expect(await cleanupTrash(after + grace)).toBe(1)
+        expect(await db.items.get('live')).toBeDefined()
+      })
+    }
+
+    it('непросроченная отметка переносится без изменений, порядок корзины не меняется', async () => {
+      const recent = Date.now() - 10 * DAY
+      const older = Date.now() - 20 * DAY
+      await importBackup(
+        backupBlob(
+          backup({
+            items: [makeItem('recent', { deletedAt: recent }), makeItem('older', { deletedAt: older })],
+            settings: { trashDays: 30 },
+          }),
+        ),
+        'replace',
+      )
+      expect((await db.items.get('recent'))?.deletedAt).toBe(recent)
+      expect((await db.items.get('older'))?.deletedAt).toBe(older)
+    })
+
+    it('срок короче отсрочки: запись получает весь срок', async () => {
+      const before = Date.now()
+      await importBackup(
+        backupBlob(backup({ items: [makeItem('t', { deletedAt: 5_000 })], settings: { trashDays: 3 } })),
+        'replace',
+      )
+      const at = (await db.items.get('t'))!.deletedAt!
+      expect(at).toBeGreaterThanOrEqual(before)
+      expect(at).toBeLessThanOrEqual(Date.now())
+      expect(await cleanupTrash(at + 3 * DAY - 1)).toBe(0)
+    })
+
+    it('replace берёт срок из копии, без него — здешний; merge — всегда здешний', async () => {
+      const old = makeItem('t', { deletedAt: 5_000 })
+      const floorFor = (days: number, now: number) => now - (days - Math.min(days, IMPORTED_TRASH_GRACE_DAYS)) * DAY
+
+      await db.meta.put({ key: 'trashDays', value: 60 })
+      let now = Date.now()
+      await importBackup(backupBlob(backup({ items: [old], settings: { trashDays: 10 } })), 'replace')
+      expect((await db.items.get('t'))!.deletedAt!).toBeLessThanOrEqual(floorFor(10, Date.now()))
+      expect((await db.items.get('t'))!.deletedAt!).toBeGreaterThanOrEqual(floorFor(10, now))
+
+      await db.meta.put({ key: 'trashDays', value: 60 })
+      now = Date.now()
+      await importBackup(backupBlob(backup({ items: [old] })), 'replace')
+      expect((await db.items.get('t'))!.deletedAt!).toBeGreaterThanOrEqual(floorFor(60, now))
+      expect((await db.items.get('t'))!.deletedAt!).toBeLessThanOrEqual(floorFor(60, Date.now()))
+
+      await reset()
+      await db.meta.put({ key: 'trashDays', value: 60 })
+      now = Date.now()
+      await importBackup(backupBlob(backup({ items: [old], settings: { trashDays: 10 } })), 'merge')
+      expect((await db.items.get('t'))!.deletedAt!).toBeGreaterThanOrEqual(floorFor(60, now))
+      expect((await db.items.get('t'))!.deletedAt!).toBeLessThanOrEqual(floorFor(60, Date.now()))
+    })
+
+    it('автоочистка выключена (trashDays = 0): отметки не трогаются', async () => {
+      await db.meta.put({ key: 'trashDays', value: 0 })
+      await importBackup(backupBlob(backup({ items: [makeItem('t', { deletedAt: 5_000 })] })), 'merge')
+      expect((await db.items.get('t'))?.deletedAt).toBe(5_000)
+    })
+
+    it('merge: локальная запись в корзине, оставшаяся победителем, не трогается', async () => {
+      await db.items.put(makeItem('t', { updatedAt: 900, deletedAt: 5_000 }))
+      await importBackup(backupBlob(backup({ items: [makeItem('t', { updatedAt: 100, deletedAt: 6_000 })] })), 'merge')
+      expect((await db.items.get('t'))?.deletedAt).toBe(5_000)
+    })
+  })
+
+  describe('распознанный текст при слиянии', () => {
+    const scan = (patch: Partial<Item> = {}) => makeItem('scan', { type: 'image', fileId: 'f1', ...patch })
+    beforeEach(async () => {
+      const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
+      await db.files.put({ id: 'f1', itemId: 'scan', blob, name: 'scan.png', mimeType: 'image/png', size: 3, createdAt: 1 })
+    })
+
+    it('версия из копии без распознавания не стирает локальный текст того же вложения', async () => {
+      await db.items.put(scan({ updatedAt: 100, ocrText: 'Счёт № 42', ocrAt: 150 }))
+      await importBackup(backupBlob(backup({ items: [scan({ title: 'с телефона', updatedAt: 500 })] })), 'merge')
+      expect(await db.items.get('scan')).toMatchObject({ title: 'с телефона', ocrText: 'Счёт № 42', ocrAt: 150 })
+    })
+
+    it('«пробовали, текста нет» тоже сохраняется: автораспознавание не повторится', async () => {
+      await db.items.put(scan({ updatedAt: 100, ocrAt: 150 }))
+      await importBackup(backupBlob(backup({ items: [scan({ updatedAt: 500, ocrText: 'старый', ocrAt: 120 })] })), 'merge')
+      const merged = (await db.items.get('scan'))!
+      expect(merged.ocrAt).toBe(150)
+      expect(Object.hasOwn(merged, 'ocrText')).toBe(false)
+    })
+
+    it('локальная версия новее, но распознавание пришло из копии — текст переносится, updatedAt прежний', async () => {
+      await db.items.put(scan({ title: 'здесь', updatedAt: 900 }))
+      const report = await importBackup(
+        backupBlob(backup({ items: [scan({ updatedAt: 100, ocrText: 'Итого: 1 500', ocrAt: 300 })] })),
+        'merge',
+      )
+      expect(report).toEqual(rep({ skipped: 1 }))
+      expect(await db.items.get('scan')).toMatchObject({ title: 'здесь', updatedAt: 900, ocrText: 'Итого: 1 500', ocrAt: 300 })
+    })
+
+    it('более свежее распознавание побеждающей версии остаётся; другое вложение — не переносится', async () => {
+      await db.items.bulkPut([
+        scan({ updatedAt: 100, ocrText: 'старое', ocrAt: 150 }),
+        makeItem('other', { type: 'image', fileId: 'f-local', updatedAt: 100, ocrText: 'локальное', ocrAt: 150 }),
+      ])
+      await importBackup(
+        backupBlob(
+          backup({
+            items: [
+              scan({ updatedAt: 500, ocrText: 'новое', ocrAt: 400 }),
+              makeItem('other', { type: 'image', fileId: 'f-copy', updatedAt: 500 }),
+            ],
+          }),
+        ),
+        'merge',
+      )
+      expect(await db.items.get('scan')).toMatchObject({ ocrText: 'новое', ocrAt: 400 })
+      const other = (await db.items.get('other'))!
+      expect(Object.hasOwn(other, 'ocrText')).toBe(false)
+      expect(Object.hasOwn(other, 'ocrAt')).toBe(false)
+    })
+  })
+})
+
+/**
+ * Копия прежнего формата (версия 1) — в том виде, в каком её писал экспорт до появления корзины,
+ * положений нод и сохранённых поисков: без разделов positions/searches и без новых полей записей.
+ */
+const V1_COPY = {
+  app: 'quickdrop',
+  version: 1,
+  exportedAt: 1_700_000_000_000,
+  settings: { theme: 'dark', globalShortcut: 'Alt+Q' },
+  categories: [{ id: 'cat-1', name: 'Работа', color: 'blue', order: 0, createdAt: 1_000 }],
+  items: [
+    {
+      id: 'img',
+      type: 'image',
+      title: 'Запись img',
+      content: 'Содержимое img',
+      categoryId: 'cat-1',
+      tags: ['фото', 'demo'],
+      links: ['note'],
+      status: 'library',
+      favorite: 1,
+      source: 'drop',
+      createdAt: 1_000,
+      updatedAt: 3_000,
+      fileId: 'file-1',
+      fileName: 'photo.png',
+      fileSize: 5,
+      mimeType: 'image/png',
+      processedAt: 2_000,
+    },
+    {
+      id: 'note',
+      type: 'link',
+      title: '',
+      content: 'Комментарий к ссылке',
+      categoryId: null,
+      tags: [],
+      links: ['img'],
+      status: 'archive',
+      favorite: 0,
+      source: 'paste',
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      url: 'https://example.com/a',
+      linkMeta: { status: 'ok', title: 'Пример', fetchedAt: 1_500 },
+      prevStatus: 'library',
+      ai: { summary: 'кратко', suggestedTags: ['x'], model: 'm', generatedAt: 5 },
+    },
+  ],
+  files: [
+    {
+      id: 'file-1',
+      itemId: 'img',
+      name: 'photo.png',
+      mimeType: 'image/png',
+      size: 5,
+      createdAt: 1_000,
+      thumb: 'iVBORwEC',
+      thumbType: 'image/png',
+      data: 'AQIDBAU=',
+    },
+  ],
+}
+
+describe('копия прежнего формата (версия 1)', () => {
+  const v1Blob = () => new Blob([JSON.stringify(V1_COPY)], { type: 'application/json' })
+
+  it('replace: данные восстановлены полностью, положения и поиски пусты', async () => {
+    // Локальные данные новых таблиц: полная замена стирает их и при старой копии.
+    await db.items.put(makeItem('old'))
+    await db.positions.put({ id: 'old', x: 1, y: 1 })
+    await db.searches.put(makeSearch('old-s', 'Старый', 'tag:old'))
+
+    expect(await importBackup(v1Blob(), 'replace')).toEqual(rep({ items: 2, files: 1, categories: 1 }))
+
+    expect(await db.items.toArray()).toEqual(V1_COPY.items)
+    expect(await db.categories.toArray()).toEqual(V1_COPY.categories)
+    const file = (await db.files.get('file-1'))!
+    expect(file).toMatchObject({ itemId: 'img', name: 'photo.png', mimeType: 'image/png', size: 5, createdAt: 1_000 })
+    expect([...(await bytesOf(file.blob))]).toEqual([1, 2, 3, 4, 5])
+    expect(file.blob.type).toBe('image/png')
+    expect([...(await bytesOf(file.thumb!))]).toEqual([0x89, 0x50, 0x4e, 0x47, 1, 2])
+    expect(file.thumb!.type).toBe('image/png')
+    expect(await metaMap()).toEqual({ theme: 'dark', globalShortcut: 'Alt+Q', seeded: true })
+
+    expect(await db.positions.count()).toBe(0)
+    expect(await db.searches.count()).toBe(0)
+    expect(await db.items.where('deletedAt').above(0).count()).toBe(0)
+  })
+
+  it('merge: записи слиты, локальные положения, поиски и корзина не тронуты', async () => {
+    const localSearch = makeSearch('mine', 'Мой поиск', 'is:fav')
+    // Категория та же, что у версии из копии: смена категории сняла бы положение (Р8).
+    await db.categories.put(V1_COPY.categories[0] as Category)
+    await db.items.bulkPut([
+      makeItem('img', { title: 'локальная', categoryId: 'cat-1', updatedAt: 100 }),
+      makeItem('in-trash', { deletedAt: 2_000 }),
+    ])
+    await db.positions.bulkPut([
+      { id: 'img', x: 40, y: -40 },
+      { id: 'in-trash', x: 8, y: 8 },
+    ])
+    await db.searches.put(localSearch)
+
+    expect(await importBackup(v1Blob(), 'merge')).toEqual(rep({ items: 2, files: 1, skipped: 1 }))
+
+    expect(await db.items.get('img')).toEqual(V1_COPY.items[0])
+    expect(await db.items.get('note')).toEqual(V1_COPY.items[1])
+    expect((await db.items.get('in-trash'))?.deletedAt).toBe(2_000)
+    expect(await db.positions.toArray()).toEqual([
+      { id: 'img', x: 40, y: -40 },
+      { id: 'in-trash', x: 8, y: 8 },
+    ])
+    expect(await db.searches.toArray()).toEqual([localSearch])
+  })
+
+  it('копия версии 1 после импорта экспортируется уже в текущем формате без потерь', async () => {
+    await importBackup(v1Blob(), 'replace')
+    const { data } = await readExport()
+    expect(data.version).toBe(BACKUP_VERSION)
+    expect(data.items).toEqual(V1_COPY.items)
+    expect(data.categories).toEqual(V1_COPY.categories)
+    expect(data.files).toEqual(V1_COPY.files)
+    expect(data.settings).toEqual(V1_COPY.settings)
+    expect(data.positions).toEqual([])
+    expect(data.searches).toEqual([])
+  })
+
+  it('читаются все версии формата от 1 до текущей', async () => {
+    for (let version = 1; version <= BACKUP_VERSION; version++) {
+      await reset()
+      const report = await importBackup(backupBlob(backup({ version, items: [makeItem(`v${version}`)] })), 'replace')
+      expect(report, `версия ${version}`).toEqual(rep({ items: 1 }))
+      expect(await db.items.get(`v${version}`), `версия ${version}`).toBeDefined()
+    }
+  })
+
+  it('разделы positions/searches: не массив — не ошибка, массив читается в любой версии', async () => {
+    for (let version = 1; version <= BACKUP_VERSION; version++) {
+      await reset()
+      const broken = { ...backup({ version, items: [makeItem('a')] }), positions: 'x', searches: { a: 1 } }
+      expect(await importBackup(backupBlob(broken), 'replace'), `версия ${version}`).toEqual(rep({ items: 1 }))
+
+      const full = backup({
+        version,
+        items: [makeItem('a')],
+        positions: [{ id: 'a', x: 1, y: 2 }],
+        searches: [makeSearch('s', 'Поиск', 'tag:a')],
+      })
+      expect(await importBackup(backupBlob(full), 'replace'), `версия ${version}`).toEqual(
+        rep({ items: 1, positions: 1, searches: 1 }),
+      )
+    }
+  })
+})
+
+describe('новые настройки', () => {
+  /** Всё, что копия переносит между устройствами; остальное — PRIVATE_SETTINGS. */
+  const PORTABLE: Array<keyof Settings> = [
+    'theme',
+    'globalShortcut',
+    'scene',
+    'font',
+    'ambient',
+    'trashDays',
+    'closeToTray',
+  ]
+
+  it('каждая настройка либо переносится копией, либо приватная', () => {
+    const exported = Object.keys(DEFAULT_SETTINGS).filter((key) => !PRIVATE_SETTINGS.has(key))
+    expect(exported.sort()).toEqual([...PORTABLE].sort())
+    for (const key of PRIVATE_SETTINGS) expect(Object.hasOwn(DEFAULT_SETTINGS, key), key).toBe(true)
+  })
+
+  it('пути, состояние копий, распознавание и расширение не попадают в экспорт; оформление и корзина — попадают', async () => {
+    const portable = {
+      theme: 'light',
+      globalShortcut: 'Alt+Q',
+      scene: 'winter',
+      font: 'pixel',
+      ambient: false,
+      trashDays: 7,
+      closeToTray: false,
+    }
+    await db.meta.bulkPut([
+      ...Object.entries(portable).map(([key, value]) => ({ key, value })),
+      { key: 'backupDir', value: 'C:\\Users\\me\\Backups' },
+      { key: 'backupLastAt', value: 1_700_000_000_000 },
+      { key: 'backupEvery', value: 'weekly' },
+      { key: 'backupKeep', value: 3 },
+      { key: 'mdExportDir', value: 'D:\\Vault\\Notes' },
+      { key: 'aiAutoOcr', value: true },
+      { key: 'aiVisionModel', value: 'vision-x' },
+      { key: 'extEnabled', value: true },
+      { key: 'extPort', value: 50123 },
+      { key: 'extToken', value: 'tok-secret' },
+    ])
+    const { text, data } = await readExport()
+    for (const s of [
+      'Backups',
+      'Vault',
+      'vision-x',
+      'tok-secret',
+      'backupDir',
+      'backupLastAt',
+      'backupEvery',
+      'backupKeep',
+      'mdExportDir',
+      'aiAutoOcr',
+      'aiVisionModel',
+      'extEnabled',
+      'extPort',
+      'extToken',
+    ]) {
+      expect(text, s).not.toContain(s)
+    }
+    expect(data.settings).toEqual(portable)
+  })
+
+  it('чужая копия не меняет папки копий, их расписание и число, распознавание и приём от расширения', async () => {
+    const local = {
+      backupDir: 'C:\\Mine',
+      backupLastAt: 111,
+      // Меньшее число копий из импортированной базы стёрло бы при ближайшей автокопии здешнюю историю.
+      backupEvery: 'weekly',
+      backupKeep: 30,
+      mdExportDir: 'C:\\MineMd',
+      aiAutoOcr: false,
+      aiVisionModel: 'local-vision',
+      extEnabled: false,
+      extPort: 47821,
+      extToken: 'local-token',
+      scene: 'meadow',
+    }
+    await db.meta.bulkPut(Object.entries(local).map(([key, value]) => ({ key, value })))
+    const foreign = {
+      scene: 'paper',
+      font: 'soft',
+      ambient: false,
+      trashDays: 14,
+      closeToTray: false,
+    }
+    await importBackup(
+      backupBlob({
+        ...backup(),
+        settings: {
+          ...foreign,
+          backupDir: 'C:\\Evil',
+          backupLastAt: 5,
+          backupEvery: 'daily',
+          backupKeep: 1,
+          mdExportDir: 'C:\\EvilMd',
+          aiAutoOcr: true,
+          aiVisionModel: 'evil-vision',
+          extEnabled: true,
+          extPort: 2000,
+          extToken: 'evil-token',
+        },
+      }),
+      'replace',
+    )
+    expect(await metaMap()).toEqual({ ...local, ...foreign, seeded: true })
+  })
+
+  it('негодные значения настроек из копии игнорируются', async () => {
+    await db.meta.bulkPut([
+      { key: 'scene', value: 'winter' },
+      { key: 'trashDays', value: 30 },
+    ])
+    await importBackup(
+      backupBlob({
+        ...backup(),
+        settings: {
+          scene: 'neon',
+          font: 5,
+          ambient: 'yes',
+          trashDays: -1,
+          backupEvery: 'hourly',
+          backupKeep: 0,
+          closeToTray: 1,
+          globalShortcut: 'x'.repeat(5000),
+          theme: 'neon',
+        },
+      }),
+      'replace',
+    )
+    expect(await metaMap()).toEqual({ scene: 'winter', trashDays: 30, seeded: true })
+  })
+
+  it('merge настройки не переносит', async () => {
+    await db.meta.put({ key: 'scene', value: 'winter' })
+    await importBackup(backupBlob(backup({ settings: { scene: 'paper', trashDays: 5 } })), 'merge')
+    expect(await metaMap()).toEqual({ scene: 'winter', seeded: true })
   })
 })
 

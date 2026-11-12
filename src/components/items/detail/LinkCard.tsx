@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Copy, ExternalLink, Globe, RefreshCw } from 'lucide-react'
+import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { actOpen, copyText, isLinkMetaLoading, refreshLinkMeta } from '@/lib/actions'
@@ -23,7 +23,7 @@ function Favicon({ src }: { src: string | undefined }) {
   const [failed, setFailed] = useState(false)
   const allowed = useRemoteImagesAllowed()
   const safe = allowed ? safeImageUrl(src) : undefined
-  if (!safe || failed) return <Globe size={16} strokeWidth={1.75} className="shrink-0 text-muted-foreground" aria-hidden />
+  if (!safe || failed) return <Icon name="globe" size={16} className="shrink-0 text-muted-foreground" />
   return (
     <img
       src={safe}
@@ -124,7 +124,7 @@ export function LinkCard({ item }: { item: Item }) {
 
       <div className="flex flex-wrap items-center gap-1.5">
         <Button variant="outline" size="sm" disabled={!href} onClick={() => actOpen(item)}>
-          <ExternalLink strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="external-link" className="size-4" />
           Открыть
         </Button>
         <Button
@@ -133,11 +133,11 @@ export function LinkCard({ item }: { item: Item }) {
           disabled={!item.url}
           onClick={() => item.url && void copyText(item.url, 'Ссылка скопирована')}
         >
-          <Copy strokeWidth={1.75} className="size-4" aria-hidden />
+          <Icon name="copy" className="size-4" />
           Копировать ссылку
         </Button>
         <Button variant="ghost" size="sm" disabled={pending} onClick={() => void refreshLinkMeta(item)}>
-          <RefreshCw strokeWidth={1.75} aria-hidden className={pending ? 'size-4 animate-spin' : 'size-4'} />
+          <Icon name="refresh" className={pending ? 'size-4 animate-spin' : 'size-4'} />
           Обновить данные
         </Button>
       </div>
