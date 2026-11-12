@@ -9,6 +9,7 @@ import { ArchiveView } from '@/views/ArchiveView'
 import { FavoritesView } from '@/views/FavoritesView'
 import { InboxView } from '@/views/InboxView'
 import { LibraryView } from '@/views/LibraryView'
+import { TrashView } from '@/views/TrashView'
 import { ErrorBoundary, lazyRetry, RetryFallback } from './ErrorBoundary'
 import { MobileNav } from './MobileNav'
 import { Sidebar } from './Sidebar'
@@ -26,7 +27,7 @@ const ItemDetail = detailLazy.Component
 // Панель деталей нужна почти сразу — догружаем её в простое, чтобы первое открытие не ждало сети.
 if (typeof window !== 'undefined') window.setTimeout(() => void loadDetail().catch(() => undefined), 1500)
 
-const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'settings']
+const VIEWS: View[] = ['inbox', 'library', 'favorites', 'archive', 'trash', 'settings']
 
 function viewFromHash(): View | null {
   const name = window.location.hash.replace(/^#\/?/, '')
@@ -67,6 +68,8 @@ function ActiveView({ view }: { view: View }) {
       return <FavoritesView />
     case 'archive':
       return <ArchiveView />
+    case 'trash':
+      return <TrashView />
     case 'settings':
       return (
         <ErrorBoundary
@@ -78,6 +81,9 @@ function ActiveView({ view }: { view: View }) {
           </Suspense>
         </ErrorBoundary>
       )
+    default:
+      // «Граф» — этап 5.
+      return null
   }
 }
 

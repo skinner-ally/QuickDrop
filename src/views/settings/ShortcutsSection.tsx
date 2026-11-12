@@ -43,7 +43,9 @@ export function ShortcutsSection({ settings }: { settings: Settings }) {
     { keys: [['A']], label: 'В списке: в архив' },
     { keys: [['F']], label: 'В списке: в избранное' },
     { keys: [['Enter']], label: 'В списке: открыть' },
-    { keys: [['Del']], label: 'В списке: удалить' },
+    { keys: [['Del']], label: 'В списке: в корзину' },
+    { keys: [['E']], label: 'В корзине: восстановить' },
+    { keys: [['Del']], label: 'В корзине: удалить навсегда' },
   ]
   return (
     <Section

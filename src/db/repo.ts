@@ -18,9 +18,10 @@ import {
   type StoredFile,
 } from '@/types'
 import { findDuplicateLinkIn } from '@/lib/dedupe'
+import { renameQueryOperators, type QueryRename } from '@/search/serialize'
 import { normalizeUrl } from '@/lib/detect'
 import { readableError } from '@/lib/errors'
-import { displayTitle } from '@/lib/itemTitle'
+import { derivedTitleLine, displayTitle } from '@/lib/itemTitle'
 import {
   categoryNameKey,
   cleanOcrText,
@@ -636,18 +637,27 @@ export async function removeTag(ids: string | string[], tag: string): Promise<vo
   })
 }
 
+/** Сохранённые поиски следуют за переименованием тега или категории, иначе их выдача молча пустеет. */
+async function rewriteSavedSearches(rename: QueryRename): Promise<void> {
+  for (const s of await db.searches.toArray()) {
+    const query = renameQueryOperators(s.query, rename)
+    if (query !== s.query && query.length <= SAVED_SEARCH_QUERY_MAX) await db.searches.update(s.id, { query })
+  }
+}
+
 /** Переименование тега по всей базе. Если у записи уже есть целевой тег — сливается без дубля. */
 export async function renameTag(from: string, to: string): Promise<void> {
   const f = normalizeTag(from)
   const t = normalizeTag(to)
   if (!f || !t || f === t) return
-  await db.transaction('rw', db.items, async () => {
+  await db.transaction('rw', db.items, db.searches, async () => {
     const items = await db.items.where('tags').equals(f).toArray()
     const now = Date.now()
     for (const it of items) {
       const next = unique(it.tags.map((x) => (x === f ? t : x)))
       await db.items.update(it.id, { tags: next, updatedAt: now })
     }
+    await rewriteSavedSearches({ tag: { from: f, to: t } })
   })
 }
 
@@ -736,13 +746,17 @@ export async function updateCategory(
   if (patch.order !== undefined) changes.order = patch.order
   if (!Object.keys(changes).length) return
 
-  await db.transaction('rw', db.categories, async () => {
+  await db.transaction('rw', db.categories, db.searches, async () => {
+    const old = changes.name !== undefined ? await db.categories.get(id) : undefined
     if (changes.name !== undefined) {
       const key = categoryNameKey(changes.name)
       const clash = (await db.categories.toArray()).find((c) => c.id !== id && categoryNameKey(c.name) === key)
       if (clash) throw new Error(`Категория «${clash.name}» уже есть`)
     }
     await db.categories.update(id, changes)
+    if (old && changes.name !== undefined && old.name !== changes.name) {
+      await rewriteSavedSearches({ category: { fromKey: categoryNameKey(old.name), to: changes.name } })
+    }
   })
 }
 
@@ -923,10 +937,12 @@ export async function findDuplicateLink(url: string, excludeId?: string): Promis
 /**
  * Заголовок для сортировки — тот же, что видит пользователь (displayTitle, в т.ч. url у ссылки
  * без заголовка). Пустая строка — у записи нет ничего, кроме «Без названия»: такие идут в конец.
+ * Текст из одной разметки («---», пустая ограда) заголовка не даёт — источник считается по derivedTitleLine,
+ * как в displayTitle, а не по непустому content.
  */
 function sortTitle(item: Item): string {
-  const sources = [item.title, item.linkMeta?.title, item.fileName, item.content, item.url]
-  return sources.some((s) => s?.trim()) ? displayTitle(item) : ''
+  const sources = [item.title, item.linkMeta?.title, item.fileName, item.url]
+  return sources.some((s) => s?.trim()) || derivedTitleLine(item) !== null ? displayTitle(item) : ''
 }
 
 const collator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true })

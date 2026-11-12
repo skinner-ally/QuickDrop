@@ -1,21 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const desktopMocks = vi.hoisted(() => ({
+  forgetDirectory: vi.fn(async (_dir: string, _keep?: string[]): Promise<boolean> => true),
+}))
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./desktop')>()),
+  forgetDirectory: desktopMocks.forgetDirectory,
+}))
+
 import {
   BACKUP_CHECK_INTERVAL_MS,
   BACKUP_KEEP_MAX,
   BACKUP_KEEP_MIN,
   BACKUP_PERIOD_MS,
   BACKUP_START_DELAY_MS,
+  autoBackupDirChanged,
   autoBackupFileName,
+  autoBackupIdle,
   autoBackupStatus,
   checkAutoBackup,
   clampKeep,
   createAutoBackup,
+  forgetPrevDir,
   initAutoBackup,
   isBackupDue,
+  resetAutoBackupFailure,
   runBackupNow,
+  subscribeAutoBackup,
 } from './autoBackup'
 import type { AutoBackupDeps, BackupRunResult } from './autoBackup'
 import type { PruneResult, SavedFile } from './desktop'
+import { setSettings } from '@/db/settings'
 import { DEFAULT_SETTINGS } from '@/types'
 import type { Settings } from '@/types'
 
@@ -484,6 +499,165 @@ describe('runNow', () => {
   })
 })
 
+/** Дать отработать микрозадачам и таймерам нулевой задержки. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+describe('idle', () => {
+  it('без запуска резолвится сразу', async () => {
+    const { backup, mocks } = setup()
+    await expect(backup.idle()).resolves.toBeUndefined()
+    expect(mocks.getSettings).not.toHaveBeenCalled()
+  })
+
+  it('во время копии ждёт её конца', async () => {
+    const { backup, mocks, blob } = setup()
+    const gate = deferred<Blob>()
+    mocks.exportBackup.mockReturnValueOnce(gate.promise)
+    const run = backup.runNow()
+    let idle = false
+    const waiting = backup.idle().then(() => {
+      idle = true
+    })
+    await flush()
+    expect(idle).toBe(false)
+    gate.resolve(blob)
+    await waiting
+    expect((await run).status).toBe('done')
+    expect(backup.status().running).toBe(false)
+  })
+
+  it('после неудачного запуска резолвится, а не отклоняется', async () => {
+    const { backup, mocks } = setup()
+    const gate = deferred<Blob>()
+    mocks.exportBackup.mockReturnValueOnce(gate.promise)
+    const run = backup.check()
+    const waiting = backup.idle()
+    gate.reject(new Error('Резервная копия слишком большая'))
+    await expect(waiting).resolves.toBeUndefined()
+    expect((await run).status).toBe('failed')
+  })
+
+  it('ждёт и копию, которую runNow запустил после пропуска плановой проверки', async () => {
+    const { backup, mocks, blob } = setup({ backupLastAt: NOW - 1000 })
+    const gate = deferred<Blob>()
+    mocks.exportBackup.mockReturnValueOnce(gate.promise)
+    const planned = backup.check()
+    const manual = backup.runNow()
+    let idle = false
+    const waiting = backup.idle().then(() => {
+      idle = true
+    })
+    expect(await planned).toEqual({ status: 'skipped', reason: 'not-due' })
+    await flush()
+    expect(mocks.exportBackup).toHaveBeenCalledTimes(1)
+    expect(idle).toBe(false)
+    gate.resolve(blob)
+    await waiting
+    expect((await manual).status).toBe('done')
+  })
+})
+
+describe('resetFailure и dirChanged', () => {
+  it('resetFailure снимает паузу и ошибку, о новом сбое снова сообщается', async () => {
+    const { backup, mocks, state } = setup()
+    const notApproved = new Error('Папка не подтверждена: выберите её заново в настройках')
+    mocks.checkDir.mockRejectedValueOnce(notApproved).mockRejectedValueOnce(notApproved)
+    expect((await backup.check()).status).toBe('failed')
+    state.now = NOW + 1000
+    expect(await backup.check()).toEqual({ status: 'skipped', reason: 'retry-later' })
+
+    backup.resetFailure()
+    expect(backup.status().lastError).toBeNull()
+    expect((await backup.check()).status).toBe('failed')
+    expect(mocks.notifyError).toHaveBeenCalledTimes(2)
+  })
+
+  it('повторный выбор той же папки после сбоя: копия сразу, а не через час', async () => {
+    const { backup, mocks, state } = setup()
+    mocks.checkDir.mockRejectedValueOnce(new Error('Папка не подтверждена: выберите её заново в настройках'))
+    expect((await backup.check()).status).toBe('failed')
+    state.now = NOW + 5000
+    const result = await backup.dirChanged()
+    expect(result.status).toBe('done')
+    expect(mocks.saveBackupFile).toHaveBeenCalledExactlyOnceWith(DIR, expect.any(String), expect.any(Blob))
+    expect(backup.status().lastError).toBeNull()
+  })
+
+  it('во время копии ждёт её конца: проверка новой папки не уходит в busy, сбой прежней не держит паузу', async () => {
+    const { backup, mocks, settings } = setup()
+    const gate = deferred<Blob>()
+    mocks.exportBackup.mockReturnValueOnce(gate.promise)
+    const running = backup.runNow()
+    await flush()
+    // пользователь выбрал новую папку, пока копия шла в прежнюю
+    settings.backupDir = 'E:\\Копии'
+    const changed = backup.dirChanged()
+    gate.reject(new Error('Папка не подтверждена: выберите её заново в настройках'))
+    expect((await running).status).toBe('failed')
+    expect(await changed).toMatchObject({ status: 'done', path: `E:\\Копии\\${NOW_NAME}` })
+    expect(backup.status().lastError).toBeNull()
+  })
+
+  it('вне Tauri ничего не запускает', async () => {
+    const { backup, mocks, state } = setup()
+    state.desktop = false
+    expect(await backup.dirChanged()).toEqual({ status: 'skipped', reason: 'not-desktop' })
+    expect(mocks.getSettings).not.toHaveBeenCalled()
+  })
+})
+
+describe('status и subscribe', () => {
+  it('status() — тот же объект, пока состояние не изменилось; слушатель — на начало и конец копии', async () => {
+    const { backup, mocks, blob } = setup()
+    const listener = vi.fn()
+    const unsubscribe = backup.subscribe(listener)
+    const initial = backup.status()
+    expect(backup.status()).toBe(initial)
+
+    const gate = deferred<Blob>()
+    mocks.exportBackup.mockReturnValueOnce(gate.promise)
+    const run = backup.runNow()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(backup.status()).toEqual({ running: true, lastError: null, lastPath: null })
+    expect(backup.status()).toBe(backup.status())
+
+    gate.resolve(blob)
+    await run
+    expect(listener).toHaveBeenCalledTimes(2)
+    const after = backup.status()
+    expect(after).toEqual({ running: false, lastError: null, lastPath: `${DIR}\\${NOW_NAME}` })
+    expect(backup.status()).toBe(after)
+
+    unsubscribe()
+    await backup.runNow()
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('resetFailure оповещает, только если ошибка была', async () => {
+    const { backup, mocks } = setup()
+    const listener = vi.fn()
+    backup.subscribe(listener)
+    backup.resetFailure()
+    expect(listener).not.toHaveBeenCalled()
+
+    mocks.exportBackup.mockRejectedValueOnce(new Error('сбой'))
+    await backup.runNow()
+    listener.mockClear()
+    backup.resetFailure()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(backup.status().lastError).toBeNull()
+  })
+
+  it('исключение слушателя не ломает копию', async () => {
+    const { backup } = setup()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    backup.subscribe(() => {
+      throw new Error('слушатель')
+    })
+    expect((await backup.runNow()).status).toBe('done')
+  })
+})
+
 describe('start', () => {
   it('проверка через BACKUP_START_DELAY_MS и каждый BACKUP_CHECK_INTERVAL_MS', async () => {
     vi.useFakeTimers()
@@ -579,6 +753,34 @@ describe('синглтон вне Tauri', () => {
     const skipped: BackupRunResult = { status: 'skipped', reason: 'not-desktop' }
     expect(await checkAutoBackup()).toEqual(skipped)
     expect(await runBackupNow()).toEqual(skipped)
+    expect(await autoBackupDirChanged()).toEqual(skipped)
+    await expect(autoBackupIdle()).resolves.toBeUndefined()
+    resetAutoBackupFailure()
+    const unsubscribe = subscribeAutoBackup(() => {})
+    unsubscribe()
     expect(autoBackupStatus()).toEqual({ running: false, lastError: null, lastPath: null })
+  })
+})
+
+describe('forgetPrevDir', () => {
+  afterEach(async () => {
+    desktopMocks.forgetDirectory.mockClear()
+    await setSettings({ backupDir: '', mdExportDir: '' })
+  })
+
+  it('keep — папки, оставшиеся в настройках после смены', async () => {
+    await setSettings({ backupDir: '\\\\nas\\share\\QuickDrop', mdExportDir: 'E:\\Vault' })
+    expect(await forgetPrevDir('Z:\\QuickDrop')).toBe(true)
+    expect(desktopMocks.forgetDirectory).toHaveBeenCalledExactlyOnceWith('Z:\\QuickDrop', [
+      '\\\\nas\\share\\QuickDrop',
+      'E:\\Vault',
+    ])
+  })
+
+  it('папка всё ещё в настройках — не отзывается', async () => {
+    await setSettings({ backupDir: 'D:\\Копии', mdExportDir: '' })
+    expect(await forgetPrevDir('d:\\копии\\')).toBe(false)
+    expect(await forgetPrevDir('')).toBe(false)
+    expect(desktopMocks.forgetDirectory).not.toHaveBeenCalled()
   })
 })

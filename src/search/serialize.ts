@@ -8,7 +8,8 @@ import {
 import { categoryNameKey, normalizeTag } from '@/lib/normalize'
 import { ITEM_STATUSES, ITEM_TYPES } from '@/types'
 import type { Category, ItemFilter } from '@/types'
-import { QUOTES, parseQuery, withoutTypeOperators } from './query'
+import { OPERATOR_KEYS, QUOTES, lex, parseQuery, withoutTypeOperators } from './query'
+import { fold } from './normalize'
 
 export interface SerializeOptions {
   /**
@@ -168,4 +169,75 @@ export function composeQuery(
     }
   }
   return [serializeFilter(ownFilter, categories, now, options), text].filter(Boolean).join(' ')
+}
+
+export interface QueryRename {
+  /** Тег переименован: from — нормализованный старый, to — новый. */
+  tag?: { from: string; to: string }
+  /** Категория переименована: fromKey — categoryNameKey старого имени, to — новое имя. */
+  category?: { fromKey: string; to: string }
+}
+
+/**
+ * Переписывает в строке запроса операторы tag:/#/cat:, указывающие на переименованный тег или категорию.
+ * Остальной текст (слова, фразы, прочие операторы) остаётся байт в байт. Не удалось безопасно записать
+ * новое значение (кавычки) — токен не трогается.
+ */
+export function renameQueryOperators(raw: string, rename: QueryRename): string {
+  const source = raw ?? ''
+  let out = ''
+  let last = 0
+  const replace = (start: number, end: number, text: string) => {
+    out += source.slice(last, start) + text
+    last = end
+  }
+  const tagText = (tag: string): string | null => {
+    if (/[.,;:!?)]$/.test(tag) || ANY_QUOTE_RE.test(tag)) return quote(tag)
+    return tag
+  }
+  for (const tok of lex(source)) {
+    if (tok.kind !== 'word') continue
+    const { value, quoted } = tok
+    if (value.startsWith('#')) {
+      const tg = rename.tag
+      if (!tg) continue
+      const body = quoted ? value.slice(1) : value.slice(1).replace(/[.,;:!?)]+$/u, '')
+      if (normalizeTag(body) !== tg.from) continue
+      const text = tagText(tg.to)
+      if (text !== null) replace(tok.start, tok.end, `#${text}${quoted ? '' : value.slice(1 + body.length)}`)
+      continue
+    }
+    const m = /^(\p{L}+):(.*)$/su.exec(value)
+    if (!m) continue
+    const op = OPERATOR_KEYS.get(fold(m[1]))
+    const arg = m[2].trim()
+    if (!arg) continue
+    if (op === 'cat' && rename.category) {
+      if (categoryNameKey(arg.replace(/\s+/g, ' ')) !== rename.category.fromKey) continue
+      const name = rename.category.to.replace(/\s+/g, ' ').trim()
+      const text = !/[\s,]/.test(name) && !ANY_QUOTE_RE.test(name) ? name : quote(name)
+      if (text !== null) replace(tok.start, tok.end, `${m[1]}:${text}`)
+    } else if (op === 'tag' && rename.tag) {
+      const tg = rename.tag
+      const values = quoted ? [arg] : arg.split(',').map((v) => v.trim()).filter(Boolean)
+      let changed = false
+      let failed = false
+      const next = values.map((v) => {
+        const core = quoted ? v : v.replace(/[.,;:!?)]+$/u, '')
+        if (normalizeTag(core) !== tg.from) return v
+        const text = tagText(tg.to)
+        if (text === null) {
+          failed = true
+          return v
+        }
+        changed = true
+        return quoted ? text : text + v.slice(core.length)
+      })
+      if (!changed || failed) continue
+      // Тег, которому нужны кавычки, нельзя оставить в списке через запятую.
+      if (!quoted && next.length > 1 && next.some((v) => /["«»“”„]/.test(v))) continue
+      replace(tok.start, tok.end, `${m[1]}:${next.join(',')}`)
+    }
+  }
+  return out + source.slice(last)
 }

@@ -17,6 +17,7 @@ import {
   resolveQueryFilter,
   searchItems,
   serializeFilter,
+  renameQueryOperators,
 } from './index'
 
 let seq = 0
@@ -1296,5 +1297,23 @@ describe('makeSnippet — распознанный текст и Markdown', () =
     const item = makeItem({ type: 'code', content: code })
     expect(makeSnippet(item, [])).toBe('const a = `x` * 2 // **не жирный** # не заголовок - [ ] не список')
     expect(makeSnippet(item, ['жирный'])).toContain('**не жирный**')
+  })
+})
+
+describe('renameQueryOperators', () => {
+  const tag = { tag: { from: 'работа', to: 'work' } }
+  it('переписывает tag: и #, включая кавычки и хвостовую пунктуацию', () => {
+    expect(renameQueryOperators('tag:работа', tag)).toBe('tag:work')
+    expect(renameQueryOperators('#работа, слово "работа"', tag)).toBe('#work, слово "работа"')
+    expect(renameQueryOperators('tag:"работа" tag:a,работа', tag)).toBe('tag:work tag:a,work')
+    expect(renameQueryOperators('tag:работать #Работа', tag)).toBe('tag:работать #work')
+    expect(renameQueryOperators('tag:работа', { tag: { from: 'работа', to: 'a.' } })).toBe('tag:"a."')
+  })
+  it('переписывает cat: по ключу имени и не трогает остальное', () => {
+    const cat = { category: { fromKey: 'мои проекты', to: 'Дела' } }
+    expect(renameQueryOperators('cat:"Мои проекты"  x', cat)).toBe('cat:Дела  x')
+    expect(renameQueryOperators('cat:мои-проекты', cat)).toBe('cat:Дела')
+    expect(renameQueryOperators('cat:Другая', cat)).toBe('cat:Другая')
+    expect(renameQueryOperators('cat:Дом', { category: { fromKey: 'дом', to: 'Мой дом' } })).toBe('cat:"Мой дом"')
   })
 })

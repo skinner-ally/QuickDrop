@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { matchKey } from '@/lib/keys'
 import { Icon, usePixel, type IconName } from '@/components/icons'
 import { useTheme } from '@/components/layout/ThemeProvider'
@@ -8,9 +8,10 @@ import { Kbd } from '@/components/ui/kbd'
 import { CategoryDot } from '@/components/items/CategoryBadge'
 import { createCategory } from '@/db/repo'
 import { setSetting, useSettings } from '@/db/settings'
-import { computeAllTags, useAllItems, useCategories, useCounts } from '@/hooks/useItems'
+import { computeAllTags, useAllItems, useCategories, useCounts, useTrashCount } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
-import { cn } from '@/lib/utils'
+import { NavButton, SectionHeader } from '@/components/layout/NavButton'
+import { SavedSearches } from '@/components/layout/SavedSearches'
 import { useUi, type View } from '@/store/ui'
 import { CATEGORY_COLORS, type Settings } from '@/types'
 
@@ -21,85 +22,15 @@ const NAV_ITEMS: Array<{
   view: View
   label: string
   icon: IconName
-  count: 'inbox' | 'library' | 'favorites' | 'archive'
+  count: 'inbox' | 'library' | 'favorites' | 'archive' | 'trash'
 }> = [
   { view: 'inbox', label: 'Входящие', icon: 'inbox', count: 'inbox' },
   { view: 'library', label: 'База знаний', icon: 'library', count: 'library' },
   { view: 'favorites', label: 'Избранное', icon: 'star', count: 'favorites' },
   { view: 'archive', label: 'Архив', icon: 'archive', count: 'archive' },
+  { view: 'trash', label: 'Корзина', icon: 'trash', count: 'trash' }, // последним, без цифры
   // этап 5: { view: 'graph', label: 'Граф', icon: 'graph' } (клавиша 5)
-  // этап 4: { view: 'trash', label: 'Корзина', icon: 'trash' } (последним, без цифры)
 ]
-
-function NavButton({
-  active,
-  onClick,
-  icon,
-  label,
-  count,
-  accent,
-}: {
-  active?: boolean
-  onClick: () => void
-  icon: ReactNode
-  label: string
-  count?: number
-  accent?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-2sm outline-none transition-colors',
-        'px-nav pixel:h-7 pixel:px-1.5 pixel:max-md:h-9.5',
-        'hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
-        active ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground' : 'text-sidebar-foreground/85',
-      )}
-    >
-      <span className="flex size-4 shrink-0 items-center justify-center">{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {count !== undefined && count > 0 && (
-        <span
-          className={cn(
-            'text-xs tabular-nums',
-            accent ? 'rounded-full bg-brand px-1.5 font-medium text-brand-foreground px-count' : 'text-muted-foreground',
-          )}
-        >
-          {count}
-        </span>
-      )}
-    </button>
-  )
-}
-
-function SectionHeader({
-  title,
-  open,
-  onToggle,
-  action,
-}: {
-  title: string
-  open: boolean
-  onToggle: () => void
-  action?: ReactNode
-}) {
-  return (
-    <div className="mt-3 flex items-center justify-between pr-1 pl-2 pixel:mt-1.5 pixel:px-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex items-center gap-1 rounded text-xs font-medium text-muted-foreground pixel:text-2sm pixel:font-semibold outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-      >
-        <Icon name={open ? 'chevron-down' : 'chevron-right'} className="size-3.5" />
-        {title}
-      </button>
-      {action}
-    </div>
-  )
-}
 
 const THEME_CYCLE: Settings['theme'][] = ['system', 'light', 'dark']
 const THEME_LABEL: Record<Settings['theme'], string> = {
@@ -177,7 +108,9 @@ export function Sidebar() {
   const openCapture = useUi((s) => s.openCapture)
   const pixel = usePixel()
 
-  const counts = useCounts()
+  const baseCounts = useCounts()
+  const trashCount = useTrashCount()
+  const counts = useMemo(() => ({ ...baseCounts, trash: trashCount }), [baseCounts, trashCount])
   const categories = useCategories()
   const items = useAllItems()
 
@@ -269,6 +202,8 @@ export function Sidebar() {
             />
           ))}
         </div>
+
+        <SavedSearches />
 
         <SectionHeader
           title="Категории"

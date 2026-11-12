@@ -7,9 +7,10 @@ import { ErrorBoundary, lazyRetry, RetryFallback } from '@/components/layout/Err
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
 import { ItemList } from '@/components/items/ItemList'
-import { useCounts, useVisibleItems } from '@/hooks/useItems'
+import { getAllItemsSnapshot, useCounts, useVisibleItems } from '@/hooks/useItems'
 import { createAndEnrich } from '@/lib/actions'
 import { detectInput } from '@/lib/detect'
+import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
 import { useUi } from '@/store/ui'
 import type { NewItemInput } from '@/types'
@@ -45,9 +46,16 @@ function QuickAdd() {
   async function submit() {
     const value = text.trim()
     if (!value || busy) return
+    const input = inputFromText(value)
+    // Дубль ссылки: строка ничего не создаёт, полная панель покажет предупреждение.
+    if (input.type === 'link' && input.url && findDuplicateLinkIn(getAllItemsSnapshot() ?? [], input.url)) {
+      openCapture({ text: value, source: 'manual' })
+      setText('')
+      return
+    }
     setBusy(true)
     try {
-      await createAndEnrich(inputFromText(value))
+      await createAndEnrich(input)
       setText('')
     } catch (e) {
       toast.error(describeError(e, 'Не удалось сохранить запись'))
@@ -68,7 +76,7 @@ function QuickAdd() {
     const pasted = e.clipboardData.getData('text')
     if (!pasted.includes('\n')) return
     e.preventDefault()
-    openCapture({ text: (text ? text + ' ' : '') + pasted })
+    openCapture({ text: (text ? text + ' ' : '') + pasted, source: 'paste' })
     setText('')
   }
 
@@ -97,7 +105,7 @@ function QuickAdd() {
       <Button
         variant="outline"
         size="icon-lg"
-        onClick={() => openCapture(text.trim() ? { text } : undefined)}
+        onClick={() => openCapture(text.trim() ? { text, source: 'manual' } : undefined)}
         aria-label="Добавить файл или подробную запись"
       >
         <Icon name="paperclip" className="size-4" />

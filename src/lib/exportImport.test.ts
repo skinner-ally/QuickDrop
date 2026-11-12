@@ -70,7 +70,7 @@ function makeSearch(id: string, name: string, query: string, order = 0): SavedSe
 
 /** Отчёт импорта: неуказанные счётчики — нули. */
 function rep(patch: Partial<ImportReport> = {}): ImportReport {
-  return { items: 0, files: 0, categories: 0, skipped: 0, positions: 0, searches: 0, ...patch }
+  return { items: 0, files: 0, categories: 0, skipped: 0, positions: 0, searches: 0, trashed: 0, ...patch }
 }
 
 async function metaMap(): Promise<Record<string, unknown>> {
@@ -216,7 +216,7 @@ describe('exportBackup / importBackup: полный цикл', () => {
 
     await reset()
     const report = await importBackup(blob, 'replace')
-    expect(report).toEqual({ items: 2, files: 1, categories: 1, skipped: 0, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 2, files: 1, categories: 1, skipped: 0, positions: 0, searches: 0, trashed: 0 })
 
     expect(await db.items.get('img')).toEqual(image)
     expect(await db.items.get('note')).toEqual(note)
@@ -331,7 +331,7 @@ describe('replace', () => {
       'replace',
     )
 
-    expect(report).toEqual({ items: 1, files: 0, categories: 1, skipped: 0, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 1, files: 0, categories: 1, skipped: 0, positions: 0, searches: 0, trashed: 0 })
     expect((await db.items.toArray()).map((i) => i.id)).toEqual(['new'])
     expect((await db.categories.toArray()).map((c) => c.id)).toEqual(['new-cat'])
     expect(await db.files.count()).toBe(0)
@@ -361,7 +361,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 2, files: 0, categories: 0, skipped: 2, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 2, files: 0, categories: 0, skipped: 2, positions: 0, searches: 0, trashed: 0 })
     expect((await db.items.get('a'))?.title).toBe('remote-a')
     expect((await db.items.get('b'))?.title).toBe('local-b')
     expect((await db.items.get('c'))?.title).toBe('local-c')
@@ -390,7 +390,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 3, files: 0, categories: 1, skipped: 2, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 3, files: 0, categories: 1, skipped: 2, positions: 0, searches: 0, trashed: 0 })
     const cats = await db.categories.orderBy('order').toArray()
     expect(cats.map((c) => [c.id, c.name])).toEqual([
       ['c1', 'Работа'],
@@ -450,7 +450,7 @@ describe('merge', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 1, files: 2, categories: 0, skipped: 3, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 1, files: 2, categories: 0, skipped: 3, positions: 0, searches: 0, trashed: 0 })
     expect((await db.files.toCollection().primaryKeys()).sort()).toEqual(['f-local', 'f-lost', 'f-new'])
     expect([...(await bytesOf((await db.files.get('f-new'))!.blob))]).toEqual([7, 7])
     expect([...(await bytesOf((await db.files.get('f-lost'))!.blob))]).toEqual([5, 5, 5])
@@ -492,7 +492,7 @@ describe('валидация и починка', () => {
       'merge',
     )
 
-    expect(report).toEqual({ items: 5, files: 0, categories: 1, skipped: 6, positions: 0, searches: 0 })
+    expect(report).toEqual({ items: 5, files: 0, categories: 1, skipped: 6, positions: 0, searches: 0, trashed: 0 })
     const a = await db.items.get('a')
     expect(a?.links).toEqual(['b', 'local'])
     expect((await db.items.get('b'))?.links).toEqual(['a'])
@@ -740,6 +740,7 @@ describe('валидация и починка', () => {
       skipped: 0,
       positions: 0,
       searches: 0,
+      trashed: 0,
     })
     expect(await db.items.count()).toBe(1)
   })
@@ -784,7 +785,8 @@ describe('версия 2: корзина, распознанный текст, �
     expect(text.indexOf('"searches":')).toBeLessThan(text.indexOf('"files":'))
 
     await reset()
-    expect(await importBackup(blob, 'replace')).toEqual(rep({ items: 3, positions: 2, searches: 2 }))
+    // Из трёх записанных записей одна пришла в корзину.
+    expect(await importBackup(blob, 'replace')).toEqual(rep({ items: 3, positions: 2, searches: 2, trashed: 1 }))
 
     expect(await db.items.get('trashed')).toEqual(trashed)
     expect(await db.items.get('scan')).toEqual(scan)
@@ -824,7 +826,7 @@ describe('версия 2: корзина, распознанный текст, �
     )
 
     // ghost и old — положения без записи
-    expect(report).toEqual(rep({ items: 2, positions: 2, searches: 3, skipped: 2 }))
+    expect(report).toEqual(rep({ items: 2, positions: 2, searches: 3, skipped: 2, trashed: 1 }))
     expect(await db.positions.toArray()).toEqual([
       { id: 'new', x: 10, y: 20 },
       { id: 'trashed-new', x: -10, y: -20 },
@@ -1188,7 +1190,7 @@ describe('версия 2: корзина, распознанный текст, �
       makeItem('b', { updatedAt: 500 }),
       makeItem('c', { updatedAt: 100, deletedAt: 700 }),
     ])
-    await importBackup(
+    const report = await importBackup(
       backupBlob(
         backup({
           items: [
@@ -1201,6 +1203,8 @@ describe('версия 2: корзина, распознанный текст, �
       ),
       'merge',
     )
+    // В корзину пришла только записанная «a»: «b» из копии не записана, «c» записана вне корзины.
+    expect(report).toEqual(rep({ items: 2, skipped: 1, trashed: 1 }))
     expect((await db.items.get('a'))?.deletedAt).toBe(deletedAt)
     expect(Object.hasOwn((await db.items.get('b'))!, 'deletedAt')).toBe(false)
     expect(Object.hasOwn((await db.items.get('c'))!, 'deletedAt')).toBe(false)
@@ -1664,7 +1668,9 @@ describe('размер копии', () => {
   it('экспорт заранее отказывает с понятной ошибкой, если копию нельзя будет восстановить', async () => {
     await db.items.bulkPut([makeItem('a', { type: 'file', fileId: 'a' }), makeItem('b', { type: 'file', fileId: 'b' })])
     await db.files.bulkPut([fileRow('a', 60_000), fileRow('b', 60_000)])
-    await expect(exportBackup({ maxBytes: 100_000 })).rejects.toThrow(/слишком большой.*Удалите крупные файлы/s)
+    await expect(exportBackup({ maxBytes: 100_000 })).rejects.toThrow(
+      /слишком большой.*Очистите корзину, удалите крупные файлы или сохраните их отдельно и повторите экспорт\.$/s,
+    )
     // С запасом по пределу — экспортируется, а оценка не меньше фактического размера.
     const blob = await exportBackup({ maxBytes: 1_000_000 })
     const files = (await db.files.toArray()) as StoredFile[]

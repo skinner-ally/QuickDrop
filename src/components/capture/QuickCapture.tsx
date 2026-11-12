@@ -13,17 +13,19 @@ import { TypeIcon } from '@/components/items/TypeIcon'
 import { CategorySelect } from '@/components/items/CategorySelect'
 import { TagInput } from '@/components/items/TagInput'
 import { MAX_FILE_SIZE, listCategories } from '@/db/repo'
-import { createAndEnrich } from '@/lib/actions'
+import { getAllItemsSnapshot, useAllItems } from '@/hooks/useItems'
+import { useDebounced } from '@/hooks/useDebounced'
+import { createAndEnrich, openItemInSection } from '@/lib/actions'
 import { pastedFiles } from '@/lib/clipboard'
 import { LANGUAGES, detectFileType, detectInput, isUrl, normalizeUrl } from '@/lib/detect'
+import { findDuplicateLinkIn, linkKey } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
-import { formatBytes, TYPE_LABEL } from '@/lib/itemTitle'
+import { displayTitle, formatBytes, TYPE_LABEL } from '@/lib/itemTitle'
 import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/ui'
-import type { CaptureDraft } from '@/store/ui'
 import { ITEM_TYPES } from '@/types'
-import type { ItemSource, ItemType, NewItemInput } from '@/types'
+import type { Item, ItemSource, ItemType, NewItemInput } from '@/types'
 
 const DRAFT_KEY = 'quickdrop:capture-draft'
 /** Пауза ввода, после которой черновик пишется в sessionStorage. */
@@ -137,9 +139,6 @@ function FileRow({ entry, onRemove }: { entry: FileEntry; onRemove: () => void }
   )
 }
 
-/** Черновик с необязательным источником (ждёт поля source в CaptureDraft, см. store/ui.ts). */
-type DraftWithSource = CaptureDraft & { source?: ItemSource }
-
 /** Возвращает false, если закрывать панель сейчас нельзя или пользователь отказался. */
 type SnapshotFn = () => boolean
 
@@ -165,7 +164,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
   const [title, setTitle] = useState(initial.restored?.title ?? '')
   const [categoryId, setCategoryId] = useState<string | null>(initial.restored?.categoryId ?? null)
   const [tags, setTags] = useState<string[]>(initial.restored?.tags ?? [])
-  const [files, setFiles] = useState<FileEntry[]>(() => acceptFiles(initial.d?.files ?? [], (initial.d as DraftWithSource | null)?.source ?? 'drop'))
+  const [files, setFiles] = useState<FileEntry[]>(() => acceptFiles(initial.d?.files ?? [], initial.d?.source ?? 'drop'))
   const [toLibrary, setToLibrary] = useState(false)
   const [favorite, setFavorite] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -174,8 +173,14 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
   /** Показан вопрос «Закрыть без прикреплённых файлов?» (вместо window.confirm: в Tauri он асинхронный). */
   const [confirmClose, setConfirmClose] = useState(false)
 
+  /** «Всё равно добавить» нажато для адреса с этим linkKey. */
+  const [dupOk, setDupOk] = useState<string | null>(null)
+  /** Сохранение остановлено из-за дубля ссылки. */
+  const [dupAsk, setDupAsk] = useState<{ item: Item; keepOpen: boolean } | null>(null)
+
   const stayRef = useRef<HTMLButtonElement>(null)
-  const textSource = useRef<ItemSource>(initial.d?.text ? ((initial.d as DraftWithSource).source ?? 'paste') : 'manual')
+  const dupOpenRef = useRef<HTMLButtonElement>(null)
+  const textSource = useRef<ItemSource>(initial.d?.text ? (initial.d.source ?? 'paste') : 'manual')
   const textRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const savingRef = useRef(false)
@@ -211,6 +216,19 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
   const isCode = effType === 'code' && !hasFiles
   const hasText = text.trim() !== ''
   const canSave = (hasText || hasFiles) && !saving
+
+  // Дубль ссылки: пассивная строка — через 300 мс после остановки ввода и только для набранного адреса.
+  const items = useAllItems()
+  const shownUrl = useDebounced(linkUrl, 300)
+  const passive = linkUrl && shownUrl === linkUrl ? findDuplicateLinkIn(items ?? [], linkUrl) : undefined
+  const urlKey = linkUrl ? linkKey(linkUrl) : null
+  const dup = linkUrl && (urlKey === null || urlKey !== dupOk) ? (dupAsk?.item ?? passive) : undefined
+  useEffect(() => {
+    setDupAsk(null)
+  }, [urlKey])
+  useEffect(() => {
+    if (dupAsk) dupOpenRef.current?.focus()
+  }, [dupAsk])
 
   const fileTypes = useMemo(() => new Set(files.map((f) => detectFileType(f.file))), [files])
 
@@ -249,10 +267,10 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
     appliedDraft.current = draft
     if (draft.text) {
       setText((prev) => (prev.trim() ? `${prev}\n${draft.text}` : draft.text!))
-      textSource.current = (draft as DraftWithSource).source ?? 'paste'
+      textSource.current = draft.source ?? 'paste'
     }
     if (draft.type && draft.type !== 'file' && draft.type !== 'image') setManualType(draft.type)
-    if (draft.files?.length) setFiles((prev) => [...prev, ...acceptFiles(draft.files!, (draft as DraftWithSource).source ?? 'drop')])
+    if (draft.files?.length) setFiles((prev) => [...prev, ...acceptFiles(draft.files!, draft.source ?? 'drop')])
     setRestored(false)
   }, [draft])
 
@@ -337,7 +355,7 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
     return { ...base, type, content: raw }
   }
 
-  async function save(keepOpen: boolean) {
+  async function save(keepOpen: boolean, allowDup = false) {
     if (savingRef.current || !(hasText || hasFiles)) return
     savingRef.current = true
     setSaving(true)
@@ -378,7 +396,18 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
           throw e
         }
       } else {
-        const item = await createAndEnrich(buildInput(base))
+        const input = buildInput(base)
+        if (input.type === 'link' && input.url && !allowDup && dupOk !== linkKey(input.url)) {
+          // Проверка по снимку записей, без задержки: Enter сразу после вставки не обходит предупреждение.
+          const found = findDuplicateLinkIn(getAllItemsSnapshot() ?? [], input.url)
+          if (found) {
+            savingRef.current = false
+            setSaving(false)
+            setDupAsk({ item: found, keepOpen })
+            return
+          }
+        }
+        const item = await createAndEnrich(input)
         createdIds.push(item.id)
       }
     } catch (e) {
@@ -410,6 +439,20 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
       doneRef.current = true
       closeCapture()
     }
+  }
+
+  function openDuplicate(item: Item) {
+    if (!initial.preserved) writeDraft(null)
+    doneRef.current = true
+    closeCapture()
+    openItemInSection(item)
+  }
+
+  function addAnyway() {
+    const keepOpen = dupAsk?.keepOpen ?? false
+    setDupOk(linkUrl ? linkKey(linkUrl) : null)
+    setDupAsk(null)
+    void save(keepOpen, true)
   }
 
   function cancel() {
@@ -519,6 +562,37 @@ function CaptureForm({ snapshotRef }: { snapshotRef: { current: SnapshotFn | nul
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
           <TypeIcon type="link" className="size-3.5" />
           <span className="truncate font-mono">{linkUrl}</span>
+        </div>
+      )}
+
+      {dup && (
+        <div
+          // Новый узел с готовым текстом: так диктор объявляет и пассивную строку, и остановку сохранения.
+          key={dupAsk ? 'ask' : 'passive'}
+          role={dupAsk ? 'alert' : 'status'}
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-muted/50 p-2 text-2sm px-well"
+        >
+          <span id="qc-dup-text" className="flex min-w-0 flex-[1_1_14rem] gap-1">
+            <span className="shrink-0">Такая ссылка уже есть:</span>
+            <span className="truncate font-medium">{displayTitle(dup)}</span>
+            {dup.status === 'archive' && <span className="shrink-0">(в архиве)</span>}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Button
+              ref={dupOpenRef}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="pointer-coarse:h-9"
+              aria-describedby="qc-dup-text"
+              onClick={() => openDuplicate(dup)}
+            >
+              Открыть
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={addAnyway}>
+              Всё равно добавить
+            </Button>
+          </div>
         </div>
       )}
 

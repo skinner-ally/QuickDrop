@@ -2,6 +2,7 @@ import { useSettings } from '@/db/settings'
 import { AboutSection } from './settings/AboutSection'
 import { AiSection } from './settings/AiSection'
 import { AppearanceSection } from './settings/AppearanceSection'
+import { BackupSection } from './settings/BackupSection'
 import { CategoriesSection } from './settings/CategoriesSection'
 import { DataSection } from './settings/DataSection'
 import { LinksSection } from './settings/LinksSection'
@@ -23,6 +24,7 @@ export function SettingsView() {
             <AiSection settings={settings} />
             <ShortcutsSection settings={settings} />
             <DataSection />
+            <BackupSection settings={settings} />
             <AboutSection />
           </>
         ) : (

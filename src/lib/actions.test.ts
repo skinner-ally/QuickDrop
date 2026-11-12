@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/db/db'
 import {
+  createCategory,
   createItem,
   createSavedSearch,
   deleteItems,
@@ -8,21 +9,36 @@ import {
   linkItems,
   listSavedSearches,
   purgeItems,
+  restoreFromTrash,
   restoreItems,
   updateItem,
 } from '@/db/repo'
+import { relativeRange } from '@/lib/dates'
 import type { PdfTextResult } from '@/lib/pdfText'
-import type { LinkMeta } from '@/types'
+import type { ConfirmOptions } from '@/store/confirm'
+import { useUi, type View } from '@/store/ui'
+import type { Item, LinkMeta, SavedSearch } from '@/types'
 import {
+  NOTHING_TO_SAVE,
+  actApplySearch,
+  actApplyWikiLinks,
   actDelete,
   actDeleteSearch,
+  actDownloadMarkdown,
   actEmptyTrash,
+  actEmptyTrashAsk,
+  actMoveSearch,
   actPurge,
+  actPurgeAsk,
+  actRenameSearch,
   actRestoreFromTrash,
+  actSaveCurrentSearch,
   actSaveSearch,
   applyWikiLinks,
   createAndEnrich,
+  openLink,
   isLinkMetaLoading,
+  openItemInSection,
   refreshLinkMeta,
 } from './actions'
 
@@ -32,10 +48,23 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   fetchLinkMeta: vi.fn(),
   extractPdfText: vi.fn(),
+  confirm: vi.fn<(options: ConfirmOptions) => Promise<boolean>>(),
+  openExternal: vi.fn<(u: string) => Promise<boolean>>(),
+  allSnapshot: vi.fn<() => Item[] | undefined>(),
+  trashSnapshot: vi.fn<() => Item[] | undefined>(),
 }))
 
 vi.mock('sonner', () => ({
   toast: Object.assign(mocks.toast, { error: mocks.toastError, success: mocks.toastSuccess }),
+}))
+// Вопрос рисует ConfirmHost; в тестах ответ задаётся подменой.
+vi.mock('@/lib/desktop', () => ({ openExternal: mocks.openExternal }))
+vi.mock('@/store/confirm', () => ({ confirmDialog: mocks.confirm }))
+// Общий снимок записей наполняет liveQuery в приложении; здесь его задаёт тест.
+vi.mock('@/hooks/useItems', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useItems')>()),
+  getAllItemsSnapshot: mocks.allSnapshot,
+  getTrashedItemsSnapshot: mocks.trashSnapshot,
 }))
 vi.mock('@/lib/linkMeta', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/linkMeta')>()),
@@ -83,6 +112,8 @@ const pdfResult = (status: PdfTextResult['status'], text = ''): PdfTextResult =>
 
 const note = (title: string) => createItem({ type: 'text', title, content: title })
 
+const initialUi = useUi.getState()
+
 beforeEach(async () => {
   await Promise.all([
     db.items.clear(),
@@ -97,10 +128,15 @@ beforeEach(async () => {
   mocks.toast.mockReset()
   mocks.toastError.mockReset()
   mocks.toastSuccess.mockReset()
+  mocks.confirm.mockReset()
+  mocks.allSnapshot.mockReset()
+  mocks.trashSnapshot.mockReset()
+  useUi.setState(initialUi, true)
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('метаданные ссылки', () => {
@@ -442,5 +478,525 @@ describe('текст PDF при создании записи', () => {
     await settle()
     expect(mocks.extractPdfText).toHaveBeenCalledTimes(1)
     expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+})
+
+describe('подтверждения окончательного удаления', () => {
+  it('actPurgeAsk: одна запись — заголовок в вопросе; «Отмена» — запись на месте, «Удалить навсегда» — удалена', async () => {
+    const item = await createItem({ type: 'text', content: '# План **на год**\nдетали' })
+    await deleteItems([item.id])
+
+    mocks.confirm.mockResolvedValueOnce(false)
+    await actPurgeAsk(item.id)
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith({
+      title: 'Удалить навсегда?',
+      description: 'Запись «План на год» будет удалена без возможности восстановления.',
+      confirmLabel: 'Удалить навсегда',
+      destructive: true,
+    })
+    expect(await getItem(item.id)).toBeDefined()
+    expect(mocks.toast).not.toHaveBeenCalled()
+
+    mocks.confirm.mockResolvedValueOnce(true)
+    await actPurgeAsk([item.id])
+    expect(await getItem(item.id)).toBeUndefined()
+    expect(lastToast()).toEqual({ text: 'Удалено навсегда', options: undefined })
+  })
+
+  it('actPurgeAsk: несколько записей — число без повторов', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    await deleteItems([a.id, b.id])
+    mocks.confirm.mockResolvedValueOnce(true)
+    await actPurgeAsk([a.id, b.id, a.id])
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: 'Удалить навсегда?',
+        description: 'Записей: 2. Они будут удалены без возможности восстановления.',
+      }),
+    )
+    expect(await db.items.count()).toBe(0)
+    expect(lastToast().text).toBe('Удалено навсегда: 2')
+  })
+
+  it('actPurgeAsk: пусто или записи нет — без вопроса', async () => {
+    await actPurgeAsk([])
+    await actPurgeAsk('нет-такой')
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(mocks.toast).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('actPurgeAsk: запись вне корзины (устаревший список) — без вопроса, запись на месте', async () => {
+    const live = await note('Живая')
+    mocks.confirm.mockResolvedValue(true)
+    await actPurgeAsk(live.id)
+    await actPurgeAsk([live.id, 'нет-такой'])
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(await getItem(live.id)).toEqual(live)
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('actPurgeAsk: смешанный список — вопрос и удаление только про корзину', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    await deleteItems([a.id])
+    mocks.confirm.mockResolvedValueOnce(true)
+    await actPurgeAsk([a.id, b.id])
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ description: 'Запись «A» будет удалена без возможности восстановления.' }),
+    )
+    expect(await getItem(a.id)).toBeUndefined()
+    expect(await getItem(b.id)).toEqual(b)
+    expect(lastToast()).toEqual({ text: 'Удалено навсегда', options: undefined })
+  })
+
+  it('actPurgeAsk: восстановленное, пока висел вопрос, не удаляется', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    const c = await note('C')
+    await deleteItems([a.id, b.id, c.id])
+    mocks.confirm.mockImplementationOnce(async () => {
+      await restoreFromTrash([a.id])
+      return true
+    })
+    await actPurgeAsk([a.id, b.id, c.id])
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ description: 'Записей: 3. Они будут удалены без возможности восстановления.' }),
+    )
+    const restored = await getItem(a.id)
+    expect(restored).toBeDefined()
+    expect(restored?.deletedAt).toBeUndefined()
+    expect(await getItem(b.id)).toBeUndefined()
+    expect(await getItem(c.id)).toBeUndefined()
+    expect(lastToast().text).toBe('Удалено навсегда: 2')
+  })
+
+  it('actPurgeAsk: всё восстановили, пока висел вопрос, — ничего не удаляется и не сообщается', async () => {
+    const a = await note('A')
+    await deleteItems([a.id])
+    mocks.confirm.mockImplementationOnce(async () => {
+      await restoreFromTrash([a.id])
+      return true
+    })
+    await actPurgeAsk(a.id)
+    expect((await getItem(a.id))?.deletedAt).toBeUndefined()
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('actPurgeAsk: ошибка чтения базы — toast.error, без вопроса', async () => {
+    const a = await note('A')
+    await deleteItems([a.id])
+    vi.spyOn(db.items, 'get').mockRejectedValue(new Error('база недоступна'))
+    await expect(actPurgeAsk(a.id)).resolves.toBeUndefined()
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('база недоступна')
+    expect(mocks.confirm).not.toHaveBeenCalled()
+  })
+
+  it('actEmptyTrashAsk: число из снимка корзины; «Отмена» — корзина цела', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    const keep = await note('Остаётся')
+    await deleteItems([a.id, b.id])
+    mocks.trashSnapshot.mockReturnValue([(await getItem(a.id))!, (await getItem(b.id))!])
+
+    mocks.confirm.mockResolvedValueOnce(false)
+    await actEmptyTrashAsk()
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith({
+      title: 'Очистить корзину?',
+      description: 'Все записи в корзине (2) будут удалены без возможности восстановления.',
+      confirmLabel: 'Очистить',
+      destructive: true,
+    })
+    expect(await db.items.count()).toBe(3)
+
+    mocks.confirm.mockResolvedValueOnce(true)
+    await actEmptyTrashAsk()
+    expect(await db.items.toArray()).toEqual([keep])
+    expect(lastToast().text).toBe('Корзина очищена: 2')
+  })
+
+  it('actEmptyTrashAsk: восстановленное, пока висел вопрос, остаётся; toast — фактическое число', async () => {
+    const a = await note('A')
+    const b = await note('B')
+    await deleteItems([a.id, b.id])
+    mocks.trashSnapshot.mockReturnValue([(await getItem(a.id))!, (await getItem(b.id))!])
+    mocks.confirm.mockImplementationOnce(async () => {
+      await restoreFromTrash([a.id])
+      return true
+    })
+    await actEmptyTrashAsk()
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ description: 'Все записи в корзине (2) будут удалены без возможности восстановления.' }),
+    )
+    expect((await getItem(a.id))?.deletedAt).toBeUndefined()
+    expect(await getItem(b.id)).toBeUndefined()
+    expect(lastToast().text).toBe('Корзина очищена: 1')
+  })
+
+  it('actEmptyTrashAsk: пустая корзина — без вопроса; снимка нет — вопрос без числа', async () => {
+    mocks.trashSnapshot.mockReturnValue([])
+    await actEmptyTrashAsk()
+    expect(mocks.confirm).not.toHaveBeenCalled()
+
+    mocks.trashSnapshot.mockReturnValue(undefined)
+    mocks.confirm.mockResolvedValueOnce(false)
+    await actEmptyTrashAsk()
+    expect(mocks.confirm).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ description: 'Все записи в корзине будут удалены без возможности восстановления.' }),
+    )
+  })
+})
+
+describe('actApplyWikiLinks', () => {
+  const all = () => db.items.toArray()
+
+  it('связи по снимку; одна связь — toast с заголовком, несколько — с числом', async () => {
+    const self = await createItem({ type: 'text', title: 'Заметка', content: '' })
+    const alpha = await note('Альфа')
+    const beta = await note('Бета')
+    const gamma = await note('Гамма')
+    mocks.allSnapshot.mockReturnValue(await all())
+
+    expect(await actApplyWikiLinks(self.id, 'см. [[альфа]]')).toEqual([alpha.id])
+    expect(lastToast()).toEqual({ text: 'Добавлена связь: «Альфа»', options: undefined })
+
+    mocks.allSnapshot.mockReturnValue(await all())
+    expect(await actApplyWikiLinks(self.id, '[[Альфа]] [[Бета]] [[Гамма|г]]')).toEqual([beta.id, gamma.id])
+    expect(lastToast().text).toBe('Добавлено связей: 2')
+    expect((await getItem(self.id))!.links).toEqual([alpha.id, beta.id, gamma.id])
+
+    // нового нет — toast не показывается
+    mocks.toast.mockClear()
+    mocks.allSnapshot.mockReturnValue(await all())
+    expect(await actApplyWikiLinks(self.id, '[[Альфа]]')).toEqual([])
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('silent — без toast', async () => {
+    const self = await createItem({ type: 'text', title: 'Заметка', content: '' })
+    const alpha = await note('Альфа')
+    mocks.allSnapshot.mockReturnValue(await all())
+    expect(await actApplyWikiLinks(self.id, '[[Альфа]]', { silent: true })).toEqual([alpha.id])
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('снимка нет или в тексте нет «[[» — ничего', async () => {
+    const self = await createItem({ type: 'text', title: 'Заметка', content: '' })
+    await note('Альфа')
+    expect(await actApplyWikiLinks(self.id, '[[Альфа]]')).toEqual([])
+    expect((await getItem(self.id))!.links).toEqual([])
+
+    mocks.allSnapshot.mockReturnValue(await all())
+    mocks.allSnapshot.mockClear()
+    expect(await actApplyWikiLinks(self.id, 'Альфа без скобок')).toEqual([])
+    expect(mocks.allSnapshot).not.toHaveBeenCalled()
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('createAndEnrich создаёт связи по [[…]] молча; у кода — нет', async () => {
+    const alpha = await note('Альфа')
+    mocks.allSnapshot.mockReturnValue(await all())
+    const created = await createAndEnrich({ type: 'idea', content: 'Связать с [[Альфа]]' })
+    await until(async () => (await getItem(created.id))!.links.includes(alpha.id))
+    expect((await getItem(alpha.id))!.links).toEqual([created.id])
+
+    const code = await createAndEnrich({ type: 'code', content: 'x = "[[Альфа]]"' })
+    await settle()
+    expect((await getItem(code.id))!.links).toEqual([])
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+})
+
+describe('openLink', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('в Tauri отказ openExternal даёт сообщение, а не window.open', async () => {
+    const open = vi.fn()
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {}, open })
+    mocks.openExternal.mockResolvedValue(false)
+    await openLink('ftp://example.org/f')
+    expect(open).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith('Не удалось открыть ссылку')
+  })
+
+  it('в Tauri успех — без window.open и сообщений', async () => {
+    const open = vi.fn()
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {}, open })
+    mocks.openExternal.mockResolvedValue(true)
+    await openLink('https://e.com')
+    expect(open).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('в вебе — window.open', async () => {
+    const open = vi.fn()
+    vi.stubGlobal('window', { open })
+    await openLink('https://e.com')
+    expect(open).toHaveBeenCalledWith('https://e.com', '_blank', 'noopener,noreferrer')
+    expect(mocks.openExternal).not.toHaveBeenCalled()
+  })
+})
+
+describe('openItemInSection', () => {
+  const item = (over: Partial<Item>) =>
+    ({ id: 'x', status: 'library', favorite: 0, ...over }) as Pick<Item, 'id' | 'status' | 'deletedAt' | 'favorite'>
+
+  it('раздел по статусу записи; выбор — после смены раздела', () => {
+    useUi.getState().setView('inbox')
+    openItemInSection(item({ id: 'a', status: 'library' }))
+    expect(useUi.getState()).toMatchObject({ view: 'library', selectedId: 'a' })
+
+    openItemInSection(item({ id: 'b', status: 'archive' }))
+    expect(useUi.getState()).toMatchObject({ view: 'archive', selectedId: 'b' })
+  })
+
+  it('запись в корзине — раздел «Корзина»', () => {
+    openItemInSection(item({ id: 't', status: 'inbox', deletedAt: 5 }))
+    expect(useUi.getState()).toMatchObject({ view: 'trash', selectedId: 't' })
+  })
+
+  it('тот же раздел не меняется: фильтры сохраняются', () => {
+    useUi.getState().setView('library')
+    useUi.getState().setFilter({ tags: ['js'] })
+    openItemInSection(item({ id: 'a', status: 'library' }))
+    expect(useUi.getState()).toMatchObject({ view: 'library', selectedId: 'a', filter: { tags: ['js'] } })
+  })
+
+  it('«Избранное» остаётся для своей записи; архив, корзина и не избранное — в свой раздел', () => {
+    useUi.getState().setView('favorites')
+    openItemInSection(item({ id: 'f', status: 'inbox', favorite: 1 }))
+    expect(useUi.getState()).toMatchObject({ view: 'favorites', selectedId: 'f' })
+
+    openItemInSection(item({ id: 'fa', status: 'archive', favorite: 1 }))
+    expect(useUi.getState().view).toBe('archive')
+
+    useUi.getState().setView('favorites')
+    openItemInSection(item({ id: 'ft', status: 'library', favorite: 1, deletedAt: 7 }))
+    expect(useUi.getState().view).toBe('trash')
+
+    useUi.getState().setView('favorites')
+    openItemInSection(item({ id: 'n', status: 'library', favorite: 0 }))
+    expect(useUi.getState()).toMatchObject({ view: 'library', selectedId: 'n' })
+  })
+})
+
+describe('сохранённые поиски: экран', () => {
+  const search = (query: string): SavedSearch => ({ id: 's', name: 'Поиск', query, order: 0, createdAt: 0 })
+
+  it('actApplySearch: раздел из запроса', () => {
+    useUi.getState().setView('inbox')
+    useUi.getState().setFilter({ tags: ['old'] })
+    actApplySearch(search('is:archive react'))
+    expect(useUi.getState()).toMatchObject({ view: 'archive', query: 'is:archive react', filter: {} })
+
+    actApplySearch(search('is:trash is:inbox'))
+    expect(useUi.getState().view).toBe('trash')
+    actApplySearch(search('is:fav'))
+    expect(useUi.getState().view).toBe('favorites')
+  })
+
+  it('actApplySearch: без раздела в запросе — текущий; из настроек, графа и корзины — «База знаний»', () => {
+    const cases: Array<[View, View]> = [
+      ['inbox', 'inbox'],
+      ['favorites', 'favorites'],
+      ['archive', 'archive'],
+      ['settings', 'library'],
+      ['graph', 'library'],
+      ['trash', 'library'],
+    ]
+    for (const [from, to] of cases) {
+      useUi.getState().setView(from)
+      actApplySearch(search('react'))
+      expect(useUi.getState().view, from).toBe(to)
+      expect(useUi.getState().query).toBe('react')
+    }
+  })
+
+  it('применённый поиск со своим разделом снимается при переходе в другой раздел (боковая панель, категория)', () => {
+    actApplySearch(search('is:library date:week'))
+    expect(useUi.getState()).toMatchObject({ view: 'library', query: 'is:library date:week' })
+    useUi.getState().setView('inbox')
+    expect(useUi.getState()).toMatchObject({ view: 'inbox', query: '' })
+
+    // Как toggleCategory в боковой панели: раздел, затем фильтр.
+    actApplySearch(search('is:inbox react'))
+    useUi.getState().setView('library')
+    useUi.getState().setFilter({ categoryId: 'c' })
+    expect(useUi.getState()).toMatchObject({ view: 'library', query: '', filter: { categoryId: 'c' } })
+
+    // openItemInSection в другой раздел — тоже переход: запись видна в списке своего раздела.
+    actApplySearch(search('is:archive'))
+    openItemInSection({ id: 'x', status: 'inbox' })
+    expect(useUi.getState()).toMatchObject({ view: 'inbox', query: '', selectedId: 'x' })
+  })
+
+  it('actMoveSearch: сдвиг на одну позицию, края списка и неизвестный id — без изменений', async () => {
+    const a = await createSavedSearch('A', 'tag:a')
+    const b = await createSavedSearch('B', 'tag:b')
+    const c = await createSavedSearch('C', 'tag:c')
+    const order = async () => (await listSavedSearches()).map((s) => s.name)
+
+    await actMoveSearch(a.id, -1)
+    await actMoveSearch(c.id, 1)
+    await actMoveSearch('нет-такого', 1)
+    expect(await order()).toEqual(['A', 'B', 'C'])
+
+    await actMoveSearch(a.id, 1)
+    expect(await order()).toEqual(['B', 'A', 'C'])
+    await actMoveSearch(c.id, -1)
+    expect(await order()).toEqual(['B', 'C', 'A'])
+    await actMoveSearch(b.id, 1)
+    expect(await order()).toEqual(['C', 'B', 'A'])
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('actRenameSearch: успех — true; дубль имени — toast.error и false', async () => {
+    const a = await createSavedSearch('A', 'tag:a')
+    await createSavedSearch('B', 'tag:b')
+    expect(await actRenameSearch(a.id, '  Новое  ')).toBe(true)
+    expect((await listSavedSearches()).map((s) => s.name)).toEqual(['Новое', 'B'])
+
+    expect(await actRenameSearch(a.id, 'b')).toBe(false)
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Поиск «B» уже есть')
+    expect(await actRenameSearch(a.id, '   ')).toBe(false)
+    expect(mocks.toastError).toHaveBeenLastCalledWith('Название не может быть пустым')
+  })
+
+  it('actSaveCurrentSearch: нечего сохранять — toast.error', async () => {
+    useUi.getState().setView('library')
+    expect(await actSaveCurrentSearch()).toBeUndefined()
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith(NOTHING_TO_SAVE)
+    expect(NOTHING_TO_SAVE).toBe('Нечего сохранять: задайте поиск или фильтры')
+    expect(await listSavedSearches()).toEqual([])
+  })
+
+  it('actSaveCurrentSearch: раздел, фильтры и категория; имя по умолчанию — запрос, занятое — с номером', async () => {
+    const work = await createCategory('Работа')
+    useUi.getState().setView('library')
+    useUi.getState().setFilter({ types: ['link'], categoryId: work.id })
+    useUi.getState().setQuery('react')
+
+    const first = await actSaveCurrentSearch()
+    expect(first).toMatchObject({
+      name: 'is:library type:link cat:Работа react',
+      query: 'is:library type:link cat:Работа react',
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledExactlyOnceWith('Поиск сохранён')
+
+    // Другой запрос, а имя по умолчанию занято (поиск переименован в строку запроса) — с номером.
+    await createSavedSearch('is:library type:link cat:Работа react x', 'tag:other')
+    useUi.getState().setQuery('react x')
+    const second = await actSaveCurrentSearch()
+    expect(second?.name).toBe('is:library type:link cat:Работа react x (2)')
+
+    useUi.getState().setQuery('vue')
+    const named = await actSaveCurrentSearch('Ссылки по работе')
+    expect(named).toMatchObject({ name: 'Ссылки по работе', query: 'is:library type:link cat:Работа vue' })
+  })
+
+  it('actSaveCurrentSearch: тот же запрос уже сохранён — сообщение и без второго поиска (с именем и без)', async () => {
+    useUi.getState().setView('inbox')
+    useUi.getState().setQuery('react')
+    const first = await actSaveCurrentSearch()
+    expect(first?.query).toBe('is:inbox react')
+    mocks.toast.mockClear()
+    expect(await actRenameSearch(first!.id, 'Мой React')).toBe(true)
+
+    expect(await actSaveCurrentSearch()).toBeUndefined()
+    expect(lastToast()).toEqual({ text: 'Уже сохранён как «Мой React»', options: undefined })
+    expect(await actSaveCurrentSearch('Другое имя')).toBeUndefined()
+    expect(mocks.toast).toHaveBeenCalledTimes(2)
+    expect(mocks.toastSuccess).toHaveBeenCalledTimes(1)
+    expect(mocks.toastError).not.toHaveBeenCalled()
+    expect((await listSavedSearches()).map((s) => s.query)).toEqual(['is:inbox react'])
+
+    // После применения сохранённого поиска (палитра: «Сохранить текущий поиск») — то же.
+    actApplySearch(first!)
+    expect(await actSaveCurrentSearch()).toBeUndefined()
+    expect(await listSavedSearches()).toHaveLength(1)
+  })
+
+  it('actSaveCurrentSearch: быстрый период — относительным оператором, свой — датами', async () => {
+    const week = relativeRange('week', Date.now())
+    useUi.getState().setView('inbox')
+    useUi.getState().setDateRange(week)
+    expect((await actSaveCurrentSearch('Быстрый'))?.query).toBe('is:inbox date:week')
+
+    useUi.getState().setDateRange(week, true)
+    expect((await actSaveCurrentSearch('Свой'))?.query).toMatch(
+      /^is:inbox date:\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/,
+    )
+  })
+
+  it('actSaveCurrentSearch: в корзине is:trash сохраняется и при своём статусе', async () => {
+    useUi.getState().setView('trash')
+    useUi.getState().setQuery('is:inbox')
+    expect((await actSaveCurrentSearch())?.query).toBe('is:trash is:inbox')
+  })
+})
+
+describe('actDownloadMarkdown', () => {
+  type FakeAnchor = { href: string; download: string; rel: string; click: () => void; remove: () => void }
+
+  /** saveBlob создаёт <a download> и щёлкает по нему: в node подменяются document и URL. */
+  function captureDownloads() {
+    const anchors: FakeAnchor[] = []
+    vi.stubGlobal('document', {
+      createElement: () => {
+        const a: FakeAnchor = { href: '', download: '', rel: '', click: vi.fn(), remove: vi.fn() }
+        anchors.push(a)
+        return a
+      },
+      body: { appendChild: vi.fn() },
+    })
+    const blobs: Blob[] = []
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      blobs.push(blob as Blob)
+      return `blob:test-${blobs.length}`
+    })
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    return { anchors, blobs }
+  }
+
+  it('одна запись файлом .md: имя по заголовку, категория, вики-ссылки на имена плана', async () => {
+    const work = await createCategory('Работа')
+    const alpha = await note('Альфа')
+    const item = await createItem({ type: 'text', content: '# Мой план\nсм. [[альфа|первая]]', categoryId: work.id })
+    mocks.allSnapshot.mockReturnValue([alpha, item])
+    const { anchors, blobs } = captureDownloads()
+
+    await actDownloadMarkdown(item)
+    expect(mocks.toastError).not.toHaveBeenCalled()
+    expect(anchors).toHaveLength(1)
+    expect(anchors[0].download).toBe('Мой план.md')
+    expect(anchors[0].click).toHaveBeenCalledTimes(1)
+    expect(blobs[0].type).toBe('text/markdown;charset=utf-8')
+    const text = await blobs[0].text()
+    expect(text).toContain('category: "Работа"')
+    expect(text).toContain('см. [[Альфа|первая]]')
+  })
+
+  it('без снимка и вне снимка запись всё равно выгружается', async () => {
+    const item = await createItem({ type: 'idea', content: 'Идея' })
+    const { anchors } = captureDownloads()
+    await actDownloadMarkdown(item)
+    expect(anchors[0]?.download).toBe('Идея.md')
+
+    mocks.allSnapshot.mockReturnValue([await note('Другое')])
+    await actDownloadMarkdown(item)
+    expect(anchors[1]?.download).toBe('Идея.md')
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('ошибка — toast.error, наружу не бросает', async () => {
+    const item = await createItem({ type: 'text', content: 'x' })
+    vi.spyOn(db.categories, 'orderBy').mockImplementation(() => {
+      throw new Error('база недоступна')
+    })
+    const { anchors } = captureDownloads()
+    await expect(actDownloadMarkdown(item)).resolves.toBeUndefined()
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('база недоступна')
+    expect(anchors).toHaveLength(0)
   })
 })

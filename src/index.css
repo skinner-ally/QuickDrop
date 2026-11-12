@@ -4,6 +4,7 @@
 @import "./styles/fonts.css";
 @import "./styles/scenes.css";
 @import "./styles/pixel.css";
+@import "./styles/markdown.css";
 
 /* В спецификациях и образце есть имена классов — без исключения они попадают в собранный CSS. */
 @source not "../.progress";
@@ -218,6 +219,10 @@
     padding: 0 1px;
   }
 }
+
+/* Значок календаря у поля даты в ночных палитрах (и в «Классике»). color-scheme на <html> ставят ThemeProvider
+   и theme-init.js, поле его наследует; правило — на случай чужого color-scheme у предка. */
+.dark input[type="date"] { color-scheme: dark; }
 
 /* iOS увеличивает страницу при фокусе на поле с шрифтом < 16px.
    Вне @layer, чтобы правило сильнее утилит размера (text-sm и т.п.). */

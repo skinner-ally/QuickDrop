@@ -1,11 +1,21 @@
-import { memo, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { memo, useContext, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { Icon, type IconName } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { actArchive, actDelete, actToLibrary, actToggleFavorite, actUnarchive } from '@/lib/actions'
-import { displayTitle, formatBytes, formatDateTime, formatRelative } from '@/lib/itemTitle'
+import {
+  actArchive,
+  actDelete,
+  actPurgeAsk,
+  actRestoreFromTrash,
+  actToLibrary,
+  actToggleFavorite,
+  actUnarchive,
+} from '@/lib/actions'
+import { derivedTitleLine, displayTitle, formatBytes, formatDateTime, formatRelative } from '@/lib/itemTitle'
 import { safeImageUrl } from '@/lib/normalize'
+import { stripMarkdown } from '@/lib/plainText'
+import { trashDaysLeft, trashLeftLabel } from '@/lib/trash'
 import { useRemoteImagesAllowed } from './remoteImages'
 import { cn } from '@/lib/utils'
 import { makeSnippet } from '@/search'
@@ -18,9 +28,11 @@ import { FilePreview } from './FilePreview'
 import { Highlighted } from './Highlighted'
 import { ItemMenu } from './ItemMenu'
 import { TagChip } from './TagChip'
+import { useDayKey } from '@/hooks/useItems'
+import { TrashDaysContext } from './trashContext'
 import { TypeIcon } from './TypeIcon'
 
-export type ItemVariant = 'inbox' | 'library' | 'favorites' | 'archive'
+export type ItemVariant = 'inbox' | 'library' | 'favorites' | 'archive' | 'trash'
 
 export interface ItemEntryProps {
   hit: SearchHit
@@ -106,11 +118,12 @@ function snippetOf(item: Item, terms: string[]): Snippet {
       return { text: meta.join(' · ') }
     }
     default: {
-      // Без своего заголовка в роли заголовка выступает первая строка — в сниппете её не повторяем.
+      // Без своего заголовка в роли заголовка выступает производная строка (displayTitle) — в сниппете её
+      // не повторяем. Её нет (одна разметка: «---», пустые пункты) — заголовок «Без названия», сниппет из всего текста.
       if (!searching && !item.title.trim() && item.content) {
-        const lines = item.content.split(/\r?\n/)
-        const i = lines.findIndex((l) => l.trim() !== '')
-        const rest = lines.slice(i + 1).join('\n')
+        const line = derivedTitleLine(item)
+        if (line === null) return { text: makeSnippet(item, terms) }
+        const rest = item.content.split(/\r?\n/).slice(line.index + 1).join('\n')
         return { text: rest.trim() ? makeSnippet({ ...item, content: rest }, terms) : '' }
       }
       return { text: makeSnippet(item, terms) }
@@ -160,6 +173,15 @@ function QuickButton({
 
 /** Быстрые действия по наведению/фокусу (меню «…» отдельно, оно управляет своей видимостью). */
 function QuickActions({ item, variant, dense }: { item: Item; variant: ItemVariant; dense?: boolean }) {
+  // Запись в корзине узнаётся по самой записи, а не по разделу: так же и в выдаче is:trash.
+  if (item.deletedAt !== undefined) {
+    return (
+      <>
+        <QuickButton dense={dense} label="Восстановить" icon="undo" onClick={() => void actRestoreFromTrash(item.id)} />
+        <QuickButton dense={dense} label="Удалить навсегда" icon="trash" destructive onClick={() => void actPurgeAsk(item.id)} />
+      </>
+    )
+  }
   if (variant === 'archive') {
     return (
       <>
@@ -195,6 +217,40 @@ function StarMark({ item, className }: { item: Item; className?: string }) {
   )
 }
 
+/**
+ * «удалено … · ещё N дн.» у записи в корзине. stacked — в колонке метаданных строки: в пиксельных сценах
+ * две строки друг под другом, в «Классике» — одна.
+ */
+function TrashMeta({ item, stacked, className }: { item: Item; stacked?: boolean; className?: string }) {
+  const trashDays = useContext(TrashDaysContext)
+  const deletedAt = item.deletedAt ?? Number.NaN
+  // Подписка на смену суток обходит memo строки: остаток («ещё N дн.») не застывает.
+  useDayKey()
+  const now = Date.now()
+  const left = trashDaysLeft(item.deletedAt, trashDays, now)
+  const leftText = trashLeftLabel(left)
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-x-1 text-xs whitespace-nowrap text-muted-foreground',
+        stacked && 'pixel:flex-col pixel:items-end pixel:gap-0',
+        className,
+      )}
+      title={`Удалено: ${formatDateTime(deletedAt)}`}
+    >
+      <span>удалено {formatRelative(deletedAt, now)}</span>
+      {leftText && (
+        <>
+          <span aria-hidden className={cn(stacked && 'pixel:hidden')}>
+            ·
+          </span>
+          <span className={cn(left !== null && left <= 3 && 'text-destructive')}>{leftText}</span>
+        </>
+      )}
+    </span>
+  )
+}
+
 function TagsLine({ tags, max = 3 }: { tags: string[]; max?: number }) {
   if (tags.length === 0) return null
   const rest = tags.length - max
@@ -223,6 +279,8 @@ function sameItem(a: Item, b: Item): boolean {
   return (
     a.id === b.id &&
     a.updatedAt === b.updatedAt &&
+    // Перенос в корзину и восстановление updatedAt не меняют.
+    a.deletedAt === b.deletedAt &&
     a.links.length === b.links.length &&
     a.links.every((l, i) => l === b.links[i])
   )
@@ -314,6 +372,7 @@ export const ItemRow = memo(function ItemRow({
   const linkImage = item.type === 'link' ? item.linkMeta?.image : undefined
   const favicon = item.type === 'link' ? item.linkMeta?.favicon : undefined
   const cat = useListCategory(item.categoryId)
+  const trashed = item.deletedAt !== undefined
 
   return (
     <div
@@ -353,7 +412,12 @@ export const ItemRow = memo(function ItemRow({
 
         <div className="flex min-w-0 flex-1 flex-col gap-1 md:flex-row md:items-center md:gap-3 pixel:md:flex-col pixel:md:items-stretch pixel:md:gap-1">
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-foreground pixel:font-semibold">
+            <div
+              className={cn(
+                'truncate text-sm font-medium pixel:font-semibold',
+                trashed ? 'text-muted-foreground' : 'text-foreground',
+              )}
+            >
               <Highlighted text={title} terms={terms} />
             </div>
             {(snippet.text || snippet.lead) && (
@@ -382,8 +446,16 @@ export const ItemRow = memo(function ItemRow({
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:shrink-0 md:flex-nowrap pixel:gap-1 pixel:md:flex-wrap">
             <CategoryBadge categoryId={item.categoryId} className="pixel:md:hidden" />
             <TagsLine tags={item.tags} />
-            <StarMark item={item} className="md:hidden pixel:hidden" />
-            <span className="text-xs text-muted-foreground md:hidden">{formatRelative(item.createdAt)}</span>
+            {trashed ? (
+              <TrashMeta item={item} className="md:hidden" />
+            ) : (
+              <>
+                <StarMark item={item} className="md:hidden pixel:hidden" />
+                <span className="text-xs text-muted-foreground md:hidden" title={formatDateTime(item.createdAt)}>
+                  {formatRelative(item.createdAt)}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -403,10 +475,16 @@ export const ItemRow = memo(function ItemRow({
           <div className="grid items-center justify-items-end">
             <div className="col-start-1 row-start-1 flex items-center gap-2 transition-opacity pixel:flex-col pixel:items-end pixel:gap-0.5 pointer-fine:group-focus-within:opacity-0 pointer-fine:group-hover:opacity-0">
               <CategoryBadge categoryId={item.categoryId} className="hidden pixel:inline-flex" />
-              <StarMark item={item} className="pixel:hidden" />
-              <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
-                {formatRelative(item.createdAt)}
-              </span>
+              {trashed ? (
+                <TrashMeta item={item} stacked />
+              ) : (
+                <>
+                  <StarMark item={item} className="pixel:hidden" />
+                  <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
+                    {formatRelative(item.createdAt)}
+                  </span>
+                </>
+              )}
             </div>
             <div className="col-start-1 row-start-1 hidden items-center transition-opacity pixel:gap-1 pointer-fine:flex pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100">
               <QuickActions item={item} variant={variant} />
@@ -417,7 +495,11 @@ export const ItemRow = memo(function ItemRow({
           <ItemMenu item={item} className="px-btn" />
         </div>
       </div>
-      <span aria-hidden className="hidden w-2.5 shrink-0 px-flag px-flag-r pixel:block" data-flag={item.status} />
+      <span
+        aria-hidden
+        className="hidden w-2.5 shrink-0 px-flag px-flag-r pixel:block"
+        data-flag={trashed ? 'trash' : item.status}
+      />
     </div>
   )
 }, propsEqual)
@@ -461,7 +543,8 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
     default:
       return item.content ? (
         <p className="line-clamp-6 px-3 pt-2.5 text-2sm break-words whitespace-pre-wrap text-muted-foreground">
-          <Highlighted text={item.content.slice(0, 400)} terms={terms} />
+          {/* Превью — без маркеров Markdown; запас 600 символов: снятая разметка укорачивает текст. */}
+          <Highlighted text={stripMarkdown(item.content.slice(0, 600)).slice(0, 400)} terms={terms} />
         </p>
       ) : null
   }
@@ -481,6 +564,7 @@ export const ItemCard = memo(function ItemCard({
   const { item, terms } = hit
   const lead = item.type === 'link' ? domainOf(item.url) : ''
   const cat = useListCategory(item.categoryId)
+  const trashed = item.deletedAt !== undefined
 
   return (
     <div
@@ -503,7 +587,12 @@ export const ItemCard = memo(function ItemCard({
       <CardPreview item={item} terms={terms} />
 
       <div className="flex flex-1 flex-col gap-1.5 px-3 py-2.5">
-        <div className="line-clamp-2 text-sm font-medium break-words text-foreground pixel:font-semibold">
+        <div
+          className={cn(
+            'line-clamp-2 text-sm font-medium break-words pixel:font-semibold',
+            trashed ? 'text-muted-foreground' : 'text-foreground',
+          )}
+        >
           <Highlighted text={displayTitle(item)} terms={terms} />
         </div>
         {lead && <div className="truncate text-xs text-muted-foreground">{lead}</div>}
@@ -512,13 +601,19 @@ export const ItemCard = memo(function ItemCard({
           <CategoryBadge categoryId={item.categoryId} />
           <TagsLine tags={item.tags} max={2} />
           <span className="ml-auto flex items-center gap-1.5">
-            <StarMark
-              item={item}
-              className="pixel:border-2 pixel:border-wood-dark pixel:bg-gold pixel:p-px pixel:text-gold-ink"
-            />
-            <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
-              {formatRelative(item.createdAt)}
-            </span>
+            {trashed ? (
+              <TrashMeta item={item} />
+            ) : (
+              <>
+                <StarMark
+                  item={item}
+                  className="pixel:border-2 pixel:border-wood-dark pixel:bg-gold pixel:p-px pixel:text-gold-ink"
+                />
+                <span className="text-xs whitespace-nowrap text-muted-foreground" title={formatDateTime(item.createdAt)}>
+                  {formatRelative(item.createdAt)}
+                </span>
+              </>
+            )}
           </span>
         </div>
       </div>

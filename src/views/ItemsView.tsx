@@ -21,7 +21,7 @@ const KEY_HINT: Record<ItemsViewProps['variant'], string> = {
   inbox: 'J/K — выбор · E — в базу знаний · F — избранное · A — архив',
   library: 'J/K — выбор · Enter — открыть · F — избранное · A — архив',
   favorites: 'J/K — выбор · Enter — открыть · F — избранное · A — архив',
-  archive: 'J/K — выбор · Enter — открыть · E — вернуть · Del — удалить',
+  archive: 'J/K — выбор · Enter — открыть · E — вернуть · Del — в корзину',
 }
 
 /** Общая основа разделов: заголовок, счётчик, панель фильтров и список. */

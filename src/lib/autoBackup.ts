@@ -1,7 +1,8 @@
 import { toast } from 'sonner'
 import { db } from '@/db/db'
 import { getSettings, setSetting } from '@/db/settings'
-import { listBackups, pruneBackups, saveBackupFile } from '@/lib/desktop'
+import { dirsInUse, forgetUnusedDir } from '@/lib/backupUi'
+import { forgetDirectory, listBackups, pruneBackups, saveBackupFile } from '@/lib/desktop'
 import type { PruneResult, SavedFile } from '@/lib/desktop'
 import { describeError } from '@/lib/errors'
 import { exportBackup } from '@/lib/exportImport'
@@ -82,24 +83,57 @@ export interface AutoBackup {
   check(): Promise<BackupRunResult>
   /** «Создать копию сейчас»: срок и backupEvery не учитываются, папка обязательна. Никогда не бросает. */
   runNow(): Promise<BackupRunResult>
+  /** Тот же объект, пока состояние не изменилось (годится для useSyncExternalStore). */
   status(): AutoBackupStatus
+  /** Слушатель изменений status(); возвращает отписку. */
+  subscribe(listener: () => void): () => void
+  /** Резолвится, когда копия не идёт (в том числе повторно запущенная runNow). Никогда не отклоняется. */
+  idle(): Promise<void>
+  /** Снять паузу после сбоя и ошибку: пользователь сменил или заново выбрал папку. */
+  resetFailure(): void
+  /** После смены папки в настройках: дождаться идущей копии, снять паузу и ошибку, плановая проверка. */
+  dirChanged(): Promise<BackupRunResult>
   /** Таймеры и слушатель видимости; возвращает функцию остановки. Повторный вызов — без второго набора таймеров. */
   start(): () => void
 }
 
 const skipped = (reason: BackupSkipReason): BackupRunResult => ({ status: 'skipped', reason })
+const noop = (): void => {}
 
 export function createAutoBackup(deps: AutoBackupDeps): AutoBackup {
   let running: Promise<BackupRunResult> | null = null
   let lastError: string | null = null
   let lastPath: string | null = null
-  /** О текущей серии сбоев уже сообщили; сбрасывается успешной копией. */
+  /** О текущей серии сбоев уже сообщили; сбрасывается успешной копией и resetFailure. */
   let notified = false
-  /** Начало последнего неудачного запуска и его папка; сбрасывается успешной копией. */
+  /** Начало последнего неудачного запуска и его папка; сбрасывается успешной копией и resetFailure. */
   let failed: { at: number; dir: string } | null = null
   let stopTimers: (() => void) | null = null
+  const listeners = new Set<() => void>()
+  let snapshot: AutoBackupStatus = { running: false, lastError: null, lastPath: null }
 
-  /** Пауза только для той же папки: после выбора другой папки (checkAutoBackup из настроек) копия идёт сразу. */
+  function status(): AutoBackupStatus {
+    const isRunning = running !== null
+    if (snapshot.running !== isRunning || snapshot.lastError !== lastError || snapshot.lastPath !== lastPath) {
+      snapshot = { running: isRunning, lastError, lastPath }
+    }
+    return snapshot
+  }
+
+  function emit(): void {
+    for (const listener of [...listeners]) {
+      try {
+        listener()
+      } catch (err) {
+        console.warn('[autoBackup] ошибка слушателя состояния', err)
+      }
+    }
+  }
+
+  /**
+   * Пауза только для той же папки: после выбора другой папки копия идёт сразу, а повторный выбор той же
+   * снимает паузу через dirChanged.
+   */
   const pausedAfterFailure = (dir: string, now: number): boolean =>
     // now < at — часы перевели назад: паузу не растягиваем.
     failed !== null && failed.dir === dir && now >= failed.at && now - failed.at < RETRY_PAUSE_MS
@@ -159,9 +193,32 @@ export function createAutoBackup(deps: AutoBackupDeps): AutoBackup {
   function launch(planned: boolean): Promise<BackupRunResult> {
     const current: Promise<BackupRunResult> = run(planned).finally(() => {
       if (running === current) running = null
+      emit()
     })
     running = current
+    emit()
     return current
+  }
+
+  async function idle(): Promise<void> {
+    // Цикл: runNow по итогу пропуска плановой проверки сразу запускает копию заново.
+    while (running) await running.then(noop, noop)
+  }
+
+  function resetFailure(): void {
+    failed = null
+    notified = false
+    if (lastError === null) return
+    lastError = null
+    emit()
+  }
+
+  async function dirChanged(): Promise<BackupRunResult> {
+    // Сначала конец идущей копии: её сбой (в прежнюю папку) иначе вернул бы паузу и ошибку,
+    // а проверка новой папки ушла бы в busy.
+    await idle()
+    resetFailure()
+    return check()
   }
 
   function check(): Promise<BackupRunResult> {
@@ -202,7 +259,16 @@ export function createAutoBackup(deps: AutoBackupDeps): AutoBackup {
   return {
     check,
     runNow,
-    status: () => ({ running: running !== null, lastError, lastPath }),
+    status,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    idle,
+    resetFailure,
+    dirChanged,
     start,
   }
 }
@@ -249,4 +315,39 @@ export function checkAutoBackup(): Promise<BackupRunResult> {
 
 export function autoBackupStatus(): AutoBackupStatus {
   return autoBackup().status()
+}
+
+/** Подписка на autoBackupStatus(): `useSyncExternalStore(subscribeAutoBackup, autoBackupStatus)`. */
+export function subscribeAutoBackup(listener: () => void): () => void {
+  return autoBackup().subscribe(listener)
+}
+
+/** Копия не идёт. Вне Tauri резолвится сразу. Никогда не отклоняется. */
+export function autoBackupIdle(): Promise<void> {
+  return autoBackup().idle()
+}
+
+/** Снять паузу после сбоя и ошибку под «Последняя копия». */
+export function resetAutoBackupFailure(): void {
+  autoBackup().resetFailure()
+}
+
+/**
+ * Вызов после выбора или сброса папки для копий (вместо checkAutoBackup): дожидается идущей копии, снимает
+ * паузу после сбоя — повторный выбор той же папки иначе молча откладывал копию до часа — и проверяет срок.
+ */
+export function autoBackupDirChanged(): Promise<BackupRunResult> {
+  return autoBackup().dirChanged()
+}
+
+/**
+ * Отзыв прежней папки (копий или Markdown) после того, как новая настройка сохранена: ждёт конца идущей копии,
+ * keep — все папки, оставшиеся в настройках. true — Rust что-то убрал. Не бросает.
+ */
+export function forgetPrevDir(prev: string): Promise<boolean> {
+  return forgetUnusedDir(prev, {
+    idle: autoBackupIdle,
+    currentDirs: async () => dirsInUse(await getSettings()),
+    forget: forgetDirectory,
+  })
 }

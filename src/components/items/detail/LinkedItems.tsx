@@ -24,13 +24,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 /** Связанные записи и подсказки «Похожие» (по общим тегам). */
-export function LinkedItems({ item }: { item: Item }) {
+export function LinkedItems({ item, readOnly }: { item: Item; readOnly?: boolean }) {
   const select = useUi((s) => s.select)
   const linked = useLinkedItems(item)
   const all = useAllItems()
 
   const similar = useMemo(() => {
-    if (!all || item.tags.length === 0) return []
+    if (readOnly || !all || item.tags.length === 0) return []
     const mine = new Set(item.tags)
     const skip = new Set([item.id, ...item.links])
     return all
@@ -40,13 +40,15 @@ export function LinkedItems({ item }: { item: Item }) {
       .sort((a, b) => b.n - a.n || b.i.updatedAt - a.i.updatedAt)
       .slice(0, 3)
       .map((x) => x.i)
-  }, [all, item.id, item.links, item.tags])
+  }, [all, item.id, item.links, item.tags, readOnly])
+
+  if (readOnly && linked.length === 0) return null
 
   return (
     <section className="flex flex-col gap-2" aria-label="Связанные записи">
       <div className="flex items-center justify-between gap-2">
         <SectionTitle>Связанные записи</SectionTitle>
-        <LinkPicker item={item} />
+        {!readOnly && <LinkPicker item={item} />}
       </div>
 
       {linked.length === 0 ? (
@@ -63,15 +65,17 @@ export function LinkedItems({ item }: { item: Item }) {
                 <TypeIcon type={l.type} className="text-muted-foreground" />
                 <span className="truncate">{displayTitle(l)}</span>
               </button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Убрать связь: ${displayTitle(l)}`}
-                onClick={() => void run(() => unlinkItems(item.id, l.id), 'Не удалось убрать связь')}
-                className="text-muted-foreground"
-              >
-                <Icon name="x" className="size-4" />
-              </Button>
+              {!readOnly && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Убрать связь: ${displayTitle(l)}`}
+                  onClick={() => void run(() => unlinkItems(item.id, l.id), 'Не удалось убрать связь')}
+                  className="text-muted-foreground"
+                >
+                  <Icon name="x" className="size-4" />
+                </Button>
+              )}
             </li>
           ))}
         </ul>

@@ -133,6 +133,85 @@ impl ApprovedDirs {
         }
         Ok(canonical)
     }
+
+    /// Убирает папку из подтверждённых. true — что-то убрано. Пустая строка и неполный путь — Ok(false).
+    /// keep — папки, которые остались в настройках: их записи не убираются, даже если это та же папка,
+    /// записанная иначе (сетевой диск и UNC, subst, ссылка) — иначе отзыв прежней папки снимал бы
+    /// подтверждение с только что выбранной.
+    pub fn forget(&self, dir: &str, keep: &[String]) -> Result<bool, String> {
+        let dir = dir.trim();
+        if dir.is_empty() {
+            return Ok(false);
+        }
+        let path = Path::new(dir);
+        if !path.is_absolute() {
+            return Ok(false);
+        }
+        let keep = keep_paths(keep);
+        // Как в resolve: канонизация (в т.ч. недоступной сетевой папки) идёт по копии списка, без мьютекса.
+        let canonical = dunce::canonicalize(path).ok();
+        let snapshot = self.dirs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let gone = forgotten_dirs(&snapshot, path, canonical.as_deref(), &keep, |d| dunce::canonicalize(d).ok());
+        if gone.is_empty() {
+            return Ok(false);
+        }
+        let mut dirs = self.dirs.lock().unwrap_or_else(|e| e.into_inner());
+        let next: Vec<PathBuf> = dirs.iter().filter(|d| !gone.contains(d)).cloned().collect();
+        self.replace(&mut dirs, next)
+    }
+
+    /// Оставляет только записи, точно равные папкам из keep (настройки приложения). Сверка при запуске:
+    /// отзыв прежней папки одноразовый, и его сбой (или стёртые данные веб-слоя) иначе оставил бы папку
+    /// открытой для записи навсегда. Записи не канонизируются: другая запись той же папки в настройках
+    /// не значится, а значит, не нужна. true — что-то убрано.
+    pub fn retain(&self, keep: &[String]) -> Result<bool, String> {
+        let keep = keep_paths(keep);
+        let mut dirs = self.dirs.lock().unwrap_or_else(|e| e.into_inner());
+        let next: Vec<PathBuf> = dirs.iter().filter(|d| keep.contains(d)).cloned().collect();
+        self.replace(&mut dirs, next)
+    }
+
+    /// Новый список вместо текущего, если он короче. Сначала файл, потом память: иначе забытая папка
+    /// вернулась бы после перезапуска.
+    fn replace(&self, dirs: &mut Vec<PathBuf>, next: Vec<PathBuf>) -> Result<bool, String> {
+        if next.len() == dirs.len() {
+            return Ok(false);
+        }
+        save_dirs(&self.file, &next).map_err(|e| format!("Не удалось забыть папку: {e}"))?;
+        *dirs = next;
+        Ok(true)
+    }
+}
+
+/// Папки из настроек: пробелы по краям отброшены, пустые и неполные пути пропущены. Сравниваются с записями
+/// точно: в настройках лежит та же строка, что вернул pick_directory, а approve хранит тот же путь.
+fn keep_paths(keep: &[String]) -> Vec<PathBuf> {
+    keep.iter()
+        .map(|k| k.trim())
+        .filter(|k| !k.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .collect()
+}
+
+/// Записи, которые убирает forget: равные запрошенному пути или его каноническому виду и записи с тем же
+/// каноническим видом. canonical = None (папка недоступна, диск отключён) — только точное совпадение,
+/// записи не канонизируются. Записи из keep не убираются и не канонизируются.
+fn forgotten_dirs(
+    dirs: &[PathBuf],
+    requested: &Path,
+    canonical: Option<&Path>,
+    keep: &[PathBuf],
+    canonicalize: impl Fn(&Path) -> Option<PathBuf>,
+) -> Vec<PathBuf> {
+    dirs.iter()
+        .filter(|d| !keep.contains(d))
+        .filter(|d| {
+            d.as_path() == requested
+                || canonical.is_some_and(|c| d.as_path() == c || canonicalize(d).is_some_and(|dc| dc == c))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Сначала точное совпадение пути (обычный случай: в настройках лежит строка из диалога), затем канонический
@@ -592,6 +671,31 @@ pub async fn pick_directory(
         .approve(&path)
         .map_err(|e| format!("Не удалось запомнить выбранную папку: {e}"))?;
     Ok(Some(path_string(&path)))
+}
+
+/// Отзыв папки после смены настройки: прежняя папка больше не открыта для записи. keep — папки,
+/// оставшиеся в настройках. Риска не добавляет: скрипт в веб-слое и так мог бы просто не вызывать отзыв.
+#[tauri::command]
+pub async fn forget_directory(
+    dir: String,
+    keep: Option<Vec<String>>,
+    approved: tauri::State<'_, ApprovedDirs>,
+) -> Result<bool, String> {
+    approved.forget(&dir, &keep.unwrap_or_default())
+}
+
+/// Сверка при запуске: подтверждёнными остаются только папки из настроек. Команда может только убирать.
+/// В отладочной сборке ничего не делает: у `tauri dev` свои настройки (другой адрес страницы — другая
+/// IndexedDB), а список папок общий с установленным приложением, и сверка отзывала бы его папки.
+#[tauri::command]
+pub async fn retain_directories(
+    keep: Vec<String>,
+    approved: tauri::State<'_, ApprovedDirs>,
+) -> Result<bool, String> {
+    if cfg!(debug_assertions) {
+        return Ok(false);
+    }
+    approved.retain(&keep)
 }
 
 const BAD_BACKUP_NAME: &str = "Недопустимое имя файла резервной копии";
@@ -1327,6 +1431,329 @@ mod tests {
         let approved = ApprovedDirs::load(file);
         assert!(approved.approve(data.path()).is_err());
         assert!(approved.resolve(&path_string(data.path())).is_err());
+    }
+
+    /// Список подтверждённых папок в файле — то, что увидит следующий запуск.
+    fn stored_dirs(file: &Path) -> Vec<String> {
+        serde_json::from_slice(&fs::read(file).unwrap()).unwrap()
+    }
+
+    fn assert_unapproved(approved: &ApprovedDirs, dir: &Path) {
+        let err = approved.resolve(&path_string(dir)).unwrap_err();
+        assert!(err.starts_with("Папка не подтверждена"), "{}: {err}", dir.display());
+    }
+
+    #[test]
+    fn forget_removes_exact_and_roundabout_path() {
+        let cfg = TempDir::new("forget-cfg");
+        let a = TempDir::new("forget-a");
+        let b = TempDir::new("forget-b папка");
+        let keep = TempDir::new("forget-keep");
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        for d in [a.path(), keep.path(), b.path()] {
+            approved.approve(d).unwrap();
+        }
+
+        // точная строка (пробелы по краям отбрасываются)
+        assert_eq!(approved.forget(&format!("  {}  ", path_string(a.path())), &[]), Ok(true));
+        assert_unapproved(&approved, a.path());
+
+        // путь с «..» к той же папке — по каноническому виду
+        let roundabout = b.path().join("..").join(b.path().file_name().unwrap());
+        assert_eq!(approved.forget(&path_string(&roundabout), &[]), Ok(true));
+        assert_unapproved(&approved, b.path());
+
+        // остальные записи целы, и после перезагрузки списка тоже
+        assert_eq!(approved.resolve(&path_string(keep.path())).unwrap(), keep.path());
+        assert_eq!(stored_dirs(&file), [path_string(keep.path())]);
+        let reloaded = ApprovedDirs::load(file);
+        assert_unapproved(&reloaded, a.path());
+        assert_unapproved(&reloaded, b.path());
+        assert_eq!(reloaded.resolve(&path_string(keep.path())).unwrap(), keep.path());
+
+        // повторный отзыв — убирать нечего
+        assert_eq!(approved.forget(&path_string(a.path()), &[]), Ok(false));
+    }
+
+    #[test]
+    fn forget_unknown_dir_leaves_file_untouched() {
+        let cfg = TempDir::new("forget-unknown-cfg");
+        let data = TempDir::new("forget-unknown");
+        let other = TempDir::new("forget-unknown-other");
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(data.path()).unwrap();
+        // Метка: список записывается с отступами, перезапись файла её стёрла бы.
+        let marker = serde_json::to_vec(&[path_string(data.path())]).unwrap();
+        fs::write(&file, &marker).unwrap();
+
+        assert_eq!(approved.forget(&path_string(other.path()), &[]), Ok(false));
+        assert_eq!(approved.forget(&path_string(&other.path().join("нет")), &[]), Ok(false));
+        // подпапка и родитель подтверждённой папки — другие папки
+        let sub = data.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        assert_eq!(approved.forget(&path_string(&sub), &[]), Ok(false));
+        assert_eq!(approved.forget(&path_string(data.path().parent().unwrap()), &[]), Ok(false));
+
+        assert_eq!(fs::read(&file).unwrap(), marker);
+        assert_eq!(names(cfg.path()), ["approved-dirs.json"]);
+        assert_eq!(approved.resolve(&path_string(data.path())).unwrap(), data.path());
+    }
+
+    #[test]
+    fn forget_ignores_empty_and_relative() {
+        let cfg = TempDir::new("forget-bad-cfg");
+        let data = TempDir::new("forget-bad");
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(data.path()).unwrap();
+        let before = fs::read(&file).unwrap();
+
+        let own_name = data.path().file_name().unwrap().to_str().unwrap().to_string();
+        for bad in ["", "   ", "\t\n", "backups", "./backups", "..", own_name.as_str()] {
+            assert_eq!(approved.forget(bad, &[]), Ok(false), "{bad:?}");
+        }
+        assert_eq!(fs::read(&file).unwrap(), before);
+        assert_eq!(approved.resolve(&path_string(data.path())).unwrap(), data.path());
+    }
+
+    #[test]
+    fn forget_unavailable_dir_by_exact_string() {
+        let cfg = TempDir::new("forget-gone-cfg");
+        let root = TempDir::new("forget-gone");
+        let file = cfg.path().join("approved-dirs.json");
+        let gone = root.path().join("gone");
+        let live = root.path().join("live");
+        fs::create_dir(&gone).unwrap();
+        fs::create_dir(&live).unwrap();
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(&gone).unwrap();
+        approved.approve(&live).unwrap();
+        // диск отключён
+        fs::remove_dir(&gone).unwrap();
+
+        // канонического вида нет — обходной путь к той же папке не совпадает
+        let roundabout = gone.join("..").join("gone");
+        assert_eq!(approved.forget(&path_string(&roundabout), &[]), Ok(false));
+        assert_eq!(stored_dirs(&file), [path_string(&gone), path_string(&live)]);
+
+        assert_eq!(approved.forget(&path_string(&gone), &[]), Ok(true));
+        assert_eq!(stored_dirs(&file), [path_string(&live)]);
+        // диск подключили снова — подтверждения уже нет
+        fs::create_dir(&gone).unwrap();
+        assert_unapproved(&approved, &gone);
+        assert!(approved.resolve(&path_string(&live)).is_ok());
+    }
+
+    #[test]
+    fn forget_failure_keeps_list_unchanged() {
+        let cfg = TempDir::new("forget-fail-cfg");
+        let data = TempDir::new("forget-fail");
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(data.path()).unwrap();
+        // файл списка нельзя заменить: на его месте каталог
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        fs::write(file.join("x"), b"x").unwrap();
+
+        let err = approved.forget(&path_string(data.path()), &[]).unwrap_err();
+        assert!(err.starts_with("Не удалось забыть папку: "), "{err}");
+        assert_eq!(approved.resolve(&path_string(data.path())).unwrap(), data.path());
+        // временный файл убран
+        assert_eq!(names(cfg.path()), ["approved-dirs.json"]);
+    }
+
+    #[test]
+    fn forgotten_dirs_exact_then_canonical() {
+        use std::cell::RefCell;
+        let offline = PathBuf::from("N:/сеть");
+        let exact = PathBuf::from("D:/копии");
+        let real = PathBuf::from("D:/real");
+        let link = PathBuf::from("D:/link");
+        let other = PathBuf::from("D:/other");
+        let dirs = vec![offline.clone(), exact.clone(), real.clone(), link.clone(), other.clone()];
+        let seen = RefCell::new(Vec::<PathBuf>::new());
+        // «D:/копии» и «D:/link» — ссылки на D:/real, сетевая запись недоступна
+        let canon = |d: &Path| {
+            seen.borrow_mut().push(d.to_path_buf());
+            if d == offline.as_path() {
+                None
+            } else if d == exact.as_path() || d == link.as_path() {
+                Some(real.clone())
+            } else {
+                Some(d.to_path_buf())
+            }
+        };
+
+        assert_eq!(
+            forgotten_dirs(&dirs, &exact, Some(real.as_path()), &[], &canon),
+            [exact.clone(), real.clone(), link.clone()]
+        );
+        // совпавшие точно записи не канонизируются
+        assert_eq!(*seen.borrow(), [offline.clone(), link.clone(), other.clone()]);
+
+        // запрошенная папка недоступна — только точное совпадение, записи не канонизируются
+        seen.borrow_mut().clear();
+        assert_eq!(forgotten_dirs(&dirs, &offline, None, &[], &canon), [offline.clone()]);
+        assert!(forgotten_dirs(&dirs, Path::new("D:/x/../real"), None, &[], &canon).is_empty());
+        assert!(seen.borrow().is_empty());
+
+        assert!(forgotten_dirs(&dirs, Path::new("D:/zzz"), Some(Path::new("D:/zzz")), &[], &canon).is_empty());
+
+        // папка из настроек не убирается и не канонизируется, даже если это та же папка
+        seen.borrow_mut().clear();
+        assert_eq!(
+            forgotten_dirs(&dirs, &exact, Some(real.as_path()), &[link.clone()], &canon),
+            [exact.clone(), real.clone()]
+        );
+        assert_eq!(*seen.borrow(), [offline.clone(), other.clone()]);
+        // запрошенная папка сама в keep — её точная запись остаётся
+        assert_eq!(
+            forgotten_dirs(&dirs, &exact, Some(real.as_path()), &[exact.clone()], &canon),
+            [real.clone(), link.clone()]
+        );
+    }
+
+    #[test]
+    fn forget_removes_links_to_same_dir() {
+        let cfg = TempDir::new("forget-link-cfg");
+        let data = TempDir::new("forget-link-data");
+        let root = TempDir::new("forget-link-root");
+        let link = root.path().join("link");
+        if !link_dir(data.path(), &link) {
+            eprintln!("пропуск: не удалось создать ссылку на каталог");
+            return;
+        }
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(&link).unwrap();
+        approved.approve(root.path()).unwrap();
+
+        // папка выбрана через ссылку, отзывается по настоящему пути — запись ссылки убрана
+        assert_eq!(approved.forget(&path_string(data.path()), &[]), Ok(true));
+        assert_unapproved(&approved, &link);
+        assert_unapproved(&approved, data.path());
+        assert_eq!(stored_dirs(&file), [path_string(root.path())]);
+    }
+
+    #[test]
+    fn forget_keeps_dirs_in_use() {
+        let cfg = TempDir::new("forget-keep-cfg");
+        let data = TempDir::new("forget-keep-data");
+        let root = TempDir::new("forget-keep-root");
+        let link = root.path().join("link");
+        if !link_dir(data.path(), &link) {
+            eprintln!("пропуск: не удалось создать ссылку на каталог");
+            return;
+        }
+        let file = cfg.path().join("approved-dirs.json");
+
+        // прежняя папка — настоящий путь, новая — та же папка через ссылку
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(data.path()).unwrap();
+        approved.approve(&link).unwrap();
+        assert_eq!(approved.forget(&path_string(data.path()), &[path_string(&link)]), Ok(true));
+        assert!(approved.resolve(&path_string(&link)).is_ok());
+        assert_eq!(stored_dirs(&file), [path_string(&link)]);
+        // настоящий путь доступен через канонический вид ссылки: папка по-прежнему в настройках
+        assert!(approved.resolve(&path_string(data.path())).is_ok());
+
+        // обратно: прежняя — ссылка, новая — настоящий путь (subst и сетевой диск дают то же)
+        fs::remove_file(&file).unwrap();
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(&link).unwrap();
+        approved.approve(data.path()).unwrap();
+        assert_eq!(approved.forget(&path_string(&link), &[path_string(data.path())]), Ok(true));
+        assert!(approved.resolve(&path_string(data.path())).is_ok());
+        assert_eq!(stored_dirs(&file), [path_string(data.path())]);
+
+        // пустые, неполные и с пробелами по краям строки keep не ломают отзыв
+        let keep = [String::new(), "  ".into(), "relative".into(), format!("  {}  ", path_string(data.path()))];
+        approved.approve(&link).unwrap();
+        assert_eq!(approved.forget(&path_string(&link), &keep), Ok(true));
+        assert_eq!(stored_dirs(&file), [path_string(data.path())]);
+    }
+
+    #[test]
+    fn retain_keeps_only_dirs_in_settings() {
+        let cfg = TempDir::new("retain-cfg");
+        let root = TempDir::new("retain");
+        let file = cfg.path().join("approved-dirs.json");
+        let [a, b, c] = ["a", "b", "c"].map(|n| {
+            let d = root.path().join(n);
+            fs::create_dir(&d).unwrap();
+            d
+        });
+        let gone = root.path().join("gone");
+        let approved = ApprovedDirs::load(file.clone());
+        for d in [&a, &gone, &b, &c] {
+            fs::create_dir_all(d).unwrap();
+            approved.approve(d).unwrap();
+        }
+        // недоступная папка не мешает сверке: записи не канонизируются
+        fs::remove_dir(&gone).unwrap();
+
+        let keep = [format!(" {} ", path_string(&c)), String::new(), "relative".into(), path_string(&a)];
+        assert_eq!(approved.retain(&keep), Ok(true));
+        // порядок записей (очередь вытеснения) сохраняется
+        assert_eq!(stored_dirs(&file), [path_string(&a), path_string(&c)]);
+        assert_unapproved(&approved, &b);
+        assert!(approved.resolve(&path_string(&a)).is_ok());
+        let reloaded = ApprovedDirs::load(file.clone());
+        assert_unapproved(&reloaded, &b);
+        assert!(reloaded.resolve(&path_string(&c)).is_ok());
+
+        // убирать нечего — файл не перезаписывается
+        let marker = serde_json::to_vec(&[path_string(&a), path_string(&c)]).unwrap();
+        fs::write(&file, &marker).unwrap();
+        assert_eq!(approved.retain(&keep), Ok(false));
+        assert_eq!(fs::read(&file).unwrap(), marker);
+
+        // в настройках папок нет — подтверждённых тоже
+        assert_eq!(approved.retain(&[]), Ok(true));
+        assert!(stored_dirs(&file).is_empty());
+        assert_unapproved(&approved, &a);
+        assert_eq!(approved.retain(&[path_string(&a)]), Ok(false));
+        // сверка только убирает: папка из keep, которой нет в списке, подтверждённой не становится
+        assert_unapproved(&approved, &a);
+    }
+
+    #[test]
+    fn retain_removes_other_spelling_of_kept_dir() {
+        let cfg = TempDir::new("retain-link-cfg");
+        let data = TempDir::new("retain-link-data");
+        let root = TempDir::new("retain-link-root");
+        let link = root.path().join("link");
+        if !link_dir(data.path(), &link) {
+            eprintln!("пропуск: не удалось создать ссылку на каталог");
+            return;
+        }
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(&link).unwrap();
+        approved.approve(data.path()).unwrap();
+        assert_eq!(approved.retain(&[path_string(data.path())]), Ok(true));
+        assert_eq!(stored_dirs(&file), [path_string(data.path())]);
+        assert!(approved.resolve(&path_string(data.path())).is_ok());
+    }
+
+    #[test]
+    fn retain_failure_keeps_list_unchanged() {
+        let cfg = TempDir::new("retain-fail-cfg");
+        let data = TempDir::new("retain-fail");
+        let file = cfg.path().join("approved-dirs.json");
+        let approved = ApprovedDirs::load(file.clone());
+        approved.approve(data.path()).unwrap();
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        fs::write(file.join("x"), b"x").unwrap();
+
+        let err = approved.retain(&[]).unwrap_err();
+        assert!(err.starts_with("Не удалось забыть папку: "), "{err}");
+        assert_eq!(approved.resolve(&path_string(data.path())).unwrap(), data.path());
+        assert_eq!(names(cfg.path()), ["approved-dirs.json"]);
     }
 
     #[test]

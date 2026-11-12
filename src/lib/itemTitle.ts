@@ -1,4 +1,5 @@
 import { titleFromUrl } from '@/lib/linkMeta'
+import { stripMarkdown } from '@/lib/plainText'
 import type { Item, ItemType } from '@/types'
 
 export const TYPE_LABEL: Record<ItemType, string> = {
@@ -20,12 +21,45 @@ export const TYPE_LABEL_PLURAL: Record<ItemType, string> = {
 }
 
 const MAX_TITLE = 80
+/** Сколько строк content просматривается в поисках производного заголовка. */
+const TITLE_SCAN_LINES = 50
+/**
+ * Сколько символов строки разбирается. Заголовок не длиннее MAX_TITLE, а снятие разметки со строки
+ * в десятки тысяч символов на каждую карточку и на каждый индекс вики-ссылок обходилось бы дорого.
+ */
+const TITLE_SCAN_CHARS = 1000
 
 type TitleSource = Pick<Item, 'title' | 'content'> &
-  Partial<Pick<Item, 'linkMeta' | 'fileName' | 'url'>>
+  Partial<Pick<Item, 'linkMeta' | 'fileName' | 'url' | 'type'>>
 
 function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s
+}
+
+/** Строка из одних маркеров разметки: разделитель, подчёркивание заголовка, разметка таблицы. */
+const MARKUP_ONLY_RE = /^[-*_=#>|\s]*$/
+
+/** Строка content, из которой берётся производный заголовок: её номер и текст без разметки; null — такой нет. */
+export function derivedTitleLine(
+  item: Pick<Item, 'content'> & Partial<Pick<Item, 'type'>>,
+): { index: number; text: string } | null {
+  const content = typeof item.content === 'string' ? item.content : ''
+  const code = item.type === 'code'
+  let pos = 0
+  for (let index = 0; index < TITLE_SCAN_LINES && pos <= content.length; index++) {
+    const nl = content.indexOf('\n', pos)
+    const end = nl === -1 ? content.length : nl
+    // Как split(/\r?\n/): «\r» перед переводом строки к строке не относится.
+    const lineEnd = end > pos && content[end - 1] === '\r' ? end - 1 : end
+    const raw = content.slice(pos, Math.min(lineEnd, pos + TITLE_SCAN_CHARS))
+    // У кода «# комментарий» и «__init__» — не разметка. Строку-ограду (```js) stripMarkdown обращает
+    // в пустую, и заголовком становится следующая строка.
+    const text = code ? raw.trim() : stripMarkdown(raw).trim()
+    if (text && (code || !MARKUP_ONLY_RE.test(text))) return { index, text }
+    if (nl === -1) break
+    pos = nl + 1
+  }
+  return null
 }
 
 /** Заголовок для показа: явный → из страницы → имя файла → первая строка текста → читаемый вид url. */
@@ -36,10 +70,7 @@ export function displayTitle(item: TitleSource): string {
   if (meta) return meta
   const file = item.fileName?.trim()
   if (file) return file
-  const line = (item.content ?? '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .find((l) => l.length > 0)
+  const line = derivedTitleLine(item)?.text
   if (line) return clip(line, MAX_TITLE)
   if (item.url?.trim()) return titleFromUrl(item.url) || item.url.trim()
   return 'Без названия'

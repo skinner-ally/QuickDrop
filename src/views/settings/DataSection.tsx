@@ -4,13 +4,16 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { clearAllData, seedDemoData } from '@/db/seed'
-import { useAllItems } from '@/hooks/useItems'
-import { saveBlob } from '@/lib/actions'
+import { setSetting, useSettings } from '@/db/settings'
+import { useAllItems, useTrashedItems } from '@/hooks/useItems'
+import { actEmptyTrashAsk, saveBlob } from '@/lib/actions'
 import { describeError } from '@/lib/errors'
 import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from '@/lib/exportImport'
 import { formatBytes } from '@/lib/itemTitle'
-import { Row, Section } from './Section'
+import { TRASH_DAYS_OPTIONS, trashDaysLabel } from '@/lib/trash'
+import { Row, Section, saved } from './Section'
 
 const fail = (e: unknown) => toast.error(describeError(e))
 
@@ -24,7 +27,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function reportText(r: ImportReport): string {
-  let text = `Записей: ${r.items}, файлов: ${r.files}, категорий: ${r.categories}`
+  let text = `Записей: ${r.items}${r.trashed > 0 ? ` (в корзине: ${r.trashed})` : ''}, файлов: ${r.files}, категорий: ${r.categories}`
   if (r.positions > 0) text += `, положений на графе: ${r.positions}`
   if (r.searches > 0) text += `, сохранённых поисков: ${r.searches}`
   return `${text}, пропущено: ${r.skipped}`
@@ -32,6 +35,8 @@ function reportText(r: ImportReport): string {
 
 export function DataSection() {
   const items = useAllItems()
+  const trashed = useTrashedItems()
+  const settings = useSettings()
   const fileInput = useRef<HTMLInputElement>(null)
 
   const [usage, setUsage] = useState<{ usage?: number; quota?: number } | null>(null)
@@ -62,13 +67,37 @@ export function DataSection() {
     }
   }, [items])
 
+  const trash = useMemo(() => {
+    let bytes = 0
+    for (const it of trashed ?? []) if (it.fileId) bytes += it.fileSize ?? 0
+    return { count: trashed?.length ?? 0, bytes }
+  }, [trashed])
+
+  // Текущее значение вне списка (например, из импортированной копии) показывается дополнительным пунктом.
+  const trashOptions = useMemo(() => {
+    const days = settings?.trashDays
+    const list = days !== undefined && !TRASH_DAYS_OPTIONS.includes(days) ? [...TRASH_DAYS_OPTIONS, days] : [...TRASH_DAYS_OPTIONS]
+    return list.map((d) => ({ value: String(d), label: trashDaysLabel(d) }))
+  }, [settings?.trashDays])
+
+  const changeTrashDays = (v: string | null) => {
+    const n = Number(v)
+    if (v === null || !Number.isFinite(n) || n === settings?.trashDays) return
+    setSetting('trashDays', n).then(saved, fail)
+  }
+
   const refreshStorage = () => {
     const s = typeof navigator !== 'undefined' ? navigator.storage : undefined
     if (!s) return
     s.estimate?.().then(setUsage, () => {})
     s.persisted?.().then(setPersisted, () => {})
   }
-  useEffect(refreshStorage, [])
+  // Пересчёт и при изменении корзины: оценка браузера обновляется не мгновенно, поэтому ещё раз через секунду.
+  useEffect(refreshStorage, [trash.count])
+  useEffect(() => {
+    const t = setTimeout(refreshStorage, 1200)
+    return () => clearTimeout(t)
+  }, [trash.count])
 
   const persist = async () => {
     try {
@@ -137,12 +166,42 @@ export function DataSection() {
         <Stat label="Входящие" value={String(stats.inbox)} />
         <Stat label="База знаний" value={String(stats.library)} />
         <Stat label="Архив" value={String(stats.archive)} />
+        <Stat label="В корзине" value={trash.count > 0 ? `${trash.count}, ${formatBytes(trash.bytes)}` : '0'} />
         <Stat label="Файлов" value={`${stats.files}, ${formatBytes(stats.bytes)}`} />
         <Stat
           label="Занято в хранилище"
           value={usage?.usage != null ? `${formatBytes(usage.usage)}${usage.quota ? ` из ${formatBytes(usage.quota)}` : ''}` : 'нет данных'}
         />
       </dl>
+
+      <Row className="flex-wrap">
+        <div className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
+          <label htmlFor="trash-days" className="text-2sm font-medium pixel:font-semibold">
+            Хранить удалённое
+          </label>
+          <p className="text-xs text-muted-foreground">Записи старше срока удаляются при запуске и раз в 6 часов</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {settings && (
+            <Select value={String(settings.trashDays)} onValueChange={changeTrashDays} items={trashOptions}>
+              <SelectTrigger id="trash-days" size="sm" className="text-2sm min-w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false} align="end">
+                {trashOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button variant="outline" disabled={trash.count === 0} onClick={() => void actEmptyTrashAsk()}>
+            <Icon name="trash" />
+            Очистить корзину
+          </Button>
+        </div>
+      </Row>
 
       {hasStorageApi && (
         <Row className="flex-wrap">

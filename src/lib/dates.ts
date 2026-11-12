@@ -136,3 +136,84 @@ export function formatDateToken(ts: number): string {
   if (Number.isNaN(d.getTime())) return ''
   return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1, 2)}-${pad(d.getDate(), 2)}`
 }
+
+// ───────────────────────── отбор по датам в интерфейсе ─────────────────────────
+
+export type DatePreset = 'today' | 'week' | 'month'
+
+/** Быстрые периоды панели фильтров, в порядке показа. */
+export const DATE_PRESETS: ReadonlyArray<{ id: DatePreset; label: string }> = [
+  { id: 'today', label: 'Сегодня' },
+  { id: 'week', label: 'За неделю' },
+  { id: 'month', label: 'За месяц' },
+]
+
+/** Быстрый период, которому пара from/to равна точно (relativeRange от now); иначе null. */
+export function presetOf(from: number | undefined, to: number | undefined, now: number): DatePreset | null {
+  if (from === undefined || to === undefined || !Number.isFinite(now)) return null
+  for (const { id } of DATE_PRESETS) {
+    const r = relativeRange(id, now)
+    if (r.from === from && r.to === to) return id
+  }
+  return null
+}
+
+/** 'ГГГГ-ММ-ДД' из <input type="date"> → начало этих суток; пусто или не дата → null. */
+export function parseDateInput(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((value ?? '').trim())
+  if (!m) return null
+  const [y, mo, d] = [+m[1], +m[2], +m[3]]
+  if (!validYear(y)) return null
+  const probe = new Date(y, mo - 1, d)
+  if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== d) return null
+  return probe.getTime()
+}
+
+export const DATE_INPUT_ERROR = 'Неверная дата'
+export const DATE_ORDER_ERROR = 'Дата начала позже даты конца'
+
+/**
+ * Два поля → диапазон: from — начало суток «с», to — конец суток «по»; пустое поле — граница не задана;
+ * оба пусты → range: null. Ошибки: «Неверная дата», «Дата начала позже даты конца».
+ */
+export function customDateRange(
+  fromValue: string,
+  toValue: string,
+): { ok: true; range: { from?: number; to?: number } | null } | { ok: false; error: string } {
+  const a = (fromValue ?? '').trim()
+  const b = (toValue ?? '').trim()
+  if (!a && !b) return { ok: true, range: null }
+  const start = a ? parseDateInput(a) : null
+  const end = b ? parseDateInput(b) : null
+  if ((a && start === null) || (b && end === null)) return { ok: false, error: DATE_INPUT_ERROR }
+  const range: { from?: number; to?: number } = {}
+  if (start !== null) range.from = start
+  if (end !== null) range.to = endOfDay(end)
+  if (range.from !== undefined && range.to !== undefined && range.from > range.to) {
+    return { ok: false, error: DATE_ORDER_ERROR }
+  }
+  return { ok: true, range }
+}
+
+const isDate = (ts: number | undefined): ts is number =>
+  typeof ts === 'number' && !Number.isNaN(new Date(ts).getTime())
+
+/** 'ДД.ММ.ГГГГ' по локальному времени. */
+function formatDayDots(ts: number): string {
+  const d = new Date(ts)
+  return `${pad(d.getDate(), 2)}.${pad(d.getMonth() + 1, 2)}.${pad(d.getFullYear(), 4)}`
+}
+
+/** «12.11.2026», «12.11.2026 – 14.11.2026», «с 12.11.2026», «по 14.11.2026»; обе границы пусты → ''. */
+export function formatDateRange(from: number | undefined, to: number | undefined): string {
+  const hasFrom = isDate(from)
+  const hasTo = isDate(to)
+  if (hasFrom && hasTo) {
+    const a = formatDayDots(from)
+    const b = formatDayDots(to)
+    return a === b ? a : `${a} – ${b}`
+  }
+  if (hasFrom) return `с ${formatDayDots(from)}`
+  if (hasTo) return `по ${formatDayDots(to)}`
+  return ''
+}

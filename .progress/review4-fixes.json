@@ -1,0 +1,293 @@
+{
+ "logic": [
+  {
+   "group": "store-actions",
+   "summary": "Group \"store-actions\" is done. I fixed C2, the store side of C3 and C11, M11=M26 and M6, and added the missing M33 tests that belong in my files. M14 could not be done here because it needs src/db/repo.ts and src/search, so it is listed as debt. The final run of `npm run typecheck` is clean and `npm test` passes (46 files, 1449 tests); oxlint on my files is clean. I did not touch git, the browser or anyone else's files. src/lib/dates.ts and src/lib/dayGroups.ts are unchanged; only their tests were added to. Progress is recorded in .progress\\agents\\fix-review4-store-actions.md.\n\nTwo things differ from the review's fix text.\n1) For C11 I added a second field, appliedView, and setView does not clear the search when going to 'settings' or 'graph'. Without this, an applied search would be lost after a visit to Settings, because coming back is also a change of section. setQuery with a different string also clears appliedQuery, so a string the user typed or edited is never cleared (the HEAD rule).\n2) For M6 I changed what trashDaysLeft means. It used to round the hours up; now it counts calendar days to the purge day. This makes the current ItemDetail note consistent without editing it, but §2.8 of spec-stage4 (\"округление вверх\") needs updating.",
+   "fixed": [
+    "C2: actPurgeAsk now asks only about records that the database shows as being in the trash. It reads each id with getItem through a new helper, trashedNow. Records outside the trash are skipped, and if none are left it does not ask. After the user answers yes, it reads again and deletes only what is still in the trash. The message wording (one record / 'Записей: N') counts only trash records. actPurge and purgeItems are unchanged. New tests in actions.test.ts cover: a record outside the trash (no question, record kept), a mixed list, a restore during the question (3 asked, 2 deleted, toast 'Удалено навсегда: 2'), everything restored, and a database read error.",
+    "C2 (the count in actEmptyTrashAsk): I checked it and it is not a defect. I added a test: a record restored during the question stays, and the toast 'Корзина очищена: 1' shows the actual count.",
+    "C3 (store): new action useUi.rollDatePreset(prevNow, now). If the current period is a quick preset by presetOf from prevNow, it is moved to the day of now with relativeRange. A custom period, other bounds, an empty filter, the same day or an invalid time return the same state object, so subscribers are not notified. Tests in ui.test.ts: week with the type filter kept; 'Сегодня' after midnight gives 'is:library date:today' (not date:yesterday); several skipped days; the cases that change nothing (checked with toBe(prev)).",
+    "C11 (store): new fields useUi.appliedQuery and useUi.appliedView. applyQuery sets them (null for an empty query). setQuery with a different string clears them. setView clears the search only when it is an untouched applied search, the target section differs from the one it was applied in, and the target is not settings or graph. Tests in ui.test.ts: inbox, archive, favorites and trash clear it; the same section keeps it; settings then back keeps it; settings then inbox clears it; an edited string or the same string retyped by hand carries over; 'react' typed by hand carries over; typing into the search box from Settings keeps the query. Test in actions.test.ts: actApplySearch then setView, the sidebar category scenario (setView then setFilter), and openItemInSection into another section.",
+    "C11 point 4 (logic only): isSavedSearchActive in savedSearch.ts, with tests. The other section, a search with no section of its own, filters set, and is:fav with is:archive are covered.",
+    "M11=M26: actSaveCurrentSearch, with or without a name, no longer creates a second saved search with the same query. It shows toast 'Уже сохранён как «<имя>»' and returns undefined. findSavedByQuery and alreadySavedText were added to savedSearch.ts, with tests. The test case where a duplicate query got the name 'react (2)' was rewritten. A new test covers duplicates by query, including after actApplySearch.",
+    "M6: trashDaysLeft now counts calendar days to the purge day (rounded, based on the start of each day), so 0 means today or overdue. trashPurgeAt returns null when the result is outside the Date range (fixes M33 item 6). New function trashPurgeNote builds the full note line. Tests cover: today without brackets, dates with the remaining days, a loop over every hour of the day checking that the date and the remaining days never contradict each other, and DST in Europe/Berlin (29.03 gives 'ещё 2 дн.' up to 30 March; 25.10 gives 'сегодня').",
+    "M33 (my files only): new tests for viewForQuery with operator pairs; the round trip currentSearchQuery → viewForQuery for favorites, trash, settings and graph; presetOf at midnight and for a custom period equal to 'Сегодня'; customDateRange, startOfDay, endOfDay, addDays, relativeRange and presetOf across DST (23 and 25 hour days); groupByDay at the 23:59:59.999 / 00:00 boundary, with now exactly at midnight, with now = NaN, and across DST. The time zone is switched with vi.stubEnv('TZ', 'Europe/Berlin'); afterAll sets the previous zone explicitly and then calls unstubAllEnvs."
+   ],
+   "skipped": [
+    "The count in actEmptyTrashAsk (part of C2) was not changed because it is not a defect. getTrashedItemsSnapshot is a live liveQuery snapshot. emptyTrash selects and deletes only what is in the trash, in one transaction, at the moment of 'да'. The toast shows the actual number. The verifier reached the same conclusion, and the new test confirms it.",
+    "M14 is debt and needs files outside my group. src/search needs a function that rewrites the cat:/tag:/# tokens in a query string with the right quoting; composeQuery and parseQuery alone are not enough to do it losslessly. src/db/repo.ts: updateCategory (when the name changes) and renameTag would rewrite the queries in db.searches inside the same transaction (add db.searches to their 'rw' scope). deleteCategory and deleteTag: a minimum would be a hint in the empty state when resolveCategoryName returns undefined. CategoriesSection.tsx and TagsSection.tsx would need no changes.",
+    "M33 items outside my files: toggleTaskAt (src/lib/markdown.ts), shouldForgetDir (backupUi.ts), parseWikiLinks and export (wikiLinks.ts, markdownExport.ts), buildTitleIndex, and moving inSection and the key-target logic out of ItemList.tsx. Also not done: with the 'Без категории' filter plus cat:x in the query, the saved query is 'cat:none cat:x' and shows category x when applied. That is fixed in composeQuery (src/search/serialize.ts), not my file.",
+    "Screens group, C3: src/components/items/FilterBar.tsx at the start of `export function FilterBar` should add `const dayKey = useDayKey(); const seenDay = useRef(dayKey); useEffect(() => { if (seenDay.current === dayKey) return; useUi.getState().rollDatePreset(seenDay.current, dayKey); seenDay.current = dayKey }, [dayKey])` (useDayKey from '@/hooks/useItems'; useEffect and useRef from react).",
+    "Screens group, C11 point 4: in src/components/layout/SavedSearches.tsx, add `const view = useUi((st) => st.view)` and replace line 159 `active={filterEmpty && current !== '' && current === s.query}` with `active={isSavedSearchActive(s, { view, query, filter })}` (import from '@/lib/savedSearch'). The current and filterEmpty variables are then no longer needed.",
+    "Screens group, M26: in src/components/items/SaveSearchButton.tsx, SaveForm can use `const existing = findSavedByQuery(searches, query)` and the text `alreadySavedText(existing.name)` (both from '@/lib/savedSearch'). The current code already blocks saving; this only removes the duplicated logic.",
+    "Screens group, M6 (optional): src/components/items/ItemDetail.tsx, TrashNote, lines 145-153, can be replaced with `const purge = trashPurgeNote(deletedAt, trashDays, Date.now())` (and lowerFirst plus the unused imports removed). Without this the text is already consistent, because trashDaysLeft now counts calendar days, but date and remaining days are then computed from two separate Date.now() calls.",
+    "Main session, docs: update spec-stage4 §2.8 (trashDaysLeft counts calendar days, plus trashPurgeNote), §2.1 (appliedQuery, appliedView, rollDatePreset), §2.12 (the duplicate check in actSaveCurrentSearch, the trash check in actPurgeAsk), and HANDOFF."
+   ],
+   "newApi": [
+    "src/store/ui.ts, useUi.rollDatePreset(prevNow: number, now: number): void. Moves a quick period ('today', 'week', 'month', matched by presetOf(filter.from, filter.to, prevNow)) to the day of now. A custom period, other bounds, an empty filter, the same day or a non-finite time leave the state untouched (same object, no notification). Call it from FilterBar when useDayKey changes: rollDatePreset(previous dayKey, new dayKey).",
+    "src/store/ui.ts, useUi.appliedQuery: string | null and useUi.appliedView: View | null. These hold the query set by applyQuery and the section it was applied in, as long as the user has not changed the search box. applyQuery(query, view?) sets them (an empty query gives null). setQuery(q) with q !== appliedQuery clears them. setView(view) clears query, appliedQuery and appliedView only when query === appliedQuery, view !== appliedView and view is not 'settings' or 'graph'. Searches typed by hand still carry over between sections as before. Screens do not need to read these fields.",
+    "src/lib/savedSearch.ts, isSavedSearchActive(search: Pick<SavedSearch,'query'>, screen: { view: View; query: string; filter: UiFilter }, now?: number): boolean. True when the search's query is in the search box (surrounding spaces ignored), the filter panel is empty (isNarrowed('', filter) is false), and (viewForQuery(search.query) ?? view) === view.",
+    "src/lib/savedSearch.ts, findSavedByQuery<T extends Pick<SavedSearch,'query'>>(searches: readonly T[], query: string): T | undefined. Finds a saved search with the same query (trim on both sides); an empty query returns undefined.",
+    "src/lib/savedSearch.ts, alreadySavedText(name: string): string. Returns 'Уже сохранён как «<name>»'.",
+    "src/lib/actions.ts, actSaveCurrentSearch(name?): Promise<SavedSearch | undefined>. Signature unchanged. If a saved search with the same query exists, it shows toast(alreadySavedText(existing.name)), returns undefined and creates nothing, both with and without a name.",
+    "src/lib/actions.ts, actPurgeAsk(ids): Promise<void>. Signature unchanged. It asks about and deletes only records whose deletedAt in the database is set. With none, it does not ask. After 'да' it re-checks and deletes only what is still in the trash.",
+    "src/lib/trash.ts, trashDaysLeft(deletedAt, trashDays, now): number | null. Signature unchanged, meaning changed: calendar days from today to the purge day, minimum 0 (0 means today or overdue). trashPurgeAt(...) returns null when the result is outside the Date range.",
+    "src/lib/trash.ts, trashPurgeNote(deletedAt: number | undefined, trashDays: number, now: number): string. Returns 'Удалится окончательно сегодня', or 'Удалится окончательно <formatDayLabel(purgeAt, now)> (ещё N дн.)'. Returns '' when auto-purge is off, the record is not in the trash, or a timestamp is invalid. The screen builds the text as: `Запись в корзине. Удалена ${formatDateTime(deletedAt)}.${note && ' ' + note}`."
+   ]
+  },
+  {
+   "group": "markdown-logic",
+   "summary": "I fixed all nine findings in the markdown-logic group: C12, M2, M28, M3, M4 (the lib part), M18, M17, M31 and M33 (the branches in my files). `npm run typecheck` is clean. `npm test` passes: 46 files, 1590 tests. I did not touch git, other people's files, package.json or Rust.\n\nThe biggest piece is M3. The preview and parseWikiLinks now share one parser for the inside of [[…]]: `parseWikiInner` and `findWikiSyntax`. On top of that, parseWikiLinks now reads the source the way remark + GFM does. Two checks confirm the preview and link creation now find the same links:\n- markdown.test.ts has about 100 cases. Each compares the links react-markdown draws with what parseWikiLinks finds.\n- Outside the repo, a random test over about 250,000 generated texts found 0 differences. It runs from the session scratchpad, not from the project tests.\n\nOn worst-case 100 KB inputs, parsing takes at most about 130 ms. A first version had quadratic slow paths; I removed them.\n\nChanged behaviour the screens should know about:\n- Markdown links to ftp:// and to addresses like «https:host» (no «//») are now shown as plain text, not as dead links.\n- Markdown export stops after 3 «нет доступа» or «не осталось места» write errors in a row. If nothing at all was written, it throws an error instead of returning a report.\n\nThe progress file is .progress/agents/fix-review4-markdown-logic.md, status «готово».",
+   "fixed": [
+    "C12: buildTitleIndex no longer indexes a record without its own title when that title comes from a line containing [[…]]. It checks with findWikiSyntax on the raw line, so a code line indented by 4 spaces counts too. Tests added: (a) index note «- [[Проект А]]», (b) «# [[Проект А]]» in the knowledge base against an untitled inbox record, (c) «[[Проект А|проект]]» does not take over «Проект». An export test checks that links point to «Проект А (2)», not to the index note's file. beats() is unchanged.",
+    "M3: one parser for [[…]]. remarkWikiLinks (lib/markdown.ts) now calls findWikiSyntax, and its own regex and parseWikiInner are deleted. parseWikiLinks now handles what the preview handles: code indented by 4 spaces (inside list items, footnotes, quotes and empty list items too), code fences on the list-marker line that end when the item or quote ends, HTML blocks of types 1–7, inline HTML and <…> autolinks, link definitions [x]: …, [[x]](url), [[x]][ref], [[…]] inside the text of an ordinary link, GFM autolinks (inside the target, or swallowing a [[ that directly follows them), backslash escapes and entities (positions still point into the source), tables (a bare | splits the cell, so no link), lazy continuation lines and a leading BOM.",
+    "M2: toggleTaskAt adds 1 to the offset when the text starts with a BOM. Test added.",
+    "M28: TASK_AT also accepts the marker on one line and [ ] on the next, including CRLF and quote «>» prefixes. Tests compare offsets from react-markdown against the source for nested lists with CRLF, a quote inside an item, a code fence and indented code inside an item, and an item with no checkbox.",
+    "M4 (lib part): new openableLinkUrl(raw) accepts only http/https with «//». mdUrlTransform uses it for both href and src, so ftp:// and «https:host» render as text. Tests updated.",
+    "M18: rewriteWikiLinks now writes the label separator as \\| on a table row, and escapes any | inside the label there too. This now also covers a link that had no label but gets one because the file name differs from the title. Outside a table, \\| is kept only when the original separator was written that way, which fixes M33 point 8: «[[Цель\\|под\\|пись]]». Test added.",
+    "M17: export stops after FOLDER_FAILURES_TO_STOP = 3 «нет доступа» or «не осталось места» write errors in a row with no successful write in between. The report gets report.stopped. If nothing was written, it throws Error(text of that error) instead of returning «Готово: заметок 0». A failure to read an attachment does not count toward the 3. Added exportReportSummary(report). Tests added.",
+    "M31: in repo.ts, sortTitle now decides «no title» with derivedTitleLine, the same rule displayTitle uses. Notes made only of markup («---», an empty code fence) sort at the end. Test added in repo.test.ts.",
+    "M33 (my files): tests for parseWikiLinks with \\|, \\\\| and [[a|b\\|c]], for toggleTaskAt (points 1 and 8), and for buildTitleIndex (point 9). The existing tests that pinned the old, inconsistent behaviour ([[a\\]] → «a\\», label «b\\|c») now expect what the preview shows."
+   ],
+   "skipped": [
+    "M17, screen part (not my file). In src/views/settings/BackupSection.tsx around line 299, replace `Готово: заметок {report.docs}, вложений {report.attachments}, {formatBytes(report.bytes)}` with `{exportReportSummary(report)}` imported from '@/lib/exportDir'. When report.stopped is set or report.failed.length > 0, it is reasonable to show the line with text-destructive. The case where nothing was written already reaches catch → fail(e) as an error.",
+    "M4, action part (not my file). In src/lib/actions.ts, openLink (lines 487–503): in Tauri, when `openExternal(url)` returns false, call `toast.error('Не удалось открыть ссылку')` and return, without calling window.open. Alternatively, check `openableLinkUrl(raw)` from '@/lib/markdown' up front and show that toast if it fails. This matters for link-type records with ftp:// in their url; LinkCard and actOpen go through openLink. MarkdownView needs no change: mdUrlTransform already empties href/src, and MdImage/MdAnchor show text.",
+    "C12, optional part (an item's own title beats a derived title in beats()): not done. The main fix covers the finding, and this extra changes who wins between ordinary namesakes, which the main session did not ask for.",
+    "M3, known small differences, accepted: rare named entities outside the ~45 in the table (the preview decodes them, parseWikiLinks leaves them as typed); a tab after a list marker that is partly consumed; deeply mixed «10) 10) ```»-style lines; an autolink after a non-ASCII letter; the rule that links cannot nest ([x [y](u) z](v)). None of these appeared in the random comparison.",
+    "M33 points 2–7 (savedSearch, dates/dayGroups, trash, desktop): those files are outside my group."
+   ],
+   "newApi": [
+    "src/lib/wikiLinks.ts: `parseWikiInner(inner: string): { target: string; label: string } | null` parses the inside of [[…]] and is used by both the preview and link creation. `findWikiSyntax(text: string): WikiSyntax[]` finds [[…]] in already-parsed text (a Markdown tree text node). `type WikiSyntax = { start; end; target; label }`.",
+    "src/lib/wikiLinks.ts: `WikiLink` gains optional `inTable?: boolean`, set to true only for a link on a GFM table row. parseWikiLinks now returns target and label with escapes and entities decoded, as the preview shows them; raw, start and end still point into the source. The signatures of parseWikiLinks, wikiLinkTargets, buildTitleIndex and unclosedFence are unchanged. unclosedFence also returns the closing fence for a fence opened on a list-marker line («- ```» → «  ```»).",
+    "src/lib/markdown.ts: `openableLinkUrl(raw: unknown): string | undefined` returns the address only if it is http/https with «//». It is the right check before any click-open, in Tauri and on the web. `mdUrlTransform` now lets through only those addresses (ftp:// and «https:host» → '').",
+    "src/lib/exportDir.ts: `ExportDirReport.stopped?: string` holds the error text when export stopped on a folder-wide error; docs and attachments still count what was written before it. `exportDocsToDir`/`exportMarkdownToDir` throw `Error(stopped)` if nothing was written. `exportReportSummary(report: ExportDirReport): string` returns «Готово: заметок N, вложений M, X», «Готово с ошибками: …», «Ничего не записано» or «Экспорт прерван. <причина>. Записано: …». `FOLDER_FAILURES_TO_STOP = 3`."
+   ]
+  },
+  {
+   "group": "tauri-keep",
+   "summary": "Fixed every lib and Rust part of group tauri-keep. C5: Rust forget_directory now takes an optional keep list. Folders still in the settings are never removed or canonicalised, so re-picking the same folder under another spelling (UNC path, subst drive or junction) no longer revokes approval of the folder just picked. Before a revoke, the code waits for any running backup to finish, then reads the current settings and builds keep from them. M16: a new retain_directories command runs at startup and drops approved folders that are not in the settings. It does nothing in a debug build: `tauri dev` has its own IndexedDB but shares approved-dirs.json with the installed app, so it would revoke that app's folders. M15 and C6 (lib part): added AutoBackup idle, resetFailure, dirChanged, a cached status() and subscribe. Checks: `npm run typecheck` passes; `npm test` passes (46 files, 1448 tests); `cargo test` gives 60 passed and 1 ignored. The ignored test is in lib.rs:472 and is not mine. The junction-based tests actually ran and were not skipped. `cargo check` and `cargo check --release` show no warnings. BackupSection.tsx and the documents are not changed: they are outside my files. Exact replacements are listed in skipped.",
+   "fixed": [
+    "C5 (Rust): src-tauri/src/backup.rs. ApprovedDirs::forget(dir, keep: &[String]); forgotten_dirs(dirs, requested, canonical, keep: &[PathBuf], canonicalize) drops keep entries first, so they are neither removed nor canonicalised; keep_paths trims, drops empty and relative strings, then exact Path comparison. Command forget_directory(dir: String, keep: Option<Vec<String>>). New cargo tests: forget_keeps_dirs_in_use (real path then link, the reverse, and junk strings in keep). Added a keep case to forgotten_dirs_exact_then_canonical. forget_removes_links_to_same_dir is unchanged and uses an empty keep.",
+    "C5 (TS): forgetDirectory(dir, keep = []) in src/lib/desktop.ts sends { dir, keep } without empty strings. Tests in desktop.test.ts: the old case expects keep: [], and a new case passes keep with empty strings dropped.",
+    "C5 (keep is read after waiting): backupUi.ts gains dirsInUse(settings) and forgetUnusedDir(prev, deps). Order is idle, then currentDirs, then forget(prev, keep). If prev is back in the settings it is not revoked, which covers the folder being changed back while a backup ran. A list passed in advance would be stale: with A to B and then back to A during a backup, it would revoke A. Bound version: forgetPrevDir(prev) in autoBackup.ts. Tests in backupUi.test.ts and autoBackup.test.ts.",
+    "C6/M30 (lib part): AutoBackup.idle() and autoBackupIdle(). It waits in a loop, so it also covers the backup that runNow restarts after a planned check is skipped. A mutation check (without the loop the test fails) confirms the test catches this. It never rejects. forgetPrevDir waits for it before revoking. Tests: resolves at once with no run, waits for a running backup, resolves after a failed run, and waits for the runNow restart.",
+    "M15 (lib part): resetFailure() and resetAutoBackupFailure() clear failed, lastError and notified. dirChanged() and autoBackupDirChanged() run idle, then resetFailure, then check(). Re-picking the same folder after a failure now makes a backup at once when one is due, instead of within the hour. Checking a new folder during a backup no longer returns busy, and the old folder's failure does not leave the pause in place. status() returns the same object until the state changes; subscribe() and subscribeAutoBackup() notify at the start and end of a run and on reset, for useSyncExternalStore. Tests added.",
+    "M16: ApprovedDirs::retain(keep) (exact match, no canonicalisation, only removes; shares a replace helper with forget). New command retain_directories(keep: Vec<String>), registered in generate_handler! in lib.rs. It is a no-op in a debug build (reason in the summary; I confirmed both builds use identifier app.quickdrop.desktop and devUrl is http://localhost:5173). TS: retainDirectories(keep) and reconcileApprovedDirs(), which removes nothing when the settings cannot be read. It is called from initDesktop. Settings import does not carry backupDir or mdExportDir (exportImport.ts:120-124), so the startup check does not conflict with an import. Cargo tests: retain_keeps_only_dirs_in_settings, retain_removes_other_spelling_of_kept_dir, retain_failure_keeps_list_unchanged. Vitest tests are in desktop.test.ts."
+   ],
+   "skipped": [
+    "BackupSection.tsx is not my file. Exact replacements for the settings executor: (1) line 11: remove forgetDirectory from the import. Line 9: add autoBackupDirChanged, forgetPrevDir and subscribeAutoBackup to the import from '@/lib/autoBackup'. (2) Line 56: `if (shouldForgetDir(prev, next, otherDir)) void forgetDirectory(prev)` becomes `if (shouldForgetDir(prev, next, otherDir)) void forgetPrevDir(prev)`. shouldForgetDir stays as a quick pre-check, and forgetPrevDir checks again against the current settings. (3) Line 155: `onChanged={() => void checkAutoBackup()}` becomes `onChanged={() => void autoBackupDirChanged()}`. In DirRow.reset (lines 73-82), call `onChanged?.()` after `await apply('')`, so resetting the backup folder clears the pause and the stale lastError. Only AutoBackupBlock passes onChanged. (4) M15, error display: line 117 `const lastError = autoBackupStatus().lastError` becomes `const { lastError } = useSyncExternalStore(subscribeAutoBackup, autoBackupStatus)` (import useSyncExternalStore from 'react'). setTick (lines 116 and 133) can then be removed.",
+    "C6 part 1 / M30 (UI, BackupSection.tsx): add a `disabled?: boolean` prop to DirRow (lines 35-49). Change the Выбрать… button (line 93) and the Сбросить button (line 103) to `disabled={busy || disabled}`. Pass `disabled={running}` at line 156 (AutoBackupBlock) and at line 257 (MarkdownExportBlock). The Markdown export is not tracked in lib (exportDir.ts is not mine), so only button blocking protects it. A planned backup is already covered by forgetPrevDir.",
+    "Documents are not mine. Update .progress/spec-stage4.md §5.7 (forget(dir, keep), forget_directory(dir, keep?), the new retain/retain_directories and the debug no-op), the forgetDirectory contract (lines 261-265: forgetDirectory(dir, keep = []), invoke { dir, keep }) and Р17 (line 68: forgetPrevDir instead of forgetDirectory(prev)). In .progress/HANDOFF.md:58, mark the question about revoking the same folder under another spelling as resolved by the keep list. In CLAUDE.md under «Платформы → Tauri», mention retain_directories / reconcileApprovedDirs and that in debug the check does nothing (CLAUDE.md must not be edited under the rules)."
+   ],
+   "newApi": [
+    "src/lib/desktop.ts: forgetDirectory(dir: string, keep: string[] = []): Promise<boolean>. Sends invoke('forget_directory', { dir, keep }) with empty strings dropped. keep = folders still in the settings; Rust does not revoke them even under another spelling. Never throws.",
+    "src/lib/desktop.ts: retainDirectories(keep: string[]): Promise<boolean>. Sends invoke('retain_directories', { keep }); true means something was removed. Outside Tauri or on error, false. Never throws.",
+    "src/lib/desktop.ts: reconcileApprovedDirs(): Promise<boolean>. Keeps approved only the folders from getSettings() (dirsInUse). If the settings cannot be read, nothing is removed. Already called from initDesktop.",
+    "src/lib/backupUi.ts: dirsInUse(settings: Pick<Settings, 'backupDir' | 'mdExportDir'>): string[]. Non-empty folders from both settings, unchanged: this is the keep list for forgetDirectory.",
+    "src/lib/backupUi.ts: interface ForgetDirDeps { idle(): Promise<void>; currentDirs(): Promise<string[]>; forget(dir: string, keep: string[]): Promise<boolean> } and forgetUnusedDir(prev: string, deps: ForgetDirDeps): Promise<boolean>. Order: idle, then the current folders; if prev is still among them (sameDir), nothing happens; otherwise forget(prev, keep). Never throws.",
+    "src/lib/autoBackup.ts: forgetPrevDir(prev: string): Promise<boolean>. What BackupSection.apply should call after `await setSetting(...)` instead of forgetDirectory(prev), for both backupDir and mdExportDir. It waits for any running backup, and keep = all folders still in the settings.",
+    "src/lib/autoBackup.ts: autoBackupDirChanged(): Promise<BackupRunResult>. Call after choosing or resetting the backup folder, instead of checkAutoBackup(). It waits for any running backup, clears the post-failure pause and lastError, then does a planned check.",
+    "src/lib/autoBackup.ts: autoBackupIdle(): Promise<void> (no backup running; never rejects), resetAutoBackupFailure(): void, subscribeAutoBackup(listener: () => void): () => void. autoBackupStatus() now returns the same object until the state changes, so `useSyncExternalStore(subscribeAutoBackup, autoBackupStatus)` is safe.",
+    "src/lib/autoBackup.ts, AutoBackup interface (createAutoBackup): new methods subscribe(listener), idle(), resetFailure(), dirChanged(); status() is cached.",
+    "Rust src-tauri/src/backup.rs: ApprovedDirs::forget(&self, dir: &str, keep: &[String]); ApprovedDirs::retain(&self, keep: &[String]); command forget_directory(dir: String, keep: Option<Vec<String>>); new command retain_directories(keep: Vec<String>) -> Result<bool, String>, which returns Ok(false) without changes in a debug build. Registered in lib.rs generate_handler!. capabilities do not change: the app has no app manifest in build.rs, so its own commands are allowed."
+   ]
+  }
+ ],
+ "screens": [
+  {
+   "group": "filter-search-ui",
+   "summary": "Группа filter-search-ui сделана: C3, C11 п.4, M10, M11/M26, M12/M29, M13/M20, M23/M32 и замечание приёмки A2. Не проверено в браузере (запуск запрещён). typecheck чистый. vitest: 1597 из 1598, падает чужой src/styles/markdown.test.ts (высота строки пиксельных сцен). Чтобы не плодить дубли, пункт палитры не менял: их блокирует actSaveCurrentSearch.",
+   "fixed": [
+    "C3: FilterBar подписан на useDayKey и при смене суток вызывает useUi.getState().rollDatePreset(prev, new).",
+    "C11 п.4: SavedSearches берёт активность строки из isSavedSearchActive(s, { view, query, filter }), переменные current и filterEmpty убраны.",
+    "M10: SaveSearchButton читает useSavedSearches() и передаёт список в SaveForm пропсом, имя по умолчанию считается по загруженному списку.",
+    "M11/M26: SaveForm использует findSavedByQuery и alreadySavedText. Дубль из палитры закрывает actSaveCurrentSearch, сама палитра не менялась.",
+    "M12/M29: новый хелпер isUnfinishedDate (год < 1000 при наборе не даёт ошибку и не меняет фильтр) и тест. При открытии поповера «Период» поля и ошибка сверяются с фильтром.",
+    "M13/M20: у NavButton появился необязательный className. Строки сохранённых поисков получают pr-8 и pointer-coarse:pr-10, название обрезается до кнопки «…».",
+    "M23/M32: в ItemsView подсказка архива теперь «Del — в корзину». Остальные подсказки разделов согласованы с ShortcutsSection.",
+    "A2: FilterBar. На >=768px внешний flex-ряд, слева прокручиваемая часть (min-w-0 flex-1, прежние классы прокрутки и отрицательные поля), справа блок сортировки и вида (shrink-0), всегда виден. На телефоне блок остался внутри прокручиваемого ряда, как было. Выбор по useIsDesktop, блок рендерится один раз."
+   ],
+   "skipped": [
+    "CommandPalette.tsx и TopBar.tsx не менялись: для M11 достаточно проверки в actSaveCurrentSearch (toast «Уже сохранён как…»), скрывать пункт палитры не стал.",
+    "A2 на телефоне (<768px) оставлено как было: сортировка доступна прокруткой внутри ряда. Ограничивать её 40% ширины не стал, чтобы не дублировать элемент и не ломать отрицательные поля ряда.",
+    "Чужой падающий тест src/styles/markdown.test.ts (высота строки пиксельных сцен): это не мои файлы, не трогал.",
+    "Побочное: npx prettier случайно переформатировал FilterBar.tsx. Я перегнал его с опциями проекта (--no-semi --single-quote --print-width 120 --trailing-comma all). Если в git diff по FilterBar.tsx окажется лишний шум форматирования, его стоит просмотреть."
+   ],
+   "newApi": [
+    "src/components/items/periodInput.ts: isUnfinishedDate(value: string): boolean. True для даты вида 'ГГГ-ММ-ДД' с годом < 1000, то есть промежуточного значения при наборе.",
+    "NavButton: необязательный проп className?: string, добавляется последним в cn()."
+   ]
+  },
+  {
+   "group": "markdown-ui",
+   "summary": "Исправления группы markdown-ui сделаны. typecheck проходит, npm test: 1598 тестов зелёные. Build и браузер не запускались, вид в «Просмотре», «Классике» и пиксельных сценах глазами не проверен.",
+   "fixed": [
+    "C1=C10=C13: в разборе входящих клик по вики-ссылке закрывает разбор и открывает запись в деталях (TriageMode: openLinked через ref на onClose + useUi.select). FilePreview получил необязательный onOpenItem (в GenericFile и FileTextBody), так же для файла .md.",
+    "C7: в markdown.css отступ внутри li/blockquote/td только перед блочными детьми (p, div, pre, ul, ol, blockquote, table, hr, h1-h6), в слое и в пиксельной копии. Вложенные списки сохраняют 2px.",
+    "C9: флажки задач получают aria-label из текста пункта без вложенных подпунктов (taskLabel, до 120 символов, пусто даёт «Задача»), в том числе в режиме только для чтения. Курсор pointer у флажка, default при aria-readonly.",
+    "M1: ContentEditor не вызывает onCommitted, если текст равен значению на входе в правку (Esc, blur без правок, размонтирование).",
+    "M4 (экранная часть): MdImage проверяет адрес через openableLinkUrl.",
+    "M5: при тексте длиннее MD_RENDER_MAX над исходником показывается строка «Текст слишком длинный для просмотра с разметкой — показан исходник».",
+    "M21: .qd-md использует overflow-wrap: break-word вместо anywhere, широкие таблицы снова прокручиваются.",
+    "M24: пиксельное line-height: inherit перенесено в @layer components, и leading-relaxed на MarkdownText теперь действует. В DESIGN.md §12 дописаны правила про высоту строки и отступы детей.",
+    "Тесты: src/components/markdown/MarkdownView.test.ts (подписи флажков) и src/styles/markdown.test.ts (статическая проверка CSS через fs)."
+   ],
+   "skipped": [
+    "M3: в моих файлах менять нечего, расхождение разбора [[…]] лечится в src/lib/wikiLinks.ts (группа markdown-logic).",
+    "M4, действие: toast.error при неудаче openExternal в openLink нужен в src/lib/actions.ts (строки 487-503), это не мой файл.",
+    "ViewModeToggle.tsx, LinkCard.tsx, ItemContent.tsx и pixel.css не менялись: правки там не понадобились.",
+    "Автотеста на M1 (ContentEditor) и C1 (клик в TriageMode) нет: в vitest нет DOM. Эти сценарии нужно пройти при приёмке: вики-ссылка в разборе закрывает разбор и открывает детали, Esc в правке не возвращает убранную связь.",
+    "Вид правок C7, M21, M24 глазами не проверен: build и браузер запускать запрещено, это за основной сессией."
+   ],
+   "newApi": [
+    "FilePreview({ item, variant, onOpenItem? }): onOpenItem?: (id: string) => void, клик по вики-ссылке в тексте файла .md. Не задан: прежнее поведение, select(id).",
+    "MarkdownView.tsx экспортирует taskLabel(li: hast Element): string. Нужна тестам, больше нигде не используется.",
+    "ItemBody в TriageMode (внутренняя функция) принимает обязательный onOpenItem."
+   ]
+  },
+  {
+   "group": "trash-ui",
+   "summary": "Исправлены M6, M7, M8, M9, M22 (в своих файлах) и замечание А4 по шапке деталей. typecheck и npm test проходят (47 файлов, 1592 теста). Новых тестов нет: правки только в UI; чистая логика (trashPurgeNote) уже покрыта группой store-actions. Браузером не проверялось.",
+   "fixed": [
+    "M6: TrashNote в ItemDetail.tsx теперь использует trashPurgeNote(deletedAt, trashDays, Date.now()); удалены lowerFirst и лишние импорты.",
+    "M7: TrashMeta (ItemCard.tsx) и TrashNote (ItemDetail.tsx) подписаны на useDayKey(), поэтому остаток дней пересчитывается при смене суток в обход memo. Подпись «удалено N мин назад» не обновляется по таймеру, как и у обычных строк.",
+    "M8: в ItemList.tsx открытая запись, восстановленная из корзины в выдаче корзины, не заменяется соседней (флаг restored). Панель остаётся на ней и становится редактируемой, курсор списка уходит на соседа.",
+    "M9: в DataSection.tsx refreshStorage вызывается при смене trash.count и повторно через 1,2 с. После импорта и «Удалить все данные» отдельного вызова не добавлял.",
+    "M22: pointer-coarse:h-9 добавлен обеим кнопкам ConfirmHost и трём кнопкам в ItemDetail: «Восстановить», «Удалить навсегда» и PrimaryAction.",
+    "Замечание А4: у левого блока шапки деталей добавлен overflow-hidden, чип статуса стал shrink-0 и показывается с @md (448px) вместо @sm (384px). На 390px чип скрыт и не наезжает на звёздочку, на широком экране вид не меняется."
+   ],
+   "skipped": [
+    "M22: кнопки вне моих файлов не тронуты: QuickCapture.tsx:579–584 («Открыть», «Всё равно добавить») и SaveSearchButton.tsx:37, 56, 80 («Сохранить поиск», «Сохранить»). Им нужно pointer-coarse:h-9 (в пиксельных сценах pixel:max-md:h-9).",
+    "M22: в TrashView.tsx и BulkBar.tsx уже стоит pointer-coarse:h-9, правки не понадобились.",
+    "Файлы TitleField.tsx, LinkedItems.tsx, ItemMenu.tsx, BulkBar.tsx, trashContext.ts, AppShell.tsx, TrashView.tsx не менялись: правок по задачам не требовалось."
+   ],
+   "newApi": [
+    "Нового API нет."
+   ]
+  },
+  {
+   "group": "backup-capture-ui",
+   "summary": "Исправления группы backup-capture-ui внесены; typecheck и npm test (1592 теста) проходят. Новых тестов нет: правки только в интерфейсе. Вёрстку в браузере не проверял (запрещено).",
+   "fixed": [
+    "C5: apply() в DirRow вызывает forgetPrevDir(prev) вместо forgetDirectory (keep считается в lib по настройкам)",
+    "C6/M30: проп disabled у DirRow блокирует «Выбрать…» и «Сбросить» на время экспорта/копии; «Отмена» доступна",
+    "C8: текстовая часть строки дубля flex-[1_1_14rem]",
+    "M15: lastError через useSyncExternalStore(subscribeAutoBackup, autoBackupStatus); onChanged = autoBackupDirChanged, вызывается и после «Сбросить»",
+    "M16: экранная часть закрыта вызовом forgetPrevDir; сверка при старте — reconcileApprovedDirs в initDesktop",
+    "M17: итог экспорта через exportReportSummary, красный текст при stopped/failed",
+    "M19: aria-label у кнопок папок с назначением, путь с break-all вместо truncate, aria-describedby на путь",
+    "M25: строка дубля перемонтируется (key ask/passive) для объявления role=alert; у «Открыть» aria-describedby на текст",
+    "M27: кнопка-скрепка и многострочная вставка в InboxView — manual/paste; useHotkeys: файлы из буфера и текст из буфера — paste, drop файлов и текста — drop",
+    "А1: строка «Хранить копий» — подпись слева, числовое поле w-20 справа, ошибка валидации прижата вправо без переноса"
+   ],
+   "skipped": [
+    "pwa.ts: у openCapture из share_target source не задан — в ITEM_SOURCES нет значения 'share' (src/types.ts вне границ группы), остаётся умолчание 'paste'",
+    "M25, часть про FilePreview (role=region у прокручиваемого блока, FilePreview.tsx:118-121) — файл вне границ группы; правка: добавить role=\"region\" к div с aria-label",
+    "ShortcutsSection.tsx и SettingsView.tsx менять не потребовалось"
+   ],
+   "newApi": [
+    "DirRow (внутренний в BackupSection): необязательный проп disabled?: boolean"
+   ]
+  }
+ ],
+ "recheck": {
+  "total": 13,
+  "confirmed": [
+   {
+    "title": "Регрессия M3: [[ссылка]] сразу после обычной ссылки или картинки с http-адресом видна в просмотре, но связь не создаётся",
+    "file": "src/lib/wikiLinks.ts",
+    "severity": "средне"
+   },
+   {
+    "title": "Регрессия M3: вики-ссылка в сноске с тремя и более пробелами после «[^1]:» считается кодом с отступом",
+    "file": "src/lib/wikiLinks.ts",
+    "severity": "средне"
+   },
+   {
+    "title": "Сверка просмотра и parseWikiLinks подогнана под свои фрагменты: остаются расхождения в обе стороны",
+    "file": "src/lib/wikiLinks.ts",
+    "severity": "мелочь"
+   },
+   {
+    "title": "Запас под кнопку «…» у сохранённого поиска не действует в пиксельных сценах: pixel:px-1.5 перекрывает pr-8",
+    "file": "src/components/layout/SavedSearches.tsx",
+    "severity": "мелочь"
+   },
+   {
+    "title": "overflow-hidden в шапке деталей обрезает обводку фокуса у переключателя типа записи",
+    "file": "src/components/items/ItemDetail.tsx",
+    "severity": "средне"
+   },
+   {
+    "title": "Чип статуса в шапке деталей больше никогда не показывается в пиксельных сценах на широком экране",
+    "file": "src/components/items/ItemDetail.tsx",
+    "severity": "мелочь"
+   },
+   {
+    "title": "После «Восстановить» панель остаётся на восстановленной записи, а курсор уходит на соседнюю удалённую: клавиши действуют не на ту запись",
+    "file": "src/components/items/ItemList.tsx",
+    "severity": "средне"
+   },
+   {
+    "title": "M22 исправлен наполовину: кнопки строки дубля и сохранения поиска на сенсорном экране остались ниже 36px",
+    "file": "src/components/capture/QuickCapture.tsx",
+    "severity": "мелочь"
+   },
+   {
+    "title": "Папку копий можно сменить во время плановой копии: кнопки блокируются только на время ручной «Сделать копию сейчас»",
+    "file": "src/views/settings/BackupSection.tsx",
+    "severity": "мелочь"
+   },
+   {
+    "title": "Остаток M25 не сделан никем: прокручиваемые блоки «Содержимое файла» с aria-label и tabIndex без роли",
+    "file": "src/components/items/FilePreview.tsx",
+    "severity": "мелочь"
+   },
+   {
+    "title": "Действие из M4 потерялось между тремя исполнителями: в Tauri при отказе openExternal ссылка всё ещё уходит в window.open",
+    "file": "src/lib/actions.ts",
+    "severity": "мелочь"
+   },
+   {
+    "title": "M14 пропущен и не записан в долги: переименование или удаление тега и категории молча ломает сохранённые поиски",
+    "file": "src/db/repo.ts",
+    "severity": "мелочь"
+   }
+  ],
+  "rejected": [
+   {
+    "title": "spec-stage4.md описывает прежний контракт отзыва папки и прежние вызовы в BackupSection",
+    "file": ".progress/spec-stage4.md"
+   }
+  ]
+ },
+ "polish": {
+  "summary": "Исправлены замечания 1, 2, 4-12 полностью и 3 частично; typecheck и npm test проходят (49 файлов, 1621 тест). Браузер и сборку не запускал, git не трогал.",
+  "fixed": [
+   "1. wikiLinks.ts: linkTextSpans возвращает {spans, dests}, urlSpans пропускает адреса внутри (...) обычных ссылок и картинок (проверенный патч с inUrl). Тесты в wikiLinks.test.ts и в it.each markdown.test.ts, включая случай 'https://q.ru/x[сайт](...)[[З]]' = [].",
+   "2. wikiLinks.ts, ветка footnote: пробелы и табы после [^метка]: съедаются, первая строка сноски разбирается с rel=0 (чинит и длинные имена сносок). Тесты в обоих файлах.",
+   "3 (часть). wikiLinks.ts: хвост (...) или [...] делает обычную ссылку только при буквальной первой '[' (\\[[A]](u)); DEFINITION использует [ \\t\\r\\n] вместо \\s/\\S; экспорт mayHaveWikiLinks, применён в parseWikiLinks и в actions.ts (createAndEnrich, actApplyWikiLinks).",
+   "4. SavedSearches.tsx: pixel:pr-9 pixel:max-md:pr-10 и обновлённый комментарий.",
+   "5. ItemDetail.tsx: шапка '-m-1 ... overflow-hidden p-1' (запас под обводку фокуса); DESIGN.md п.2.6 расширен до 'обрезающий блок'.",
+   "6. ItemDetail.tsx: чип статуса с порогом @[26rem], min-w-0 и внутренним truncate.",
+   "7. ItemList.tsx: восстановленная из корзины открытая запись считается keepOpen, курсор снимается, клавиши не уходят на соседа; комментарий обновлён.",
+   "8. pointer-coarse:h-9 у кнопок дубля в QuickCapture, трёх кнопок SaveSearchButton, 'В архив' и 'Вернуть' в ItemDetail.",
+   "9. BackupSection.tsx: busy = running || running из autoBackupStatus блокирует выбор папки и кнопку 'Сделать копию сейчас'.",
+   "10. FilePreview.tsx: role=region у обоих блоков 'Содержимое файла'.",
+   "11. actions.ts openLink: в Tauri при отказе openExternal выводится toast.error('Не удалось открыть ссылку') без window.open; три теста в actions.test.ts.",
+   "12. M14: renameQueryOperators в search/serialize.ts (экспорт также из search/index.ts, lex и OPERATOR_KEYS экспортированы из query.ts); repo.renameTag и updateCategory(name) переписывают tag:/#/cat: в db.searches в той же транзакции. Тесты в repo.test.ts и search.test.ts."
+  ],
+  "skipped": [
+   "3.2-3.3 (правило micromark перед http(s):// и localhost без точки в urlSpans): рискованная переделка urlSpans, а сверочного фаззера нет. Оставлено как долг.",
+   "3.4 (строка после определения ссылки считается кодом с отступом), 3.5 (таблица после пункта списка с ленивой строкой |---|), 3.8 (сноски без ссылок на них): правка сканера блоков рискованнее пользы при редких входах. Записано в .progress/agents/fix-review4-polish.md как долг.",
+   "3. Фаззер mulberry32 на 5000 текстов в markdown.test.ts не добавлял: он падал бы на оставшихся расхождениях 3.2-3.5 и 3.8.",
+   "12(d). Подсказка в пустой выдаче 'Категории нет, возможно её переименовали или удалили' для удалённых тега и категории не сделана. deleteTag и deleteCategory сохранённые поиски по-прежнему не трогают. В HANDOFF.md долг не записан: правило проекта оставляет его основной сессии, нужен раздел 'Долги после ревью этапа 4' с пунктами 3.2-3.5, 3.8 и 12(d).",
+   "5/6/8. Раскладку в браузере не проверял: jsdom её не считает, а браузер запускать было запрещено. Нужна ручная проверка в 'Осени' и 'Классике' на 1200 и 375 px."
+  ]
+ },
+ "checks": {
+  "typecheck": "чисто (npm run typecheck, tsc -b: ошибок нет)",
+  "tests": "49 файлов из 49 прошли, 1621 тест из 1621 прошёл, упавших нет (npm test, vitest run)",
+  "cargo": "cargo test: компиляция прошла без ошибок. quickdrop_lib: 60 прошло, 0 упало, 1 игнорирован (tests::fetch_public_page, нужна сеть). main.rs: 0 тестов. Doc-tests: 0. Упавших тестов и ошибок компиляции нет."
+ }
+}

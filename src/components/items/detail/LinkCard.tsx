@@ -52,8 +52,11 @@ function OgImage({ src }: { src: string }) {
   )
 }
 
-/** Карточка ссылки: метаданные страницы, действия и редактируемый адрес. */
-export function LinkCard({ item }: { item: Item }) {
+/**
+ * Карточка ссылки: метаданные страницы, действия и редактируемый адрес.
+ * readOnly (запись в корзине) — без «Обновить данные» и поля адреса.
+ */
+export function LinkCard({ item, readOnly }: { item: Item; readOnly?: boolean }) {
   const meta = item.linkMeta
   // pending, который никто в этой вкладке не ждёт (запрос шёл в закрытой вкладке), — не «загрузка».
   // Поверх pending лежат прежние данные: пока идёт запрос, показываем их, скелет — только если показать нечего.
@@ -136,35 +139,39 @@ export function LinkCard({ item }: { item: Item }) {
           <Icon name="copy" className="size-4" />
           Копировать ссылку
         </Button>
-        <Button variant="ghost" size="sm" disabled={pending} onClick={() => void refreshLinkMeta(item)}>
-          <Icon name="refresh" className={pending ? 'size-4 animate-spin' : 'size-4'} />
-          Обновить данные
-        </Button>
+        {!readOnly && (
+          <Button variant="ghost" size="sm" disabled={pending} onClick={() => void refreshLinkMeta(item)}>
+            <Icon name="refresh" className={pending ? 'size-4 animate-spin' : 'size-4'} />
+            Обновить данные
+          </Button>
+        )}
       </div>
 
-      <Input
-        value={url.value}
-        aria-label="Адрес ссылки"
-        placeholder="https://"
-        inputMode="url"
-        autoCapitalize="none"
-        spellCheck={false}
-        onChange={(e) => url.setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit()
-            e.currentTarget.blur()
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            e.stopPropagation()
-            url.revert()
-            e.currentTarget.blur()
-          }
-        }}
-        className="font-mono text-xs md:text-xs"
-      />
+      {!readOnly && (
+        <Input
+          value={url.value}
+          aria-label="Адрес ссылки"
+          placeholder="https://"
+          inputMode="url"
+          autoCapitalize="none"
+          spellCheck={false}
+          onChange={(e) => url.setValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commit()
+              e.currentTarget.blur()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              e.stopPropagation()
+              url.revert()
+              e.currentTarget.blur()
+            }
+          }}
+          className="font-mono text-xs md:text-xs"
+        />
+      )}
     </div>
   )
 }

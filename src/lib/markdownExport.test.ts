@@ -769,6 +769,85 @@ describe('itemToMarkdown', () => {
     )
   })
 
+  it('ссылка через «\\|» в таблице переписывается тоже через «\\|»: ячейка не разрезается', () => {
+    const target = mk('t1', { title: 'Ёлка: план?', createdAt: T0 })
+    const source = mk('s1', {
+      createdAt: T0 + 1,
+      content: [
+        '| Запись | Заметка |',
+        '| --- | --- |',
+        '| [[ёлка: план?\\|мой план]] | [[Ёлка: план?\\|Ёлка план]] |',
+        '',
+        'Вне таблицы: [[елка: план?|обычная]].',
+      ].join('\n'),
+    })
+    const items = [target, source]
+    const out = body(render(source, items).markdown)
+    expect(out).toBe(
+      [
+        '',
+        '| Запись | Заметка |',
+        '| --- | --- |',
+        '| [[Ёлка план\\|мой план]] | [[Ёлка план]] |',
+        '',
+        'Вне таблицы: [[Ёлка план|обычная]].',
+        '',
+      ].join('\n'),
+    )
+    // Ячейки делит только неэкранированная «|»: в строке по-прежнему две ячейки.
+    const cells = (row: string) => row.split(/(?<!\\)\|/).slice(1, -1)
+    const row = out.split('\n')[3]
+    expect(cells(row)).toEqual([' [[Ёлка план\\|мой план]] ', ' [[Ёлка план]] '])
+  })
+
+  it('вики-ссылка без подписи в таблице получает подпись через «\\|»: строка таблицы не ломается', () => {
+    const target = mk('t1', { title: 'Цель: план', createdAt: T0 })
+    const twin = mk('t2', { title: 'Тема', createdAt: T0 + 1 })
+    const twin2 = mk('t3', { title: 'тема', createdAt: T0 + 2 })
+    const source = mk('s1', {
+      createdAt: T0 + 3,
+      content: [
+        '| Запись | Ещё |',
+        '|---|---|',
+        '| [[цель: план]] | [[тема]] |',
+        '| [[Тема]] | [[Цель: план\\|под\\|пись]] |',
+        '',
+        'Вне таблицы: [[цель: план]] и [[Цель: план|под\\|пись]].',
+      ].join('\n'),
+    })
+    const items = [target, twin, twin2, source]
+    expect(planMarkdownExport(items).notes.get('t1')).toBe('Цель план')
+    const out = body(render(source, items).markdown)
+    expect(out).toBe(
+      [
+        '',
+        '| Запись | Ещё |',
+        '|---|---|',
+        '| [[Цель план\\|цель: план]] | [[Тема\\|тема]] |',
+        '| [[Тема]] | [[Цель план\\|под\\|пись]] |',
+        '',
+        'Вне таблицы: [[Цель план|цель: план]] и [[Цель план|под|пись]].',
+        '',
+      ].join('\n'),
+    )
+    const cells = (row: string) => row.split(/(?<!\\)\|/).slice(1, -1)
+    expect(cells(out.split('\n')[3])).toHaveLength(2)
+    expect(cells(out.split('\n')[4])).toHaveLength(2)
+  })
+
+  it('индексная заметка из одних вики-ссылок не перехватывает их цель в экспорте', () => {
+    const index = mk('b', { content: '- [[Проект А]]\n- [[Проект Б]]', status: 'inbox', createdAt: T0 })
+    const a = mk('a', { title: 'Проект А', status: 'inbox', createdAt: T0 + 1000 })
+    const c = mk('c', { title: 'Ссылки', content: 'см. [[Проект А]]', createdAt: T0 + 2000 })
+    const items = [index, a, c]
+    const plan = planMarkdownExport(items)
+    // имя файла заметки — по displayTitle, но ссылки ведут к записи «Проект А»
+    expect(plan.notes.get('b')).toBe('Проект А')
+    expect(plan.notes.get('a')).toBe('Проект А (2)')
+    expect(body(render(c, items).markdown)).toBe('\n# Ссылки\n\nсм. [[Проект А (2)|Проект А]]\n')
+    expect(body(render(index, items).markdown)).toBe('\n- [[Проект А (2)|Проект А]]\n- [[Проект Б]]\n')
+  })
+
   it('вики-ссылка на одноимённые записи ведёт к файлу победителя', () => {
     const inbox = mk('d1', { title: 'Дубль', status: 'inbox', createdAt: T0 })
     const library = mk('d2', { title: 'дубль', status: 'library', createdAt: T0 + 1 })

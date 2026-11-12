@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { titleFromUrl } from './linkMeta'
 import {
+  derivedTitleLine,
   displayTitle,
   formatBytes,
   formatDateTime,
@@ -28,6 +29,70 @@ describe('displayTitle', () => {
     expect(displayTitle({ ...base, url: 'https://a.io' })).toBe(titleFromUrl('https://a.io'))
     expect(displayTitle({ ...base, url: 'https://dexie.org/docs/Tutorial/React' })).not.toMatch(/^https?:/)
     expect(displayTitle(base)).toBe('Без названия')
+  })
+
+  it('производный заголовок — без разметки Markdown', () => {
+    const t = (content: string, type?: 'text' | 'idea' | 'link' | 'code') => displayTitle({ ...base, content, type })
+    expect(t('# Заголовок\nтекст')).toBe('Заголовок')
+    expect(t('## План на **год**')).toBe('План на год')
+    expect(t('- [ ] купить **хлеб**')).toBe('купить хлеб')
+    expect(t('> цитата с [ссылкой](https://a.io)')).toBe('цитата с ссылкой')
+    expect(t('См. [[Заметка|подпись]] и `код`')).toBe('См. подпись и код')
+    expect(t('```js\nconst x = 1\n```')).toBe('const x = 1')
+    expect(t('---\n\n***\n===\n| --- | --- |\nтекст после разделителей')).toBe('текст после разделителей')
+    // «#тег» без пробела — не заголовок.
+    expect(t('#тег в начале')).toBe('#тег в начале')
+    // Заметка к ссылке: свой заголовок страницы важнее, но без него берётся строка заметки без разметки.
+    expect(t('**важно**', 'link')).toBe('важно')
+  })
+
+  it('свой заголовок, заголовок страницы и имя файла не трогаются', () => {
+    expect(displayTitle({ ...base, title: '# Как есть', content: '# Другое' })).toBe('# Как есть')
+    expect(displayTitle({ ...base, linkMeta: { title: '**Мета**', status: 'ok' }, content: 'x' })).toBe('**Мета**')
+    expect(displayTitle({ ...base, fileName: '__init__.py', content: '# x' })).toBe('__init__.py')
+  })
+
+  it('код: строки не очищаются от «разметки»', () => {
+    const code = (content: string) => displayTitle({ ...base, type: 'code', content })
+    expect(code('# comment\nx = 1')).toBe('# comment')
+    expect(code('\n  __init__  ')).toBe('__init__')
+    expect(code('---\nx')).toBe('---')
+  })
+
+  it('только разметка — запасные варианты', () => {
+    expect(displayTitle({ ...base, content: '---\n\n```\n```' })).toBe('Без названия')
+    expect(displayTitle({ ...base, content: '***', url: 'https://a.io' })).toBe(titleFromUrl('https://a.io'))
+    expect(displayTitle({ ...base, content: '   \n\t' })).toBe('Без названия')
+  })
+})
+
+describe('derivedTitleLine', () => {
+  it('номер строки и текст без разметки', () => {
+    expect(derivedTitleLine({ content: 'первая' })).toEqual({ index: 0, text: 'первая' })
+    expect(derivedTitleLine({ content: '\n\n  # Тема  \nвторая' })).toEqual({ index: 2, text: 'Тема' })
+    expect(derivedTitleLine({ content: '```py\nprint(1)\n```' })).toEqual({ index: 1, text: 'print(1)' })
+    expect(derivedTitleLine({ content: '---\r\n\r\n> **цитата**\r\nещё' })).toEqual({ index: 2, text: 'цитата' })
+    expect(derivedTitleLine({ content: '\n# x', type: 'code' })).toEqual({ index: 1, text: '# x' })
+  })
+
+  it('нет значимой строки — null', () => {
+    expect(derivedTitleLine({ content: '' })).toBeNull()
+    expect(derivedTitleLine({ content: '\n\n---\n' })).toBeNull()
+    expect(derivedTitleLine({ content: undefined as unknown as string })).toBeNull()
+  })
+
+  it('просматриваются только первые 50 строк', () => {
+    const blank = '\n'.repeat(50)
+    expect(derivedTitleLine({ content: `${blank}пятьдесят первая` })).toBeNull()
+    expect(derivedTitleLine({ content: `${'\n'.repeat(49)}пятидесятая` })).toEqual({ index: 49, text: 'пятидесятая' })
+  })
+
+  it('длинная строка разбирается только в начале', () => {
+    const line = `**жирный** ${'слово '.repeat(10_000)}`
+    const found = derivedTitleLine({ content: line })
+    expect(found?.index).toBe(0)
+    expect(found?.text.startsWith('жирный слово')).toBe(true)
+    expect(found!.text.length).toBeLessThanOrEqual(1000)
   })
 })
 

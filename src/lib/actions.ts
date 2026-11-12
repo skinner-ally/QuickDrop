@@ -9,21 +9,36 @@ import {
   getFile,
   getItem,
   linkItems,
+  listCategories,
+  listSavedSearches,
   purgeItems,
+  reorderSavedSearches,
   restoreFromTrash,
   restoreItems,
   restoreSavedSearch,
   setStatus,
   toggleFavorite,
   unarchive,
+  updateSavedSearch,
 } from '@/db/repo'
 import { getSettings } from '@/db/settings'
+import { getAllItemsSnapshot, getTrashedItemsSnapshot } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
+import { displayTitle } from '@/lib/itemTitle'
 import { fetchLinkMeta } from '@/lib/linkMeta'
 import { hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
 import { extractItemText, textSourceOf } from '@/lib/ocr'
 import { isTauri } from '@/lib/platform'
-import { wikiLinkTargets } from '@/lib/wikiLinks'
+import {
+  alreadySavedText,
+  currentSearchQuery,
+  findSavedByQuery,
+  suggestSearchName,
+  viewForQuery,
+} from '@/lib/savedSearch'
+import { mayHaveWikiLinks, wikiLinkTargets } from '@/lib/wikiLinks'
+import { confirmDialog } from '@/store/confirm'
+import { useUi, type View } from '@/store/ui'
 import type { Item, ItemStatus, LinkMeta, NewItemInput, SavedSearch } from '@/types'
 
 /** Оборачивает действие: любая ошибка становится toast.error, наружу не бросает (итог — undefined). */
@@ -116,6 +131,10 @@ export async function createAndEnrich(input: NewItemInput): Promise<Item> {
   const item = await createItem(input)
   // extractItemText не бросает; текст попадёт в поиск, когда будет готов.
   if (textSourceOf(item) === 'pdf') void extractItemText(item)
+  // Связи по [[вики-ссылкам]] — молча: запись только что создана, toast о связях был бы шумом.
+  if (item.type !== 'code' && mayHaveWikiLinks(item.content)) {
+    void actApplyWikiLinks(item.id, item.content, { silent: true })
+  }
   if (item.type !== 'link' || !item.url) return item
   try {
     const settings = await getSettings()
@@ -251,6 +270,58 @@ export async function actEmptyTrash(): Promise<void> {
   })
 }
 
+const PURGE_TAIL = 'без возможности восстановления.'
+
+/** Записи из списка, которые сейчас лежат в корзине (по базе, а не по снимку списка). */
+async function trashedNow(ids: string[]): Promise<Item[]> {
+  const items = await Promise.all(ids.map((id) => getItem(id)))
+  return items.filter((it): it is Item => it?.deletedAt !== undefined)
+}
+
+/**
+ * Подтверждение → actPurge. Одна запись: «Запись «<заголовок>» будет удалена без возможности восстановления.»;
+ * несколько: «Записей: N. Они будут удалены без возможности восстановления.» Считаются и удаляются только записи,
+ * которые лежат в корзине: прочие пропускаются; нет ни одной — ничего не спрашивает.
+ */
+export async function actPurgeAsk(ids: string | string[]): Promise<void> {
+  const list = [...new Set(toArray(ids))]
+  if (list.length === 0) return
+  // Список под клавишей или кнопкой мог устареть (E перед Del, другая вкладка): спрашиваем только про корзину.
+  const trashed = await safe(() => trashedNow(list))
+  if (!trashed?.length) return
+  const description =
+    trashed.length === 1
+      ? `Запись «${displayTitle(trashed[0])}» будет удалена ${PURGE_TAIL}`
+      : `Записей: ${trashed.length}. Они будут удалены ${PURGE_TAIL}`
+  const ok = await confirmDialog({
+    title: 'Удалить навсегда?',
+    description,
+    confirmLabel: 'Удалить навсегда',
+    destructive: true,
+  })
+  if (!ok) return
+  // Пока висел вопрос, записи могли восстановить: удаляем только то, что ещё в корзине.
+  const still = await safe(() => trashedNow(trashed.map((it) => it.id)))
+  if (still?.length) await actPurge(still.map((it) => it.id))
+}
+
+/** Подтверждение с числом записей в корзине → actEmptyTrash. Корзина пуста — ничего. */
+export async function actEmptyTrashAsk(): Promise<void> {
+  // Новых чтений базы нет: число берётся из общего снимка; снимка ещё нет — вопрос без числа.
+  const count = getTrashedItemsSnapshot()?.length
+  if (count === 0) return
+  const ok = await confirmDialog({
+    title: 'Очистить корзину?',
+    description:
+      count === undefined
+        ? `Все записи в корзине будут удалены ${PURGE_TAIL}`
+        : `Все записи в корзине (${count}) будут удалены ${PURGE_TAIL}`,
+    confirmLabel: 'Очистить',
+    destructive: true,
+  })
+  if (ok) await actEmptyTrash()
+}
+
 // ───────────────────────── сохранённые поиски ─────────────────────────
 
 /** undefined — сохранить не удалось (причина уже показана в toast). */
@@ -276,6 +347,73 @@ export async function actDeleteSearch(search: SavedSearch): Promise<void> {
   })
 }
 
+export const NOTHING_TO_SAVE = 'Нечего сохранять: задайте поиск или фильтры'
+
+/**
+ * Сохраняет текущий отбор экрана (useUi + listCategories) вместе с разделом. Имя по умолчанию — suggestSearchName.
+ * Нечего сохранять → toast.error. Тот же запрос уже сохранён → toast «Уже сохранён как «<имя>»», второй не создаётся.
+ * undefined — не сохранено (причина уже в toast).
+ */
+export async function actSaveCurrentSearch(name?: string): Promise<SavedSearch | undefined> {
+  const { view, query, filter, customDates } = useUi.getState()
+  const prepared = await safe(async () => {
+    const text = currentSearchQuery({ view, query, filter, customDates }, await listCategories())
+    if (!text) return null
+    const searches = await listSavedSearches()
+    const existing = findSavedByQuery(searches, text)
+    if (existing) return { existing }
+    const finalName = name ?? suggestSearchName(text, searches.map((s) => s.name))
+    return { name: finalName, query: text }
+  })
+  if (prepared === undefined) return undefined
+  if (prepared === null) {
+    toast.error(NOTHING_TO_SAVE)
+    return undefined
+  }
+  if (prepared.existing) {
+    toast(alreadySavedText(prepared.existing.name))
+    return undefined
+  }
+  return actSaveSearch(prepared.name, prepared.query)
+}
+
+/**
+ * Разделы, куда поиск без своего раздела не применяется: у настроек и графа нет списка, а корзина ищет
+ * только удалённое.
+ */
+const NO_LIST_VIEWS: ReadonlySet<View> = new Set<View>(['settings', 'graph', 'trash'])
+
+/**
+ * Применяет сохранённый поиск: раздел — из самого запроса (viewForQuery), иначе текущий; из настроек, графа и
+ * корзины без своего раздела в запросе — «База знаний».
+ */
+export function actApplySearch(search: SavedSearch): void {
+  const ui = useUi.getState()
+  const fallback: View = NO_LIST_VIEWS.has(ui.view) ? 'library' : ui.view
+  ui.applyQuery(search.query, viewForQuery(search.query) ?? fallback)
+}
+
+/** Переименование; ошибка (пустое имя, дубль) — toast.error и false. */
+export async function actRenameSearch(id: string, name: string): Promise<boolean> {
+  const done = await safe(async () => {
+    await updateSavedSearch(id, { name })
+    return true
+  })
+  return done === true
+}
+
+/** Сдвиг поиска на одну позицию вверх (-1) или вниз (1); на краю списка — ничего. */
+export async function actMoveSearch(id: string, delta: -1 | 1): Promise<void> {
+  await safe(async () => {
+    const ids = (await listSavedSearches()).map((s) => s.id)
+    const from = ids.indexOf(id)
+    const to = from + delta
+    if (from === -1 || to < 0 || to >= ids.length) return
+    ;[ids[from], ids[to]] = [ids[to], ids[from]]
+    await reorderSavedSearches(ids)
+  })
+}
+
 // ───────────────────────── вики-ссылки ─────────────────────────
 
 /**
@@ -297,6 +435,44 @@ export async function applyWikiLinks(itemId: string, content: string, items: rea
     }
   })
   return added
+}
+
+/**
+ * applyWikiLinks по снимку записей (getAllItemsSnapshot); снимка нет или в тексте нет «[[» → [].
+ * Сообщает о новых связях, если не silent: «Добавлена связь: «<заголовок>»» / «Добавлено связей: N».
+ */
+export async function actApplyWikiLinks(
+  itemId: string,
+  content: string,
+  options: { silent?: boolean } = {},
+): Promise<string[]> {
+  if (typeof content !== 'string' || !mayHaveWikiLinks(content)) return []
+  const items = getAllItemsSnapshot()
+  if (!items) return []
+  const added = await applyWikiLinks(itemId, content, items)
+  if (added.length === 0 || options.silent) return added
+  if (added.length === 1) {
+    const target = items.find((it) => it.id === added[0]) ?? (await safe(() => getItem(added[0])))
+    toast(target ? `Добавлена связь: «${displayTitle(target)}»` : 'Добавлена связь')
+  } else {
+    toast(`Добавлено связей: ${added.length}`)
+  }
+  return added
+}
+
+/**
+ * Открывает запись в её разделе: корзина → «Корзина», иначе раздел статуса. Раздел меняется, только если
+ * запись не видна в текущем: «Избранное» показывает свою запись (не из архива и не из корзины) само.
+ */
+export function openItemInSection(
+  item: Pick<Item, 'id' | 'status' | 'deletedAt'> & Partial<Pick<Item, 'favorite'>>,
+): void {
+  const ui = useUi.getState()
+  const trashed = item.deletedAt !== undefined
+  const target: View = trashed ? 'trash' : item.status
+  const inFavorites = ui.view === 'favorites' && item.favorite === 1 && item.status !== 'archive' && !trashed
+  if (ui.view !== target && !inFavorites) ui.setView(target)
+  useUi.getState().select(item.id)
 }
 
 // ───────────────────────── буфер, открытие, скачивание ─────────────────────────
@@ -339,8 +515,10 @@ export async function openLink(raw: string | undefined): Promise<void> {
   }
   try {
     if (isTauri()) {
+      // window.open в окне Tauri ничего не открывает (обработчика новых окон нет) — только сообщение.
       const { openExternal } = await import('@/lib/desktop')
-      if (await openExternal(url)) return
+      if (!(await openExternal(url))) toast.error('Не удалось открыть ссылку')
+      return
     }
     // noopener: страница не получает window.opener.
     window.open(url, '_blank', 'noopener,noreferrer')
@@ -376,5 +554,21 @@ export async function actDownload(item: Item): Promise<void> {
     const file = await getFile(item.fileId)
     if (!file) throw new Error('Файл не найден')
     saveBlob(file.blob, file.name || item.fileName || 'file')
+  })
+}
+
+/**
+ * Одна запись файлом .md без вложений. План имён строится по всем записям, чтобы [[вики-ссылки]] и «Связанные»
+ * указывали на те же имена, что при выгрузке всей базы в папку.
+ */
+export async function actDownloadMarkdown(item: Item): Promise<void> {
+  await safe(async () => {
+    // Отдельный чанк: экспорт нужен редко, а основной не должен тяжелеть.
+    const { itemToMarkdown, planMarkdownExport } = await import('@/lib/markdownExport')
+    const snapshot = getAllItemsSnapshot()
+    const items = !snapshot ? [item] : snapshot.some((it) => it.id === item.id) ? snapshot : [...snapshot, item]
+    const plan = planMarkdownExport(items)
+    const entry = itemToMarkdown(item, { categories: await listCategories(), items, plan })
+    saveBlob(new Blob([entry.markdown], { type: 'text/markdown;charset=utf-8' }), entry.path)
   })
 }

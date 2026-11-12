@@ -110,13 +110,13 @@ export function useHotkeys(): { dragging: boolean } {
       const files = pastedFiles(e.clipboardData)
       if (files.length) {
         e.preventDefault()
-        useUi.getState().openCapture({ files })
+        useUi.getState().openCapture({ files, source: 'paste' })
         return
       }
       const text = e.clipboardData.getData('text/plain')
       if (text.trim()) {
         e.preventDefault()
-        useUi.getState().openCapture({ text })
+        useUi.getState().openCapture({ text, source: 'paste' })
       }
     }
 
@@ -157,14 +157,14 @@ export function useHotkeys(): { dragging: boolean } {
         // Файл на странице не должен открываться браузером; панель сама разберёт drop.
         e.preventDefault()
         // Открытая форма дополняет список файлов по captureDraft; drop мимо формы не должен теряться.
-        useUi.getState().openCapture({ files })
+        useUi.getState().openCapture({ files, source: 'drop' })
         return
       }
       if (internal || isEditable(e.target) || useUi.getState().captureOpen) return
       const text = dt.getData('text/uri-list') || dt.getData('text/plain')
       if (text.trim()) {
         e.preventDefault()
-        useUi.getState().openCapture({ text: text.split('\n').find((l) => l && !l.startsWith('#')) ?? text })
+        useUi.getState().openCapture({ text: text.split('\n').find((l) => l && !l.startsWith('#')) ?? text, source: 'drop' })
       }
     }
     const onDragEnd = () => {

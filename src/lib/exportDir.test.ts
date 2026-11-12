@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DESKTOP_ONLY_MESSAGE } from './desktop'
 import type { SavedFile } from './desktop'
-import { exportDocsToDir, exportMarkdownToDir } from './exportDir'
-import type { ExportDoc } from './exportDir'
+import { exportDocsToDir, exportMarkdownToDir, exportReportSummary, FOLDER_FAILURES_TO_STOP } from './exportDir'
+import type { ExportDirReport, ExportDoc } from './exportDir'
 import { setSetting } from '@/db/settings'
 import type { Item } from '@/types'
 
@@ -157,6 +157,80 @@ describe('exportDocsToDir', () => {
     ).rejects.toThrow(message)
     expect(write).toHaveBeenCalledTimes(2)
     expect(onProgress).not.toHaveBeenCalled()
+  })
+
+  describe('ошибка на всю папку (нет доступа, нет места)', () => {
+    const NO_SPACE = 'Не удалось записать файл: на диске не осталось места'
+    const NO_ACCESS = 'Не удалось записать файл: нет доступа (папка защищена от записи или файл занят)'
+    const many = (n: number): ExportDoc[] =>
+      Array.from({ length: n }, (_, i) => ({ path: `${i + 1}.md`, markdown: `заметка ${i + 1}` }))
+
+    it(`${FOLDER_FAILURES_TO_STOP} отказа подряд прерывают выгрузку, записанное до них — в отчёте`, async () => {
+      const { write, paths } = recorder((path) => (Number(path.split('.')[0]) > 2 ? new Error(NO_SPACE) : undefined))
+      const onProgress = vi.fn()
+      const report = await exportDocsToDir(DIR, many(10), { write, onProgress })
+      expect(paths()).toEqual(['1.md', '2.md'])
+      expect(write).toHaveBeenCalledTimes(2 + FOLDER_FAILURES_TO_STOP)
+      expect(report.docs).toBe(2)
+      expect(report.stopped).toBe(NO_SPACE)
+      expect(report.failed).toHaveLength(FOLDER_FAILURES_TO_STOP)
+      // ход выгрузки после остановки не сообщается
+      expect(onProgress).toHaveBeenLastCalledWith(2 + FOLDER_FAILURES_TO_STOP - 1, 10)
+    })
+
+    it('ничего не записано — ошибка вместо отчёта «Готово: заметок 0»', async () => {
+      const { write } = recorder(() => new Error(NO_ACCESS))
+      await expect(exportDocsToDir(DIR, many(10), { write })).rejects.toThrow(NO_ACCESS)
+      expect(write).toHaveBeenCalledTimes(FOLDER_FAILURES_TO_STOP)
+    })
+
+    it('остановка посреди вложений одного документа: сам документ не пишется', async () => {
+      const { write, paths } = recorder((path) => (path.startsWith('attachments/') ? new Error(NO_SPACE) : undefined))
+      const doc: ExportDoc = {
+        path: 'с вложениями.md',
+        markdown: 'x',
+        attachments: ['a', 'b', 'c', 'd'].map((n) => ({ path: `attachments/${n}.bin`, blob: new Blob([n]) })),
+      }
+      const report = await exportDocsToDir(DIR, [many(1)[0], doc, many(2)[1]], { write })
+      expect(paths()).toEqual(['1.md'])
+      expect(report.stopped).toBe(NO_SPACE)
+      expect(report.failed.map((f) => f.path)).toEqual(['attachments/a.bin', 'attachments/b.bin', 'attachments/c.bin'])
+    })
+
+    it('удачная запись между отказами и отказ другого рода сбрасывают счёт', async () => {
+      const failing = new Set(['1.md', '2.md', '4.md', '5.md', '7.md', '8.md'])
+      const { write } = recorder((path) =>
+        failing.has(path) ? new Error(path === '5.md' ? 'Недопустимое имя файла: 5.md' : NO_ACCESS) : undefined,
+      )
+      const report = await exportDocsToDir(DIR, many(9), { write })
+      expect(report.stopped).toBeUndefined()
+      expect(report.docs).toBe(3)
+      expect(report.failed).toHaveLength(6)
+    })
+
+    it('сбой чтения вложения счёт не меняет', async () => {
+      const { write } = recorder((path) => (path.endsWith('.md') ? new Error(NO_SPACE) : undefined))
+      const doc = (n: number): ExportDoc => ({
+        path: `${n}.md`,
+        markdown: 'x',
+        attachments: [{ path: `attachments/${n}.bin`, fileId: 'нет' }],
+      })
+      // отказы записи: 1.md, 2.md; между ними — только сбои чтения вложений
+      await expect(exportDocsToDir(DIR, [doc(1), doc(2), doc(3)], { write, loadFile: noFiles })).rejects.toThrow(
+        NO_SPACE,
+      )
+    })
+  })
+
+  it('exportReportSummary: итог одной строкой', () => {
+    const base: ExportDirReport = { dir: DIR, docs: 3, attachments: 1, bytes: 2048, failed: [] }
+    const failed = [{ path: 'a.md', error: 'x' }]
+    expect(exportReportSummary(base)).toBe('Готово: заметок 3, вложений 1, 2 КБ')
+    expect(exportReportSummary({ ...base, failed })).toBe('Готово с ошибками: заметок 3, вложений 1, 2 КБ')
+    expect(exportReportSummary({ ...base, docs: 0, attachments: 0, bytes: 0, failed })).toBe('Ничего не записано')
+    expect(exportReportSummary({ ...base, failed, stopped: 'Не удалось записать файл: на диске не осталось места' })).toBe(
+      'Экспорт прерван. Не удалось записать файл: на диске не осталось места. Записано: заметок 3, вложений 1, 2 КБ',
+    )
   })
 
   it('отмена до начала — «Экспорт отменён», ничего не записано', async () => {

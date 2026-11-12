@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { addTags, setCategory } from '@/db/repo'
-import { actArchive, actDelete, actToLibrary, actUnarchive } from '@/lib/actions'
+import { actArchive, actDelete, actPurgeAsk, actRestoreFromTrash, actToLibrary, actUnarchive } from '@/lib/actions'
 import { describeError } from '@/lib/errors'
 import { useSelection } from '@/store/selection'
 import { CategorySelect } from './CategorySelect'
@@ -19,8 +19,11 @@ function plural(n: number): string {
   return 'записей'
 }
 
-/** Панель массовых действий: показывается, когда выбрана хотя бы одна запись. */
-export function BulkBar({ variant }: { variant: ItemVariant }) {
+/**
+ * Панель массовых действий: показывается, когда выбрана хотя бы одна запись.
+ * trashed — в выдаче записи из корзины (раздел «Корзина» или is:trash): только «Восстановить» и «Удалить навсегда».
+ */
+export function BulkBar({ variant, trashed = false }: { variant: ItemVariant; trashed?: boolean }) {
   const selected = useSelection((s) => s.ids)
   const clear = useSelection((s) => s.clear)
   const [tags, setTags] = useState<string[]>([])
@@ -48,6 +51,81 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
     }
   }
 
+  const trashActions = (
+    <>
+      <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actRestoreFromTrash(ids)} aria-label="Восстановить">
+        <Icon name="undo" className="size-4" />
+        <span className="hidden sm:inline">Восстановить</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="pointer-coarse:h-9 hover:text-destructive"
+        onClick={() => void actPurgeAsk(ids)}
+        aria-label="Удалить навсегда"
+      >
+        <Icon name="trash" className="size-4" />
+        <span className="hidden sm:inline">Удалить навсегда</span>
+      </Button>
+    </>
+  )
+
+  const liveActions = (
+    <>
+      {variant === 'inbox' && (
+        <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actToLibrary(ids)} aria-label="В базу знаний">
+          <Icon name="book-marked" className="size-4" />
+          <span className="hidden sm:inline">В базу знаний</span>
+        </Button>
+      )}
+      {variant === 'archive' ? (
+        <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actUnarchive(ids)} aria-label="Вернуть из архива">
+          <Icon name="archive-restore" className="size-4" />
+          <span className="hidden sm:inline">Вернуть</span>
+        </Button>
+      ) : (
+        <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actArchive(ids)} aria-label="В архив">
+          <Icon name="archive" className="size-4" />
+          <span className="hidden sm:inline">В архив</span>
+        </Button>
+      )}
+
+      <CategorySelect
+        value={null}
+        onChange={(id) => void applyCategory(id)}
+        allowCreate
+        placeholder="Категория"
+        className="h-7 w-auto min-w-28 text-2sm"
+      />
+
+      <Popover open={tagsOpen} onOpenChange={setTagsOpen}>
+        <PopoverTrigger render={<Button variant="ghost" size="sm" className="pointer-coarse:h-9" aria-label="Добавить теги" />}>
+          <Icon name="tag" className="size-4" />
+          <span className="hidden sm:inline">Теги</span>
+        </PopoverTrigger>
+        <PopoverContent side="top" align="center" className="w-80">
+          <TagInput value={tags} onChange={setTags} placeholder="Теги для выбранных записей" autoFocus />
+          <div className="flex justify-end">
+            <Button size="sm" disabled={tags.length === 0} onClick={() => void applyTags()}>
+              Добавить
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="pointer-coarse:h-9 hover:text-destructive"
+        onClick={() => void actDelete(ids)}
+        aria-label="Удалить выбранные"
+      >
+        <Icon name="trash" className="size-4" />
+        <span className="hidden sm:inline">Удалить</span>
+      </Button>
+    </>
+  )
+
   return (
     <div
       role="toolbar"
@@ -60,57 +138,7 @@ export function BulkBar({ variant }: { variant: ItemVariant }) {
         </span>
         <span className="mx-0.5 h-5 w-px shrink-0 bg-border pixel:w-0.5" aria-hidden />
 
-        {variant === 'inbox' && (
-          <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actToLibrary(ids)} aria-label="В базу знаний">
-            <Icon name="book-marked" className="size-4" />
-            <span className="hidden sm:inline">В базу знаний</span>
-          </Button>
-        )}
-        {variant === 'archive' ? (
-          <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actUnarchive(ids)} aria-label="Вернуть из архива">
-            <Icon name="archive-restore" className="size-4" />
-            <span className="hidden sm:inline">Вернуть</span>
-          </Button>
-        ) : (
-          <Button variant="ghost" size="sm" className="pointer-coarse:h-9" onClick={() => void actArchive(ids)} aria-label="В архив">
-            <Icon name="archive" className="size-4" />
-            <span className="hidden sm:inline">В архив</span>
-          </Button>
-        )}
-
-        <CategorySelect
-          value={null}
-          onChange={(id) => void applyCategory(id)}
-          allowCreate
-          placeholder="Категория"
-          className="h-7 w-auto min-w-28 text-[0.8rem]"
-        />
-
-        <Popover open={tagsOpen} onOpenChange={setTagsOpen}>
-          <PopoverTrigger render={<Button variant="ghost" size="sm" className="pointer-coarse:h-9" aria-label="Добавить теги" />}>
-            <Icon name="tag" className="size-4" />
-            <span className="hidden sm:inline">Теги</span>
-          </PopoverTrigger>
-          <PopoverContent side="top" align="center" className="w-80">
-            <TagInput value={tags} onChange={setTags} placeholder="Теги для выбранных записей" autoFocus />
-            <div className="flex justify-end">
-              <Button size="sm" disabled={tags.length === 0} onClick={() => void applyTags()}>
-                Добавить
-              </Button>
-            </div>
-          </PopoverContent>
-        </Popover>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="pointer-coarse:h-9 hover:text-destructive"
-          onClick={() => void actDelete(ids)}
-          aria-label="Удалить выбранные"
-        >
-          <Icon name="trash" className="size-4" />
-          <span className="hidden sm:inline">Удалить</span>
-        </Button>
+        {trashed ? trashActions : liveActions}
 
         <span className="mx-0.5 h-5 w-px shrink-0 bg-border pixel:w-0.5" aria-hidden />
         <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-9" onClick={clear} aria-label="Снять выбор">

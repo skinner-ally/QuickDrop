@@ -345,6 +345,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fetch_link_meta,
             backup::pick_directory,
+            backup::forget_directory,
+            backup::retain_directories,
             backup::save_backup,
             backup::prune_backups,
             backup::list_backups,

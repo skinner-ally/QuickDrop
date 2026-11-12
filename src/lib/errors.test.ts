@@ -24,6 +24,12 @@ describe('ошибки хранилища', () => {
     expect(describeError(new Error(''))).toBe('Что-то пошло не так')
   })
 
+  it('текст переполнения первым советует очистить корзину', () => {
+    expect(QUOTA_MESSAGE).toBe(
+      'Недостаточно места в хранилище: очистите корзину, удалите крупные файлы или освободите место на устройстве',
+    )
+  })
+
   it('readableError заменяет только переполнение', () => {
     const other = new Error('x')
     expect(readableError(other)).toBe(other)

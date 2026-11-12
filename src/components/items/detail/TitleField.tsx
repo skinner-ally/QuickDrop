@@ -5,8 +5,15 @@ import { AutoTextarea } from './AutoTextarea'
 import { useAutosave } from './autosave'
 import { saveItem } from './save'
 
-/** Заголовок, редактируемый на месте. */
-export function TitleField({ item }: { item: Item }) {
+/** Заголовок, редактируемый на месте; при readOnly (запись в корзине) — статичный текст. */
+export function TitleField({ item, readOnly }: { item: Item; readOnly?: boolean }) {
+  if (readOnly) {
+    return <h2 className="-mx-1 px-1 text-lg leading-snug font-semibold break-words">{displayTitle(item)}</h2>
+  }
+  return <TitleEditor item={item} />
+}
+
+function TitleEditor({ item }: { item: Item }) {
   const { value, setValue, flush, revert } = useAutosave(
     item.title,
     (title) => saveItem(item.id, { title: title.trim() }),

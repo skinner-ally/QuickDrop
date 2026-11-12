@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ErrorBoundary, StorageErrorFallback } from '@/components/layout/ErrorBoundary'
 import { AppShell } from '@/components/layout/AppShell'
+import { ConfirmHost } from '@/components/layout/ConfirmHost'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { seedDemoData } from '@/db/seed'
 import { describeError } from '@/lib/errors'
@@ -25,6 +26,7 @@ export default function App() {
         <TooltipProvider delay={400}>
           <AppShell />
           <Toaster position="bottom-center" />
+          <ConfirmHost />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

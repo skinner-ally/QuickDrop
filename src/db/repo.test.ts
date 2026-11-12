@@ -1067,6 +1067,32 @@ describe('теги', () => {
     expect((await getItem(a.id))!.updatedAt).toBeGreaterThan(a.updatedAt)
   })
 
+  it('renameTag переписывает tag:/# в сохранённых поисках, остальной текст не трогает', async () => {
+    await createItem({ type: 'text', content: 'a', tags: ['работа'] })
+    const s1 = await createSavedSearch('один', 'tag:работа')
+    const s2 = await createSavedSearch('два', '#работа is:fav "фраза"')
+    const s3 = await createSavedSearch('три', 'tag:работать')
+    await renameTag('работа', 'work')
+    const q = async (id: string) => (await listSavedSearches()).find((x) => x.id === id)!.query
+    expect(await q(s1.id)).toBe('tag:work')
+    expect(await q(s2.id)).toBe('#work is:fav "фраза"')
+    expect(await q(s3.id)).toBe('tag:работать')
+  })
+
+  it('updateCategory(name) переписывает cat:Имя и cat:"мои проекты" с регистром и ё/е', async () => {
+    const c = await createCategory('Мои проекты')
+    const e = await createCategory('Ёлки')
+    const s1 = await createSavedSearch('один', 'cat:"мои проекты" is:inbox')
+    const s2 = await createSavedSearch('два', 'cat:елки')
+    const s3 = await createSavedSearch('три', 'cat:Другая')
+    await updateCategory(c.id, { name: 'Дела' })
+    await updateCategory(e.id, { name: 'Ёж и ёлка' })
+    const q = async (id: string) => (await listSavedSearches()).find((x) => x.id === id)!.query
+    expect(await q(s1.id)).toBe('cat:Дела is:inbox')
+    expect(await q(s2.id)).toBe('cat:"Ёж и ёлка"')
+    expect(await q(s3.id)).toBe('cat:Другая')
+  })
+
   it('deleteTag убирает тег у всех записей', async () => {
     const a = await createItem({ type: 'text', content: 'a', tags: ['tmp', 'keep'] })
     const b = await createItem({ type: 'text', content: 'b', tags: ['tmp'] })
@@ -1205,6 +1231,14 @@ describe('sortItems', () => {
     const zz = makeItem({ title: 'zzz', createdAt: 7 })
     const mango = makeItem({ title: 'mango', createdAt: 8 })
     expect(ids(sortItems([e, zz, link, mango], 'title'))).toEqual(ids([link, mango, zz, e]))
+  })
+
+  it('title — текст из одной разметки заголовка не даёт и идёт в конец, как пустой', () => {
+    const rule = makeItem({ title: '', content: '---', createdAt: 9 })
+    const fence = makeItem({ title: '', content: '```\n```', createdAt: 10 })
+    const yo = makeItem({ title: '', content: '# Яблоко', createdAt: 11 })
+    // «Без названия» встало бы между «банан» и «вишня»; теперь — после всех, по createdAt (новые раньше).
+    expect(ids(sortItems([rule, a, fence, c, yo, e], 'title'))).toEqual(ids([a, c, yo, fence, rule, e]))
   })
 
   it('не мутирует исходный массив', () => {

@@ -53,7 +53,7 @@ const HAS_ALIASES = aliasMap<ItemType[]>([
 ])
 
 type OpKey = 'tag' | 'type' | 'is' | 'has' | 'cat' | 'date' | 'after' | 'before'
-const OP_KEYS = aliasMap<OpKey>([
+export const OPERATOR_KEYS = aliasMap<OpKey>([
   ['tag', ['tag', 'tags', 'тег']],
   ['type', ['type', 'тип']],
   ['is', ['is']],
@@ -65,7 +65,7 @@ const OP_KEYS = aliasMap<OpKey>([
 ])
 
 /** start/end — границы токена в исходной строке. */
-type Token =
+export type Token =
   | { kind: 'phrase'; value: string; start: number; end: number }
   | { kind: 'word'; value: string; quoted: boolean; start: number; end: number }
 
@@ -80,7 +80,7 @@ function readQuoted(raw: string, pos: number): [value: string, next: number] {
 
 const OP_QUOTED_RE = /^(#|\p{L}+:)(?=["«“„])/u
 
-function lex(raw: string): Token[] {
+export function lex(raw: string): Token[] {
   const tokens: Token[] = []
   let i = 0
   while (i < raw.length) {
@@ -155,7 +155,7 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
     }
 
     const m = /^(\p{L}+):(.*)$/su.exec(value)
-    const op = m ? OP_KEYS.get(fold(m[1])) : undefined
+    const op = m ? OPERATOR_KEYS.get(fold(m[1])) : undefined
     if (!m || !op) {
       words.push(value)
       continue
@@ -238,7 +238,7 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
 function isTypeOperator(value: string, quoted: boolean): boolean {
   if (value.startsWith('#')) return false
   const m = /^(\p{L}+):(.*)$/su.exec(value)
-  const op = m ? OP_KEYS.get(fold(m[1])) : undefined
+  const op = m ? OPERATOR_KEYS.get(fold(m[1])) : undefined
   if (!m || (op !== 'type' && op !== 'has')) return false
   const arg = m[2].trim()
   if (!arg) return false

@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  DATE_PRESETS,
   DAY_MS,
   addDays,
+  customDateRange,
   endOfDay,
+  formatDateRange,
   formatDateToken,
+  parseDateInput,
   parseDateToken,
+  presetOf,
   relativeRange,
   startOfDay,
 } from './dates'
@@ -178,5 +183,179 @@ describe('formatDateToken', () => {
     for (const ts of [NOW, at(2026, 0, 1), at(2028, 1, 29, 23, 59, 59, 999), at(1999, 11, 31, 12)]) {
       expect(parseDateToken(formatDateToken(ts), NOW)).toEqual({ from: startOfDay(ts), to: endOfDay(ts) })
     }
+  })
+})
+
+describe('DATE_PRESETS / presetOf', () => {
+  it('три быстрых периода с подписями', () => {
+    expect(DATE_PRESETS).toEqual([
+      { id: 'today', label: 'Сегодня' },
+      { id: 'week', label: 'За неделю' },
+      { id: 'month', label: 'За месяц' },
+    ])
+  })
+
+  it('узнаёт период только при точном совпадении обеих границ', () => {
+    for (const { id } of DATE_PRESETS) {
+      const r = relativeRange(id, NOW)
+      expect(presetOf(r.from, r.to, NOW)).toBe(id)
+      // в другой момент тех же суток — тот же период
+      expect(presetOf(r.from, r.to, at(2026, 10, 11, 0, 0))).toBe(id)
+      expect(presetOf(r.from, r.to - 1, NOW)).toBeNull()
+      expect(presetOf(r.from + 1, r.to, NOW)).toBeNull()
+    }
+    // «вчера» и «год» в быстрые периоды не входят
+    const y = relativeRange('yesterday', NOW)
+    expect(presetOf(y.from, y.to, NOW)).toBeNull()
+    const year = relativeRange('year', NOW)
+    expect(presetOf(year.from, year.to, NOW)).toBeNull()
+  })
+
+  it('на следующие сутки прежний период уже не «быстрый»', () => {
+    const r = relativeRange('week', NOW)
+    expect(presetOf(r.from, r.to, at(2026, 10, 12, 0, 0))).toBeNull()
+  })
+
+  it('одна граница или негодное now — null', () => {
+    const r = relativeRange('today', NOW)
+    expect(presetOf(r.from, undefined, NOW)).toBeNull()
+    expect(presetOf(undefined, r.to, NOW)).toBeNull()
+    expect(presetOf(undefined, undefined, NOW)).toBeNull()
+    expect(presetOf(r.from, r.to, Number.NaN)).toBeNull()
+  })
+
+  it('свой период, совпавший с «Сегодня», неотличим по границам: различает только признак customDates', () => {
+    const own = customDateRange(formatDateToken(NOW), formatDateToken(NOW))
+    if (!own.ok || !own.range) throw new Error('ожидался диапазон')
+    expect(presetOf(own.range.from, own.range.to, NOW)).toBe('today')
+  })
+
+  it('полночь: последняя миллисекунда суток — ещё прежний период, первая — уже новый', () => {
+    const r = relativeRange('week', NOW)
+    expect(presetOf(r.from, r.to, at(2026, 10, 11, 23, 59, 59, 999))).toBe('week')
+    expect(presetOf(r.from, r.to, at(2026, 10, 12))).toBeNull()
+    const next = relativeRange('week', at(2026, 10, 12))
+    expect(next).toEqual({ from: at(2026, 10, 6), to: at(2026, 10, 13) - 1 })
+  })
+})
+
+describe('parseDateInput', () => {
+  it('начало суток указанной даты', () => {
+    expect(parseDateInput('2026-11-12')).toBe(at(2026, 10, 12))
+    expect(parseDateInput(' 2028-02-29 ')).toBe(at(2028, 1, 29))
+    expect(parseDateInput('1970-01-01')).toBe(at(1970, 0, 1))
+    expect(parseDateInput('2999-12-31')).toBe(at(2999, 11, 31))
+  })
+
+  it('пусто, не дата, несуществующий день, год вне 1970…2999 — null', () => {
+    for (const bad of ['', '   ', '2026-02-30', '2027-02-29', '2026-13-01', '2026-00-10', '2026-1-5', '12.11.2026',
+      '1969-12-31', '3000-01-01', '20261-01-01', 'today', '2026-11-12T10:00']) {
+      expect(parseDateInput(bad), bad).toBeNull()
+    }
+    expect(parseDateInput(undefined as unknown as string)).toBeNull()
+  })
+
+  it('обратно к formatDateToken', () => {
+    for (const ts of [NOW, at(2026, 0, 1, 23, 59), at(2000, 1, 29, 12)]) {
+      expect(parseDateInput(formatDateToken(ts))).toBe(startOfDay(ts))
+    }
+  })
+})
+
+describe('customDateRange', () => {
+  it('обе даты: начало суток «с» и конец суток «по»', () => {
+    expect(customDateRange('2026-11-01', '2026-11-10')).toEqual({
+      ok: true,
+      range: { from: at(2026, 10, 1), to: at(2026, 10, 11) - 1 },
+    })
+  })
+
+  it('один день: from и to одних суток', () => {
+    expect(customDateRange('2026-11-12', '2026-11-12')).toEqual({ ok: true, range: day(2026, 10, 12) })
+  })
+
+  it('пустое поле — граница не задана; оба пусты — снять период', () => {
+    expect(customDateRange('2026-11-01', '')).toEqual({ ok: true, range: { from: at(2026, 10, 1) } })
+    expect(customDateRange('', '2026-11-10')).toEqual({ ok: true, range: { to: at(2026, 10, 11) - 1 } })
+    expect(customDateRange('', '  ')).toEqual({ ok: true, range: null })
+  })
+
+  it('ошибки', () => {
+    expect(customDateRange('2026-11-10', '2026-11-01')).toEqual({ ok: false, error: 'Дата начала позже даты конца' })
+    expect(customDateRange('2026-02-30', '')).toEqual({ ok: false, error: 'Неверная дата' })
+    expect(customDateRange('', '3000-01-01')).toEqual({ ok: false, error: 'Неверная дата' })
+    expect(customDateRange('1969-12-31', '2026-01-01')).toEqual({ ok: false, error: 'Неверная дата' })
+    expect(customDateRange('2026-01-01', 'abc')).toEqual({ ok: false, error: 'Неверная дата' })
+  })
+})
+
+describe('formatDateRange', () => {
+  it('диапазон, одна дата и открытые границы', () => {
+    expect(formatDateRange(at(2026, 10, 12), at(2026, 10, 14, 23, 59))).toBe('12.11.2026 – 14.11.2026')
+    expect(formatDateRange(at(2026, 10, 12), at(2026, 10, 13) - 1)).toBe('12.11.2026')
+    expect(formatDateRange(at(2026, 0, 5), undefined)).toBe('с 05.01.2026')
+    expect(formatDateRange(undefined, at(2026, 10, 14, 23, 59))).toBe('по 14.11.2026')
+    expect(formatDateRange(undefined, undefined)).toBe('')
+  })
+
+  it('совпадает с полями своего периода', () => {
+    const r = customDateRange('2026-11-01', '2026-11-10')
+    if (!r.ok || !r.range) throw new Error('ожидался диапазон')
+    expect(formatDateRange(r.range.from, r.range.to)).toBe('01.11.2026 – 10.11.2026')
+  })
+
+  it('негодная отметка считается незаданной', () => {
+    expect(formatDateRange(Number.NaN, at(2026, 10, 14))).toBe('по 14.11.2026')
+    expect(formatDateRange(9e15, undefined)).toBe('')
+  })
+})
+
+describe('при переводе часов (Europe/Berlin)', () => {
+  const prevTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  beforeAll(() => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+  })
+  afterAll(() => {
+    // Снятие переменной пояс не возвращает: сначала явно прежний пояс, затем прежнее значение TZ.
+    vi.stubEnv('TZ', prevTz)
+    vi.unstubAllEnvs()
+  })
+
+  const HOUR = 3_600_000
+
+  it('пояс действительно переключён', () => {
+    expect(new Date(2026, 2, 28, 12).getTimezoneOffset()).toBe(-60)
+    expect(new Date(2026, 2, 29, 12).getTimezoneOffset()).toBe(-120)
+  })
+
+  it('сутки перевода: 29.03 — 23 часа, 25.10 — 25 часов; границы — местная полночь', () => {
+    const spring = customDateRange('2026-03-29', '2026-03-29')
+    const autumn = customDateRange('2026-10-25', '2026-10-25')
+    if (!spring.ok || !spring.range || !autumn.ok || !autumn.range) throw new Error('ожидался диапазон')
+    expect(spring.range).toEqual({ from: at(2026, 2, 29), to: at(2026, 2, 30) - 1 })
+    expect(spring.range.to! - spring.range.from! + 1).toBe(23 * HOUR)
+    expect(autumn.range.to! - autumn.range.from! + 1).toBe(25 * HOUR)
+    expect(startOfDay(at(2026, 2, 29, 23, 30))).toBe(at(2026, 2, 29))
+    expect(endOfDay(at(2026, 9, 25, 1))).toBe(at(2026, 9, 26) - 1)
+    expect(formatDateRange(spring.range.from, spring.range.to)).toBe('29.03.2026')
+  })
+
+  it('addDays через перевод часов сохраняет местное время суток', () => {
+    expect(addDays(at(2026, 2, 28, 12), 1)).toBe(at(2026, 2, 29, 12))
+    expect(addDays(at(2026, 2, 28, 12), 1) - at(2026, 2, 28, 12)).toBe(23 * HOUR)
+    expect(addDays(at(2026, 9, 25, 12), -1)).toBe(at(2026, 9, 24, 12))
+  })
+
+  it('быстрые периоды через перевод часов: границы — полночь, период узнаётся весь день', () => {
+    const now = at(2026, 2, 30, 9)
+    const week = relativeRange('week', now)
+    expect(week).toEqual({ from: at(2026, 2, 24), to: at(2026, 2, 31) - 1 })
+    expect(presetOf(week.from, week.to, at(2026, 2, 30))).toBe('week')
+    expect(presetOf(week.from, week.to, at(2026, 2, 30, 23, 59))).toBe('week')
+    expect(presetOf(week.from, week.to, at(2026, 2, 31))).toBeNull()
+
+    const today = relativeRange('today', at(2026, 9, 25, 2, 30))
+    expect(today).toEqual({ from: at(2026, 9, 25), to: at(2026, 9, 26) - 1 })
+    expect(presetOf(today.from, today.to, at(2026, 9, 25, 23, 59))).toBe('today')
   })
 })

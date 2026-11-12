@@ -15,9 +15,11 @@ import { useScene } from '@/components/layout/ThemeProvider'
 import { CategoryDot } from '@/components/items/CategoryBadge'
 import { TypeIcon } from '@/components/items/TypeIcon'
 import { setSetting } from '@/db/settings'
-import { useAllItems, useAllTags, useCategories, useItemsWithTrash } from '@/hooks/useItems'
+import { useAllItems, useAllTags, useCategories, useItemsWithTrash, useSavedSearches, useTrashCount } from '@/hooks/useItems'
+import { actApplySearch, actEmptyTrashAsk, actSaveCurrentSearch, openItemInSection } from '@/lib/actions'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
+import { isNarrowed } from '@/lib/savedSearch'
 import { fold, makeSnippet, searchItems } from '@/search'
 import { useUi, type View } from '@/store/ui'
 import type { Item, ItemStatus, ScenePref, Settings } from '@/types'
@@ -30,12 +32,6 @@ const STATUS_LABEL: Record<ItemStatus, string> = {
   inbox: 'Входящие',
   library: 'База знаний',
   archive: 'Архив',
-}
-
-const STATUS_VIEW: Record<ItemStatus, View> = {
-  inbox: 'inbox',
-  library: 'library',
-  archive: 'archive',
 }
 
 interface PaletteAction {
@@ -78,6 +74,11 @@ export function CommandPalette() {
   const itemsWithTrash = useItemsWithTrash()
   const categories = useCategories()
   const allTags = useAllTags()
+  const savedSearches = useSavedSearches()
+  const trashCount = useTrashCount()
+  const uiQuery = useUi((s) => s.query)
+  const uiFilter = useUi((s) => s.filter)
+  const canSaveSearch = isNarrowed(uiQuery, uiFilter)
 
   const trimmed = input.trim()
 
@@ -87,10 +88,7 @@ export function CommandPalette() {
   }
 
   const openItem = (item: Item) => {
-    const ui = useUi.getState()
-    // setView сбрасывает selectedId, поэтому select — строго после него.
-    ui.setView(STATUS_VIEW[item.status])
-    ui.select(item.id)
+    openItemInSection(item)
     close()
   }
 
@@ -125,7 +123,34 @@ export function CommandPalette() {
       { id: 'go-library', label: 'Перейти: База знаний', icon: 'library', run: () => go('library') },
       { id: 'go-favorites', label: 'Перейти: Избранное', icon: 'star', run: () => go('favorites') },
       { id: 'go-archive', label: 'Перейти: Архив', icon: 'archive', run: () => go('archive') },
-      // Заглушки этапов 4-5: «Перейти: Граф» и «Перейти: Корзина» добавятся здесь.
+      { id: 'go-trash', label: 'Перейти: Корзина', icon: 'trash', run: () => go('trash') },
+      ...(trashCount > 0
+        ? [
+            {
+              id: 'empty-trash',
+              label: 'Очистить корзину',
+              icon: 'trash' as const,
+              run: () => {
+                close()
+                void actEmptyTrashAsk()
+              },
+            },
+          ]
+        : []),
+      ...(canSaveSearch
+        ? [
+            {
+              id: 'save-search',
+              label: 'Сохранить текущий поиск',
+              icon: 'bookmark' as const,
+              run: () => {
+                close()
+                void actSaveCurrentSearch()
+              },
+            },
+          ]
+        : []),
+      // Заглушка этапа 5: «Перейти: Граф» добавится здесь.
       { id: 'go-settings', label: 'Перейти: Настройки', icon: 'settings', run: () => go('settings') },
       { id: 'theme-light', label: 'Тема: светлая', icon: 'sun', run: () => setTheme('light') },
       { id: 'theme-dark', label: 'Тема: тёмная', icon: 'moon', run: () => setTheme('dark') },
@@ -138,7 +163,7 @@ export function CommandPalette() {
       { id: 'scene-classic', label: 'Сцена: Классика', icon: 'sprout', run: () => pickScene('classic') },
     ],
     // close/go/setTheme зависят только от стабильных zustand-действий и setInput
-    [setScene],
+    [setScene, trashCount, canSaveSearch],
   )
 
   const results = useMemo(() => {
@@ -159,6 +184,10 @@ export function CommandPalette() {
 
   const needle = fold(trimmed)
   const shownActions = trimmed ? actions.filter((a) => fold(a.label).includes(needle)) : actions
+  const shownSearches = (trimmed ? savedSearches.filter((q) => fold(q.name).includes(needle)) : savedSearches).slice(
+    0,
+    trimmed ? MAX_HITS : 5,
+  )
   const matchedCategories = trimmed
     ? categories.filter((c) => fold(c.name).includes(needle)).slice(0, MAX_MATCHES)
     : []
@@ -216,6 +245,25 @@ export function CommandPalette() {
                   <span className="truncate">Искать «{trimmed}» в базе знаний</span>
                 </CommandItem>
               )}
+            </CommandGroup>
+          )}
+
+          {shownSearches.length > 0 && (
+            <CommandGroup heading="Поиски">
+              {shownSearches.map((q) => (
+                <CommandItem
+                  key={q.id}
+                  value={`search-${q.id}`}
+                  onSelect={() => {
+                    actApplySearch(q)
+                    close()
+                  }}
+                >
+                  <Icon name="bookmark" />
+                  <span className="truncate">{q.name}</span>
+                  <span className="ml-auto max-w-[50%] truncate text-xs text-muted-foreground">{q.query}</span>
+                </CommandItem>
+              ))}
             </CommandGroup>
           )}
 

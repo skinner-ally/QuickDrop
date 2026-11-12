@@ -1,5 +1,6 @@
 import { toast } from 'sonner'
 import { getSettings } from '@/db/settings'
+import { dirsInUse } from '@/lib/backupUi'
 import { invokeChunked, ipcError, type InvokeFn } from '@/lib/ipc'
 import { isTauri } from '@/lib/platform'
 import { useUi } from '@/store/ui'
@@ -57,10 +58,14 @@ async function listenDownloads(): Promise<void> {
   })
 }
 
-/** Инициализация desktop-оболочки: глобальное сочетание из настроек. Вне Tauri ничего не делает. */
+/**
+ * Инициализация desktop-оболочки: глобальное сочетание из настроек, сверка подтверждённых папок, автокопии.
+ * Вне Tauri ничего не делает.
+ */
 export async function initDesktop(): Promise<void> {
   if (!isTauri()) return
   void listenDownloads().catch((err) => console.warn('[desktop] не удалось подписаться на скачивания', err))
+  void reconcileApprovedDirs()
   // Динамический импорт: autoBackup.ts сам импортирует этот модуль.
   void import('./autoBackup')
     .then((m) => m.initAutoBackup())
@@ -166,6 +171,60 @@ export async function pickDirectory(
   } catch (e) {
     throw ipcError(e, 'Не удалось выбрать папку')
   }
+}
+
+/** Непустые строки списка папок (keep для команд Rust). */
+function nonEmptyDirs(dirs: string[]): string[] {
+  return Array.isArray(dirs) ? dirs.filter((d) => typeof d === 'string' && d.trim() !== '') : []
+}
+
+/**
+ * Убирает папку из подтверждённых для записи (команда Rust forget_directory): после смены папки в настройках
+ * прежняя больше не открыта для записи. keep — папки, оставшиеся в настройках: их Rust не отзывает, даже если
+ * это та же папка, записанная иначе (сетевой диск и UNC, subst, ссылка). Вне Tauri, пустая строка, ошибка → false.
+ * Не бросает.
+ */
+export async function forgetDirectory(dir: string, keep: string[] = []): Promise<boolean> {
+  if (!isTauri() || typeof dir !== 'string' || !dir.trim()) return false
+  try {
+    const invoke = await desktopInvoke()
+    return (await invoke<boolean>('forget_directory', { dir, keep: nonEmptyDirs(keep) })) === true
+  } catch (err) {
+    console.warn('[desktop] не удалось отозвать папку', err)
+    return false
+  }
+}
+
+/**
+ * Оставляет подтверждёнными только папки из keep (команда Rust retain_directories; в отладочной сборке Rust
+ * ничего не делает). true — что-то убрано. Вне Tauri и при ошибке → false. Не бросает.
+ */
+export async function retainDirectories(keep: string[]): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    const invoke = await desktopInvoke()
+    return (await invoke<boolean>('retain_directories', { keep: nonEmptyDirs(keep) })) === true
+  } catch (err) {
+    console.warn('[desktop] не удалось сверить подтверждённые папки', err)
+    return false
+  }
+}
+
+/**
+ * Сверка при запуске: подтверждёнными остаются только папки из настроек. Отзыв прежней папки при смене
+ * настройки одноразовый — его сбой (или стёртые данные WebView) иначе оставил бы папку открытой навсегда.
+ * Настройки не прочитались — ничего не убирает: пустой список отозвал бы и рабочие папки. Не бросает.
+ */
+export async function reconcileApprovedDirs(): Promise<boolean> {
+  if (!isTauri()) return false
+  let keep: string[]
+  try {
+    keep = dirsInUse(await getSettings())
+  } catch (err) {
+    console.warn('[desktop] сверка папок пропущена: настройки не прочитаны', err)
+    return false
+  }
+  return retainDirectories(keep)
 }
 
 /** Атомарная запись автокопии. fileName — только quickdrop-backup-YYYYMMDD-HHMMSS.json. */

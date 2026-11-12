@@ -294,6 +294,12 @@ function attachmentDestination(path: string): string {
   return encodeURI(path).replace(/\(/g, '%28').replace(/\)/g, '%29')
 }
 
+/** Разделитель подписи в исходной ссылке записан как «\|». */
+function separatorEscaped(raw: string): boolean {
+  const bar = raw.indexOf('|')
+  return bar > 0 && raw[bar - 1] === '\\'
+}
+
 function rewriteWikiLinks(text: string, selfId: string, env: RenderEnv): string {
   const links = parseWikiLinks(text)
   if (links.length === 0) return text
@@ -304,7 +310,15 @@ function rewriteWikiLinks(text: string, selfId: string, env: RenderEnv): string 
     const target = resolveWikiLink(link.target, index, selfId)
     const name = target && env.plan.notes.get(target.id)
     if (!name) continue
-    out += text.slice(last, link.start) + (link.label === name ? `[[${name}]]` : `[[${name}|${link.label}]]`)
+    let replacement = `[[${name}]]`
+    if (link.label !== name) {
+      // В строке таблицы голая «|» разрезала бы ячейку — и разделитель, и «|» подписи там пишутся «\|».
+      // Подпись появляется и у ссылки без неё, когда имя файла отличается от заголовка.
+      const bar = link.inTable || separatorEscaped(link.raw) ? '\\|' : '|'
+      const label = link.inTable ? link.label.replace(/\|/g, '\\|') : link.label
+      replacement = `[[${name}${bar}${label}]]`
+    }
+    out += text.slice(last, link.start) + replacement
     last = link.end
   }
   return out + text.slice(last)

@@ -4,6 +4,10 @@ import { Button } from '@/components/ui/button'
 import { getFile } from '@/db/repo'
 import { actDownload } from '@/lib/actions'
 import { formatBytes } from '@/lib/itemTitle'
+import { isMarkdownFile } from '@/lib/markdown'
+import { useUi } from '@/store/ui'
+import { MarkdownText } from '@/components/markdown/MarkdownText'
+import { ViewModeToggle } from '@/components/markdown/ViewModeToggle'
 import { cn } from '@/lib/utils'
 import type { Item } from '@/types'
 import { useImageUrl, usePdfUrl } from './safeFileUrl'
@@ -65,25 +69,39 @@ function ImagePreview({ item, variant }: { item: Item; variant: 'thumb' | 'full'
   )
 }
 
-function FileTextBody({ item }: { item: Item }) {
+function FileTextBody({ item, onOpenItem }: { item: Item; onOpenItem?: (id: string) => void }) {
   const [text, setText] = useState<string | null>(null)
+  const [tooBig, setTooBig] = useState(false)
+  const mdPreview = useUi((s) => s.mdPreview)
   useEffect(() => {
     let cancelled = false
     setText(null)
+    setTooBig(false)
     if (!item.fileId) return
     void getFile(item.fileId)
-      .then((f) => (f && f.blob.size <= MAX_TEXT_BYTES ? f.blob.text() : null))
-      .then((t) => {
-        if (!cancelled) setText(t)
+      .then(async (f) => {
+        if (!f) return { text: null, big: false }
+        if (f.blob.size > MAX_TEXT_BYTES) return { text: null, big: true }
+        return { text: await f.blob.text(), big: false }
+      })
+      .then((r) => {
+        if (cancelled) return
+        setText(r.text)
+        setTooBig(r.big)
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [item.fileId])
+  if (tooBig) {
+    return <p className="text-xs text-muted-foreground">Файл больше 200 КБ — содержимое не показывается, скачайте файл</p>
+  }
   if (text === null) return null
-  return (
+  const md = isMarkdownFile(item)
+  const pre = (
     <pre
+      role="region"
       tabIndex={0}
       aria-label="Содержимое файла"
       className="px-well max-h-80 overflow-auto rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
@@ -91,9 +109,29 @@ function FileTextBody({ item }: { item: Item }) {
       {text}
     </pre>
   )
+  if (!md) return pre
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center">
+        <ViewModeToggle className="ml-auto" />
+      </div>
+      {mdPreview ? (
+        <div
+          role="region"
+          tabIndex={0}
+          aria-label="Содержимое файла"
+          className="px-well max-h-[70vh] overflow-auto rounded-lg border border-border bg-muted/50 px-3 py-2"
+        >
+          <MarkdownText source={text} selfId={item.id} onOpenItem={onOpenItem} />
+        </div>
+      ) : (
+        pre
+      )}
+    </div>
+  )
 }
 
-function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' }) {
+function GenericFile({ item, variant, onOpenItem }: { item: Item; variant: 'thumb' | 'full'; onOpenItem?: (id: string) => void }) {
   const ext = extOf(item.fileName)
   const mime = item.mimeType ?? ''
   const icon = iconFor(ext, mime)
@@ -133,12 +171,21 @@ function GenericFile({ item, variant }: { item: Item; variant: 'thumb' | 'full' 
           </Button>
         </div>
       </div>
-      {isTextual(item, ext) && <FileTextBody item={item} />}
+      {isTextual(item, ext) && <FileTextBody item={item} onOpenItem={onOpenItem} />}
     </div>
   )
 }
 
-export function FilePreview({ item, variant }: { item: Item; variant: 'thumb' | 'full' }) {
+/** onOpenItem — клик по вики-ссылке в тексте файла .md; не задан — запись открывается в панели деталей. */
+export function FilePreview({
+  item,
+  variant,
+  onOpenItem,
+}: {
+  item: Item
+  variant: 'thumb' | 'full'
+  onOpenItem?: (id: string) => void
+}) {
   if (item.type === 'image') return <ImagePreview item={item} variant={variant} />
-  return <GenericFile item={item} variant={variant} />
+  return <GenericFile item={item} variant={variant} onOpenItem={onOpenItem} />
 }

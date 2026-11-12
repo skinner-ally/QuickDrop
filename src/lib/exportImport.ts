@@ -64,6 +64,8 @@ export type ImportReport = {
   skipped: number
   positions: number
   searches: number
+  /** Сколько из записанных записей пришло в корзину (с deletedAt). */
+  trashed: number
 }
 
 export interface BackupFileEntry {
@@ -259,7 +261,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
     new Error(
       `Резервная копия получилась бы слишком большой (${bytes ? `≈${toMb(bytes)} МБ при пределе` : 'предел —'} ` +
         `${toMb(maxBytes)} МБ) и её нельзя было бы восстановить. ` +
-        'Удалите крупные файлы или сохраните их отдельно и повторите экспорт.',
+        'Очистите корзину, удалите крупные файлы или сохраните их отдельно и повторите экспорт.',
     )
   let headerBlob: Blob
   try {
@@ -769,7 +771,15 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
 
   const tables = [db.items, db.files, db.categories, db.meta, db.positions, db.searches]
   const write = db.transaction('rw', tables, async () => {
-    const report: ImportReport = { items: 0, files: 0, categories: 0, skipped, positions: 0, searches: 0 }
+    const report: ImportReport = {
+      items: 0,
+      files: 0,
+      categories: 0,
+      skipped,
+      positions: 0,
+      searches: 0,
+      trashed: 0,
+    }
 
     if (mode === 'replace') {
       await db.items.clear()
@@ -848,6 +858,7 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
     if (itemsToPut.length || ocrOnly.length) await db.items.bulkPut([...itemsToPut, ...ocrOnly])
     if (recategorized.length) await db.positions.bulkDelete(recategorized)
     report.items = itemsToPut.length
+    report.trashed = itemsToPut.filter((item) => item.deletedAt !== undefined).length
 
     // ── файлы ──
     // Пишем только файлы, на которые ссылается итоговая запись. Если победила локальная запись —

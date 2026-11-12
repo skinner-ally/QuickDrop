@@ -1,20 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useCategories } from '@/hooks/useItems'
-import { actArchive, actDelete, actToLibrary, actUnarchive } from '@/lib/actions'
+import { useCategories, useDayKey } from '@/hooks/useItems'
+import {
+  actArchive,
+  actDelete,
+  actPurgeAsk,
+  actRestoreFromTrash,
+  actToLibrary,
+  actUnarchive,
+} from '@/lib/actions'
 import { setFavorite } from '@/db/repo'
-import { getAllItemsSnapshot } from '@/hooks/useItems'
+import { useSettings } from '@/db/settings'
+import { getItemsWithTrashSnapshot } from '@/hooks/useItems'
+import { groupByDay, type DayEntry } from '@/lib/dayGroups'
 import { describeError } from '@/lib/errors'
 import { matchKey } from '@/lib/keys'
+import { parseQuery, queryWords } from '@/search'
 import { useSelection } from '@/store/selection'
 import { useUi } from '@/store/ui'
 import type { SearchHit } from '@/search'
-import type { Item } from '@/types'
+import { DEFAULT_SETTINGS, type Item } from '@/types'
 import { BulkBar } from './BulkBar'
 import { EmptyState } from './EmptyState'
 import { CategoriesContext } from './CategoryBadge'
 import { ItemCard, ItemRow, type ItemVariant } from './ItemCard'
+import { TrashDaysContext } from './trashContext'
 
 /** Сколько записей рендерится за раз; остальные подгружаются при прокрутке. */
 const PAGE = 60
@@ -34,8 +45,16 @@ function isTyping(el: EventTarget | null): boolean {
   return role === 'textbox' || role === 'searchbox'
 }
 
-/** Относится ли запись к разделу независимо от поиска и фильтров (статус/избранное). */
-function inSection(item: Item, variant: ItemVariant): boolean {
+const isTrashed = (item: Item) => item.deletedAt !== undefined
+
+/**
+ * Относится ли запись к разделу независимо от поиска и фильтров (статус/избранное).
+ * wantTrashed — выдача из корзины (раздел «Корзина» или is:trash): тогда в разделе любая запись корзины,
+ * а записи вне корзины — нет (и наоборот).
+ */
+function inSection(item: Item, variant: ItemVariant, wantTrashed: boolean): boolean {
+  if (isTrashed(item) !== wantTrashed) return false
+  if (wantTrashed) return true
   switch (variant) {
     case 'inbox':
       return item.status === 'inbox'
@@ -45,6 +64,8 @@ function inSection(item: Item, variant: ItemVariant): boolean {
       return item.status === 'archive'
     case 'favorites':
       return item.favorite === 1 && item.status !== 'archive'
+    case 'trash':
+      return false
   }
 }
 
@@ -53,23 +74,18 @@ const MUTATING_KEYS = ['KeyE', 'KeyA', 'KeyF', 'Delete', 'Backspace']
 const MUTATING_FALLBACK = ['e', 'a', 'f', 'Delete', 'Backspace']
 const isMutating = (e: KeyboardEvent) => MUTATING_KEYS.some((c, i) => matchKey(e, c, MUTATING_FALLBACK[i]))
 
-// ───────────────────────── группировка по дате ─────────────────────────
+// ───────────────────────── разделители по дням ─────────────────────────
 
-const GROUP_LABELS = ['Сегодня', 'Вчера', 'На этой неделе', 'Ранее'] as const
+/** По какой отметке строки делятся на сутки. */
+type DayField = 'deletedAt' | 'updatedAt' | 'createdAt'
 
-function dateGroup(ts: number, now: number): number {
-  const today = new Date(now)
-  today.setHours(0, 0, 0, 0)
-  const t0 = today.getTime()
-  if (ts >= t0) return 0
-  if (ts >= t0 - 86_400_000) return 1
-  const weekStart = new Date(t0)
-  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7)) // понедельник
-  if (ts >= weekStart.getTime()) return 2
-  return 3
+const DAY_TS: Record<DayField, (hit: SearchHit) => number> = {
+  deletedAt: (hit) => hit.item.deletedAt ?? hit.item.createdAt,
+  updatedAt: (hit) => hit.item.updatedAt,
+  createdAt: (hit) => hit.item.createdAt,
 }
 
-type ListEntry = { kind: 'header'; label: string } | { kind: 'hit'; hit: SearchHit }
+type ListEntry = DayEntry<SearchHit>
 
 // ───────────────────────── список ─────────────────────────
 
@@ -95,6 +111,16 @@ export function ItemList({
   const layoutMode = layout ?? uiLayout
   const layoutRef = useRef(layoutMode)
   layoutRef.current = layoutMode
+  const trashDays = useSettings()?.trashDays ?? DEFAULT_SETTINGS.trashDays
+  // Подписи «Сегодня»/«Вчера» пересчитываются в полночь.
+  const dayKey = useDayKey()
+
+  const parsed = useMemo(() => {
+    const p = parseQuery(query)
+    return { trashed: p.filter.trashed === true, words: queryWords(p.text).length > 0 }
+  }, [query])
+  // Выдача из корзины: раздел «Корзина» или is:trash в строке поиска любого раздела.
+  const wantTrashed = variant === 'trash' || parsed.trashed
 
   const [shown, setShown] = useState(PAGE)
   const [kbd, setKbd] = useState(false)
@@ -102,8 +128,8 @@ export function ItemList({
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const ids = useMemo(() => hits.map((h) => h.item.id), [hits])
-  const latest = useRef({ ids, hits, variant })
-  latest.current = { ids, hits, variant }
+  const latest = useRef({ ids, hits, variant, wantTrashed })
+  latest.current = { ids, hits, variant, wantTrashed }
 
   // Новый раздел/запрос/сортировка — снова с первой порции.
   useEffect(() => setShown(PAGE), [variant, query, sort, filter, layoutMode])
@@ -139,8 +165,9 @@ export function ItemList({
         const keepOpen =
           ui.selectedId === sel.cursorId &&
           (() => {
-            const open = getAllItemsSnapshot()?.find((i) => i.id === ui.selectedId)
-            return !!open && inSection(open, variant)
+            const open = getItemsWithTrashSnapshot()?.find((i) => i.id === ui.selectedId)
+            // Восстановленная из корзины запись тоже остаётся открытой (см. ниже).
+            return !!open && (inSection(open, variant, wantTrashed) || (wantTrashed && !isTrashed(open)))
           })()
         if (keepOpen) sel.setCursor(null)
         else {
@@ -151,15 +178,17 @@ export function ItemList({
       if (ui.selectedId && !valid.has(ui.selectedId)) {
         // Запись, выпавшая из выдачи из-за поиска/фильтра (а не из-за смены статуса или удаления),
         // остаётся открытой: иначе панель деталей уходит на соседа прямо во время правки.
-        const open = getAllItemsSnapshot()?.find((i) => i.id === ui.selectedId)
-        if (!open || !inSection(open, variant)) {
+        const open = getItemsWithTrashSnapshot()?.find((i) => i.id === ui.selectedId)
+        // Восстановленная из корзины запись остаётся открытой и становится редактируемой; курсор снят выше, клавиши списка на неё не действуют.
+        const restored = wantTrashed && !!open && !isTrashed(open)
+        if (!restored && (!open || !inSection(open, variant, wantTrashed))) {
           const next = successor(ui.selectedId)
           if (next !== undefined) ui.select(next)
         }
       }
     }
     useSelection.getState().prune(valid)
-  }, [ids, variant, query, sort, filterKey])
+  }, [ids, variant, query, sort, filterKey, wantTrashed])
 
   // Запись открыли извне (Ctrl+K, связанная запись, «Открыть» в toast): курсор следует за ней.
   useEffect(() => {
@@ -190,14 +219,14 @@ export function ItemList({
 
     /** Запись, на которую действуют клавиши: курсор, иначе открытая в деталях (даже если выпала из выдачи). */
     function activeItem(): Item | undefined {
-      const { hits: list, variant: v } = latest.current
+      const { hits: list, variant: v, wantTrashed: wt } = latest.current
       const id = activeId()
       const hit = id ? list.find((h) => h.item.id === id) : undefined
       if (hit) return hit.item
       const open = useUi.getState().selectedId
       if (!open) return undefined
-      const found = getAllItemsSnapshot()?.find((i) => i.id === open)
-      return found && inSection(found, v) ? found : undefined
+      const found = getItemsWithTrashSnapshot()?.find((i) => i.id === open)
+      return found && inSection(found, v, wt) ? found : undefined
     }
 
     /** Модальный лист деталей: список под ним недоступен, отмеченные записи не трогаем. */
@@ -322,8 +351,12 @@ export function ItemList({
           const items = targets()
           if (items.length === 0) return
           handled()
-          const restore = items.filter((i) => i.status === 'archive').map((i) => i.id)
-          const toLibrary = items.filter((i) => i.status === 'inbox').map((i) => i.id)
+          // Запись в корзине — по самой записи (раздел «Корзина» или is:trash): E восстанавливает.
+          const gone = items.filter(isTrashed).map((i) => i.id)
+          const live = items.filter((i) => !isTrashed(i))
+          const restore = live.filter((i) => i.status === 'archive').map((i) => i.id)
+          const toLibrary = live.filter((i) => i.status === 'inbox').map((i) => i.id)
+          if (gone.length) void actRestoreFromTrash(gone)
           if (restore.length) void actUnarchive(restore)
           if (toLibrary.length) void actToLibrary(toLibrary)
           break
@@ -332,16 +365,21 @@ export function ItemList({
           const items = targets()
           if (items.length === 0) return
           handled()
-          const toArchive = items.filter((i) => i.status !== 'archive').map((i) => i.id)
-          const restore = items.filter((i) => i.status === 'archive').map((i) => i.id)
+          // У записей в корзине A не действует; клавиша всё равно поглощается.
+          const live = items.filter((i) => !isTrashed(i))
+          const toArchive = live.filter((i) => i.status !== 'archive').map((i) => i.id)
+          const restore = live.filter((i) => i.status === 'archive').map((i) => i.id)
           if (toArchive.length) void actArchive(toArchive)
           if (restore.length) void actUnarchive(restore)
           break
         }
         case 'KeyF': {
-          const items = targets()
-          if (items.length === 0) return
+          const all = targets()
+          if (all.length === 0) return
           handled()
+          // У записей в корзине F не действует; клавиша всё равно поглощается.
+          const items = all.filter((i) => !isTrashed(i))
+          if (items.length === 0) break
           // Единое состояние: если все уже в избранном — снимаем, иначе отмечаем всем.
           const value = !items.every((i) => i.favorite === 1)
           setFavorite(
@@ -362,7 +400,11 @@ export function ItemList({
           const items = targets()
           if (items.length === 0) return
           handled()
-          void actDelete(items.map((i) => i.id))
+          // В корзине — окончательно, с подтверждением; вне корзины — в корзину с «Отменить».
+          const gone = items.filter(isTrashed).map((i) => i.id)
+          const live = items.filter((i) => !isTrashed(i)).map((i) => i.id)
+          if (gone.length) void actPurgeAsk(gone)
+          if (live.length) void actDelete(live)
           break
         }
         default:
@@ -428,23 +470,16 @@ export function ItemList({
     } else sel.toggle(id)
   }, [])
 
-  const grouped = layoutMode === 'list' && (sort === 'newest' || sort === 'oldest') && query.trim() === ''
+  // Разделители по дням — только в виде «Список» и без слов поиска (по релевантности дни перемешаны).
+  // В корзине — по дате удаления (раздел сам упорядочивает по ней), иначе по полю сортировки; «по названию» — без них.
+  const grouped = layoutMode === 'list' && !parsed.words && (variant === 'trash' || sort !== 'title')
+  const dayField: DayField = variant === 'trash' ? 'deletedAt' : sort === 'updated' ? 'updatedAt' : 'createdAt'
   const entries = useMemo<ListEntry[]>(() => {
-    const out: ListEntry[] = []
-    const now = Date.now()
-    let last = -1
-    for (const hit of hits.slice(0, shown)) {
-      if (grouped) {
-        const g = dateGroup(hit.item.createdAt, now)
-        if (g !== last) {
-          out.push({ kind: 'header', label: GROUP_LABELS[g] })
-          last = g
-        }
-      }
-      out.push({ kind: 'hit', hit })
-    }
-    return out
-  }, [hits, shown, grouped])
+    const rows = hits.slice(0, shown)
+    if (!grouped) return rows.map((row) => ({ kind: 'row' as const, row }))
+    // dayKey — начало текущих суток: formatDayLabel сравнивает только сутки.
+    return groupByDay(rows, DAY_TS[dayField], dayKey)
+  }, [hits, shown, grouped, dayField, dayKey])
 
   if (hits.length === 0) {
     return <>{emptyState ?? <EmptyState icon="folder-open" title="Здесь пока пусто" />}</>
@@ -457,6 +492,7 @@ export function ItemList({
   return (
     <TooltipProvider delay={400}>
      <CategoriesContext.Provider value={categories}>
+     <TrashDaysContext.Provider value={trashDays}>
       <div ref={rootRef} onPointerDown={() => setKbd(false)} onFocus={onRowFocus}>
         <div
           role="list"
@@ -470,7 +506,7 @@ export function ItemList({
           {entries.map((en) =>
             en.kind === 'header' ? (
               <div
-                key={`h-${en.label}`}
+                key={en.key}
                 role="presentation"
                 className="sticky top-0 z-10 bg-background px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground pixel:px-0.5 pixel:text-2sm pixel:font-semibold"
               >
@@ -478,14 +514,14 @@ export function ItemList({
               </div>
             ) : (
               <EntryView
-                  key={en.hit.item.id}
-                  hit={en.hit}
+                  key={en.row.item.id}
+                  hit={en.row}
                   variant={variant}
-                  open={selectedId === en.hit.item.id}
-                  checked={checkedIds.has(en.hit.item.id)}
-                  cursor={cursorId === en.hit.item.id}
+                  open={selectedId === en.row.item.id}
+                  checked={checkedIds.has(en.row.item.id)}
+                  cursor={cursorId === en.row.item.id}
                   selecting={selecting}
-                  tabbable={tabbableId === en.hit.item.id}
+                  tabbable={tabbableId === en.row.item.id}
                   onActivate={onActivate}
                   onToggle={onToggle}
                 />
@@ -493,8 +529,9 @@ export function ItemList({
           )}
         </div>
         {hasMore && <div ref={sentinelRef} className="h-px" aria-hidden />}
-        <BulkBar variant={variant} />
+        <BulkBar variant={variant} trashed={wantTrashed} />
       </div>
+     </TrashDaysContext.Provider>
      </CategoriesContext.Provider>
     </TooltipProvider>
   )

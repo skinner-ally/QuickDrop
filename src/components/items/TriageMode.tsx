@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { useUi } from '@/store/ui'
 import type { AiMeta, Item } from '@/types'
 import { CategorySelect } from './CategorySelect'
+import { MarkdownText } from '@/components/markdown/MarkdownText'
 import { CodeView } from './CodeView'
 import { FilePreview } from './FilePreview'
 import { saveTags } from './detail/save'
@@ -74,7 +75,7 @@ function LinkImage({ src }: { src: string | undefined }) {
   )
 }
 
-function ItemBody({ item }: { item: Item }) {
+function ItemBody({ item, onOpenItem }: { item: Item; onOpenItem: (id: string) => void }) {
   const comment = item.content?.trim()
   switch (item.type) {
     case 'code':
@@ -83,7 +84,7 @@ function ItemBody({ item }: { item: Item }) {
     case 'file':
       return (
         <div className="flex flex-col gap-3">
-          <FilePreview item={item} variant="full" />
+          <FilePreview item={item} variant="full" onOpenItem={onOpenItem} />
           {comment && <p className="text-sm whitespace-pre-wrap text-muted-foreground">{item.content}</p>}
         </div>
       )
@@ -109,7 +110,7 @@ function ItemBody({ item }: { item: Item }) {
     }
     default:
       return comment ? (
-        <p className="text-md leading-relaxed break-words whitespace-pre-wrap text-foreground/90">{item.content}</p>
+        <MarkdownText source={item.content} selfId={item.id} onOpenItem={onOpenItem} className="text-md leading-relaxed text-foreground/90" />
       ) : null
   }
 }
@@ -300,6 +301,15 @@ function TriageBody({ onClose }: { onClose: () => void }) {
   const item = queue ? byId.get(queue[index] ?? '') : undefined
   const finished = queue !== null && index >= total
 
+  // Вики-ссылка в тексте: разбор закрывается и запись открывается в деталях — иначе панель оказалась бы под окном.
+  // onClose приходит новой стрелкой на каждый рендер, поэтому через ref: обработчик остаётся стабильным.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const openLinked = useCallback((id: string) => {
+    closeRef.current()
+    useUi.getState().select(id)
+  }, [])
+
   /** Ближайшая существующая запись в направлении dir; за концом очереди — экран «Всё разобрано». */
   const step = useCallback(
     (dir: 1 | -1) => {
@@ -453,7 +463,7 @@ function TriageBody({ onClose }: { onClose: () => void }) {
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6 md:py-10">
           <TitleField key={item.id} item={item} />
           <div className="px-2">
-            <ItemBody item={item} />
+            <ItemBody item={item} onOpenItem={openLinked} />
           </div>
 
           <div className="flex flex-col gap-3 border-t border-border px-2 pt-5 pixel:border-t-2">
