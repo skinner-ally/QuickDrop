@@ -1,0 +1,196 @@
+{
+ "note": "Итоговая разбивка этапа 4 после сверки (spec-stage4-review). core-logic выполнен; core-ui прерван на паузе 2026-11-12; волна 1 не начата.",
+ "packages": [
+  {
+   "key": "core-logic",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/store/ui.ts",
+    "src/store/ui.test.ts",
+    "src/store/confirm.ts",
+    "src/store/confirm.test.ts",
+    "src/lib/errors.ts",
+    "src/lib/errors.test.ts",
+    "src/lib/exportImport.ts",
+    "src/lib/exportImport.test.ts",
+    "src/lib/itemTitle.ts",
+    "src/lib/itemTitle.test.ts",
+    "src/lib/wikiLinks.ts",
+    "src/lib/wikiLinks.test.ts",
+    "src/lib/markdownExport.ts",
+    "src/lib/markdownExport.test.ts",
+    "src/lib/dates.ts",
+    "src/lib/dates.test.ts",
+    "src/lib/dayGroups.ts",
+    "src/lib/dayGroups.test.ts",
+    "src/lib/trash.ts",
+    "src/lib/trash.test.ts",
+    "src/lib/savedSearch.ts",
+    "src/lib/savedSearch.test.ts",
+    "src/lib/backupUi.ts",
+    "src/lib/backupUi.test.ts",
+    "src/lib/actions.ts",
+    "src/lib/actions.test.ts",
+    "src/lib/desktop.ts",
+    "src/lib/desktop.test.ts",
+    "src/hooks/useDebounced.ts",
+    ".progress/agents/stage4-core-logic.md"
+   ],
+   "sections": "§0, §1, §2 целиком (включая пометки «уточнено при сверке»: §2.5 — \\| в markdownExport, §2.8, §2.9, §2.10, §2.12); для справки §7. Также .progress/spec-stage2.md §2.1 (корзина, сохранённые поиски) и отчёты .progress/agents/data-hooks.md, data-search.md",
+   "needsBrowser": false,
+   "summary": "Выполняется первым. Чистая логика и хранилища с тестами vitest. Состав: store/ui (customDates, setDateRange, mdPreview, CaptureDraft.source), store/confirm (confirmDialog), тексты переполнения и ImportReport.trashed. Заголовки: displayTitle без разметки, derivedTitleLine. Вики-ссылки: parseWikiLinks понимает «\\|», markdownExport переписывает такие ссылки тоже через \\|. Даты: presetOf, customDateRange, formatDateRange; groupByDay; lib/trash (формула как в purgeExpired). lib/savedSearch: currentSearchQuery по правилам computeVisible — у корзины is:trash всегда, viewForQuery, suggestSearchName. lib/backupUi, forgetDirectory в desktop.ts. Новые действия в actions.ts: actPurgeAsk, actEmptyTrashAsk (число из getTrashedItemsSnapshot), actApplyWikiLinks, openItemInSection, actSaveCurrentSearch, actApplySearch, actRenameSearch, actMoveSearch, actDownloadMarkdown. Хук useDebounced. Прежние сигнатуры не менять."
+  },
+  {
+   "key": "core-ui",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/lib/markdown.ts",
+    "src/lib/markdown.test.ts",
+    "src/components/markdown/MarkdownView.tsx",
+    "src/components/markdown/MarkdownText.tsx",
+    "src/components/markdown/ViewModeToggle.tsx",
+    "src/components/items/detail/ContentEditor.tsx",
+    "src/components/items/detail/ItemContent.tsx",
+    "src/components/items/detail/LinkCard.tsx",
+    "src/components/layout/ConfirmHost.tsx",
+    "src/App.tsx",
+    "src/styles/markdown.css",
+    "src/styles/pixel.css",
+    "src/index.css",
+    "docs/DESIGN.md",
+    ".progress/agents/stage4-core-ui.md"
+   ],
+   "sections": "§0, §1 (Р1–Р7, Р10), §3 целиком (включая пометки «уточнено при сверке»: MdNode, CRLF, import type, initialFocus, line-height в П), §2.1, §2.2, §2.12 (контракты, которыми пользуется); docs/DESIGN.md; .progress/spec-stage3.md §3",
+   "needsBrowser": true,
+   "summary": "Выполняется вторым, порт 5180. Весь Markdown. lib/markdown.ts: экспорт MdNode, remarkWikiLinks, remarkSoftBreaks с CRLF, mdUrlTransform, toggleTaskAt, isMarkdownFile; тесты через react-dom/server. MarkdownView — отдельный чанк (react-markdown + remark-gfm): сырой HTML не исполняется, <img> не создаётся, код через CodeView, задачи и вики-ссылки кликабельны. Лёгкая обёртка MarkdownText: ленивая загрузка, import type, сброс границы ошибок при смене source. ViewModeToggle. ContentEditor (renderView с api.change, readOnly, toolbar, onCommitted), ItemContent и LinkCard с readOnly. ConfirmHost (initialFocus на «Отмена») и подключение в App.tsx. Все стили этапа: styles/markdown.css (К и П, в П line-height: inherit), правило px-flag[data-flag=trash] в pixel.css, color-scheme для полей даты в index.css. Дополнение docs/DESIGN.md."
+  },
+  {
+   "key": "shell-nav",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/layout/Sidebar.tsx",
+    "src/components/layout/NavButton.tsx",
+    "src/components/layout/SavedSearches.tsx",
+    ".progress/agents/stage4-shell-nav.md"
+   ],
+   "sections": "§0, §1 (Р13), §4 (особенно п.7), §5.1, §2.9, §2.12; .progress/spec-stage3.md §3 и §2.1",
+   "needsBrowser": true,
+   "summary": "Порт 5181. Боковая панель. Пункт «Корзина» со счётчиком (useTrashCount); переход проверять по #/trash, сам раздел рисует пакет list. Секция «Поиски» (SavedSearches): применение через actApplySearch, подсветка активного, меню «Переименовать / Выше / Ниже / Удалить», переименование на месте. NavButton и SectionHeader вынесены в NavButton.tsx без изменений; единственное добавление — необязательный проп title у NavButton."
+  },
+  {
+   "key": "list",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src/components/items/ItemList.tsx",
+    "src/components/items/ItemCard.tsx",
+    "src/components/items/ItemMenu.tsx",
+    "src/components/items/BulkBar.tsx",
+    "src/components/items/trashContext.ts",
+    "src/views/TrashView.tsx",
+    "src/components/layout/AppShell.tsx",
+    ".progress/agents/stage4-list.md"
+   ],
+   "sections": "§0, §1 (Р7, Р8, Р9, Р11, Р15), §4, §5.2, §5.2a, §6, §2.4, §2.7, §2.8, §2.12; .progress/spec-stage3.md §3, §2.1 (AppShell), §2.2, §2.3 (ItemsView — образец для TrashView); .progress/spec-stage2.md §5.1–5.3",
+   "needsBrowser": true,
+   "summary": "Порт 5182. Списки и раздел «Корзина». ItemVariant получает 'trash'. Запись в корзине определяется по item.deletedAt: приглушённый заголовок, «удалено … · ещё N дн.», флажок trash (только в строке), быстрые действия «Восстановить» / «Удалить навсегда». itemActionList для корзины и пункт «Скачать как Markdown». BulkBar с пропом trashed. В ItemList: inSection с учётом корзины, снимок с корзиной, клавиши E/A/F/Del для записей в корзине, TrashDaysContext, разделители по дням через groupByDay вместо прежних четырёх групп. Сниппет (при derivedTitleLine() === null — весь content) и превью карточки без разметки; долг text-[0.8rem] в BulkBar. Перенесено из views-filter: TrashView (порядок по дате удаления, «Очистить корзину», пустые состояния) и его подключение в AppShell (VIEWS, ActiveView)."
+  },
+  {
+   "key": "views-filter",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/items/FilterBar.tsx",
+    "src/components/items/SaveSearchButton.tsx",
+    "src/views/InboxView.tsx",
+    "src/components/items/TriageMode.tsx",
+    ".progress/agents/stage4-views-filter.md"
+   ],
+   "sections": "§0, §1 (Р12–Р14), §4, §5.3, §2.1, §2.6, §2.9, §2.12, §3.3; .progress/spec-stage3.md §3, §2.3 и §2.4",
+   "needsBrowser": true,
+   "summary": "Порт 5183. FilterBar: период поповером (Сегодня / За неделю / За месяц и свой период из двух полей даты, setDateRange, один чип «Период»), строка активного отбора и при непустом поиске. SaveSearchButton: имя, показ запроса, actSaveCurrentSearch. QuickAdd во «Входящих» при дубле ссылки открывает полную панель через openCapture({ text, source: 'manual' }). TriageMode: текст и идея через MarkdownText, обёртка <p> становится <div>, классы размера идут в className. TrashView и AppShell перенесены в пакет list."
+  },
+  {
+   "key": "detail",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/items/ItemDetail.tsx",
+    "src/components/items/detail/TitleField.tsx",
+    "src/components/items/detail/LinkedItems.tsx",
+    "src/components/items/FilePreview.tsx",
+    ".progress/agents/stage4-detail.md"
+   ],
+   "sections": "§0, §1 (Р8), §4, §5.4, §2.8, §2.12, §3.1 (isMarkdownFile), §3.3–3.5; .progress/spec-stage3.md §3 и §2.5",
+   "needsBrowser": true,
+   "summary": "Порт 5184. Панель деталей: missing считается через useItemsWithTrash. Запись в корзине — только чтение: плашка с датой удаления и сроком (при остатке 0 — без скобок), «Восстановить», «Удалить навсегда», статичные заголовок, категория, теги и связи. Meta с <time> и строкой «Удалено». TitleField и LinkedItems с пропом readOnly. FilePreview: файлы .md с переключателем «Просмотр / Исходник» через MarkdownText, пояснение для файлов больше 200 КБ. Пункты меню корзины (пакет list) не проверять; запись из корзины открывать через is:trash."
+  },
+  {
+   "key": "capture-palette",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/components/capture/QuickCapture.tsx",
+    "src/components/palette/CommandPalette.tsx",
+    ".progress/agents/stage4-capture-palette.md"
+   ],
+   "sections": "§0, §1 (Р12, Р13), §4, §5.5, §6, §2.1, §2.9, §2.12, §2.13; .progress/spec-stage3.md §3 и §2.6",
+   "needsBrowser": true,
+   "summary": "Порт 5185. QuickCapture: строка «Такая ссылка уже есть: …» с кнопками «Открыть» и «Всё равно добавить». Строка появляется через 300 мс, passive — только при shownUrl === linkUrl; при сохранении проверка синхронная; Enter и Ctrl+Enter останавливаются, фокус уходит на «Открыть», savingRef и saving сбрасываются. Приведение DraftWithSource убрать. CommandPalette: «Перейти: Корзина» (проверять по #/trash), «Очистить корзину», «Сохранить текущий поиск» (условные пункты — в зависимостях useMemo), группа «Поиски», открытие записи через openItemInSection."
+  },
+  {
+   "key": "settings",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/views/SettingsView.tsx",
+    "src/views/settings/DataSection.tsx",
+    "src/views/settings/BackupSection.tsx",
+    "src/views/settings/ShortcutsSection.tsx",
+    ".progress/agents/stage4-settings.md"
+   ],
+   "sections": "§0, §1 (Р16, Р17), §4, §5.6, §2.3, §2.8, §2.10, §2.11, §2.12; .progress/agents/tauri-backup.md и fix-review12-tauri.md (поведение runBackupNow, pickDirectory, exportDocsToDir); .progress/spec-stage3.md §3 и §2.8",
+   "needsBrowser": true,
+   "summary": "Порт 5186. Настройки. В «Данных»: плитка и строка корзины (срок trashDays, «Очистить корзину»), записи корзины в отчёте импорта. Новая секция BackupSection «Копии и экспорт в папку»: папка только через pickDirectory с отзывом прежней по shouldForgetDir, периодичность, число копий, последняя копия, «Сделать копию сейчас», «Показать в проводнике»; экспорт Markdown с прогрессом, отменой и итогом. Вне Tauri — пояснение «Доступно в приложении для Windows». Строки клавиш корзины в ShortcutsSection."
+  },
+  {
+   "key": "tauri-forget",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src-tauri/src/backup.rs",
+    "src-tauri/src/lib.rs",
+    ".progress/agents/stage4-tauri-forget.md"
+   ],
+   "sections": "§0, §1 (Р17), §5.7, §2.11; .progress/agents/fix-review12-tauri.md (ApprovedDirs, resolve без удержания мьютекса)",
+   "needsBrowser": false,
+   "summary": "Rust: ApprovedDirs::forget и команда forget_directory. Убирает папку из подтверждённых по точному и каноническому пути; сначала файл, потом память; мьютекс при канонизации не удерживается. Регистрация в generate_handler!, тесты cargo. Права capabilities не меняются: команды приложения в них не перечисляются."
+  }
+ ],
+ "criticFixed": [
+  "Разбивка: src/views/TrashView.tsx и src/components/layout/AppShell.tsx перенесены из views-filter в list. TrashView передаёт variant=\"trash\", а ItemVariant расширяется в ItemCard.tsx пакета list: typecheck views-filter зависел от соседа, а приёмка list в разделе «Корзина» ждала views-filter. Добавлен §5.2a, исправлены §0, §5.3 и §7, переписан §4 п.7: типовых стыков в волне 1 нет, стыки поведения проверяются по смене раздела (#/trash).",
+  "§2.9 currentSearchQuery: в корзине со своим статусом в строке (is:inbox) раздел не дописывался, и сохранённый поиск открылся бы во «Входящих». Правило приведено к computeVisible: корзине is:trash дописывается всегда, если его нет; избранному is:fav — если в строке нет is:fav и is:trash. Добавлены тесты.",
+  "§2.5: markdownExport (строка 307) переписывает [[a\\|b]] как [[A|b]], и голая | режет ячейку таблицы (проверено). Ссылку, записанную через \\|, переписывать тоже через \\|; добавлен тест.",
+  "§2.12: дословный текст actPurgeAsk для нескольких записей; число для actEmptyTrashAsk берётся из getTrashedItemsSnapshot, без снимка вопрос задаётся без числа, repo не расширяется; openItemInSection не уводит из «Избранного»; расписаны шаги actDownloadMarkdown (снимок, план, saveBlob с text/markdown).",
+  "§2.8: формула trashPurgeAt = deletedAt + trashDays × DAY_MS, как в purgeExpired, плюс тесты. §2.10: имя файла в тексте берётся из result.path.",
+  "§3.1: экспорт типа MdNode; remarkSoftBreaks делит по \\r?\\n (в CRLF текст узла содержит \\r\\n); вики-адрес проверяется и через отрисовку (mdast-util-to-hast нормализует href); проверка «нет <img>» — на исходнике без ![]() или с зондом img.",
+  "§3.3 MarkdownText: тип пропсов только через import type (иначе чанк склеится с основным); догрузка под typeof window; ErrorBoundary сбрасывается при смене source.",
+  "§3.6 ConfirmHost: фокус на «Отмена» через initialFocus у DialogContent (такой проп у Dialog.Popup в @base-ui/react 1.9.0 есть) вместо autoFocus; при необходимости finalFocus.",
+  "§3.7: .pixel .qd-md { line-height: inherit } — иначе 1.6 из слоя действовало бы и в пиксельных сценах. color-scheme поле даты уже наследует от <html>, правило оставлено как страховка.",
+  "§5.1: у NavButton нет пропа title — разрешено добавить необязательный title.",
+  "§5.2: флажки есть только у строки (у карточки сетки их нет); snippetOf при derivedTitleLine() === null берёт сниппет из всего content.",
+  "§5.3: openCapture({ text, source: 'manual' }); в TriageMode обёртка <p> становится <div> (блоки Markdown в <p> недопустимы), классы размера переходят в className у MarkdownText.",
+  "§5.4: при остатке 0 текст «Удалится окончательно сегодня» без скобок; пункты меню корзины и сам раздел до сдачи list не проверять.",
+  "§5.5: при остановке на дубле сбрасывать и savingRef, иначе следующее сохранение молча выходит; passive только при shownUrl === linkUrl; условные пункты палитры добавить в зависимости useMemo."
+ ],
+ "openQuestions": [
+  "forget_directory убирает и записи с тем же каноническим путём. Если новая папка или папка другой настройки — та же физическая папка под другим написанием (junction, symlink), её тоже отзовут: shouldForgetDir сравнивает только строки. Это редкий случай. Принять риск или добавить в команду и в forgetDirectory список keep (тогда меняются core-logic и tauri-forget)?",
+  "Пакет list вырос до 7 файлов (opus): к спискам добавились TrashView и AppShell. Если это слишком много для одного исполнителя, можно вынести TrashView и AppShell в отдельный пакет волны 2 (sonnet).",
+  "ItemsView.tsx (ничей): подсказка архива «Del — удалить», а теперь Del переносит в корзину (в ShortcutsSection — «В списке: в корзину»). Поправить при приёмке для единообразия?",
+  "Клик по вики-ссылке в разборе входящих (TriageMode) обработчиком по умолчанию открывает запись в панели деталей под окном разбора. Оставить или закрывать разбор (onOpenItem в TriageMode)?",
+  "Р7 меняет поведение контрактной displayTitle при той же сигнатуре: из производного заголовка снимается разметка Markdown. Имена файлов экспорта у записей без своего заголовка изменятся (открытый вопрос 8 спецификации) — нужно подтверждение при приёмке."
+ ]
+}
