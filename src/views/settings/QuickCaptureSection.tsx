@@ -12,8 +12,10 @@ import {
   applyShellOptions,
   generateExtensionToken,
   getAutostart,
+  getExtensionDir,
   getExtServerStatus,
   globalShortcutFailure,
+  revealInExplorer,
   setAutostart,
   type AutostartState,
   type ExtServerStatus,
@@ -21,7 +23,10 @@ import {
 import { describeError } from '@/lib/errors'
 import { isTauri } from '@/lib/platform'
 import {
+  EXTENSION_DIR_SOURCE_HINT,
   EXTENSION_INSTALL_STEPS,
+  EXTENSION_UPDATE_HINT,
+  extensionManifestPath,
   extStatusText,
   globalShortcutHint,
   isExtensionToken,
@@ -252,7 +257,64 @@ function ExtensionBlock({ settings }: { settings: Settings }) {
           ))}
         </ol>
       </div>
+
+      <ExtensionDirRow />
     </>
+  )
+}
+
+/** Путь к папке расширения из установщика; без неё — где взять папку в исходниках. */
+function ExtensionDirRow() {
+  // undefined — путь ещё не получен из Rust, null — папки нет.
+  const [dir, setDir] = useState<string | null | undefined>()
+
+  useEffect(() => {
+    let cancelled = false
+    void getExtensionDir().then((d) => {
+      if (!cancelled) setDir(d)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (dir === undefined) return null
+  if (dir === null) {
+    return (
+      <Row>
+        <p className="text-xs text-muted-foreground">{EXTENSION_DIR_SOURCE_HINT}</p>
+      </Row>
+    )
+  }
+
+  const reveal = async () => {
+    if (!(await revealInExplorer(extensionManifestPath(dir)))) toast.error('Не удалось открыть папку')
+  }
+
+  return (
+    <Row className="flex-wrap">
+      <div className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
+        <span className="text-2sm font-medium pixel:font-semibold">Папка расширения</span>
+        <span id="ext-dir-path" className="select-all break-all font-mono text-xs" title={dir}>
+          {dir}
+        </span>
+        <span className="text-xs text-muted-foreground">{EXTENSION_UPDATE_HINT}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" aria-describedby="ext-dir-path" onClick={() => void reveal()}>
+          <Icon name="folder-open" />
+          Показать папку
+        </Button>
+        <Button
+          variant="outline"
+          aria-describedby="ext-dir-path"
+          onClick={() => void copyText(dir, 'Путь к папке скопирован')}
+        >
+          <Icon name="copy" />
+          Копировать путь
+        </Button>
+      </div>
+    </Row>
   )
 }
 

@@ -5,7 +5,7 @@ import App from './App.tsx'
 import { applyInitialHash } from './components/layout/AppShell'
 import './pwa'
 import { initDesktop } from './lib/desktop'
-import { drainPdfBackfill } from './lib/ocr'
+import { drainPdfBackfill, startVisionAuto } from './lib/ocr'
 import { isTauri } from './lib/platform'
 import { startTrashCleanup } from './lib/trashCleanup'
 
@@ -21,6 +21,9 @@ startTrashCleanup()
 // Текст из PDF, добавленных до появления извлечения или пришедших из копии: не на старте, чтобы
 // не мешать первому экрану; порциями с паузами, пока не пройдены все.
 window.setTimeout(() => void drainPdfBackfill(), 10_000)
+// Автораспознавание записей, оставшихся без текста (из мини-окна, сканы, после сбоя сети): только при
+// включённой настройке, отложенно и при возвращении к окну.
+startVisionAuto()
 
 createRoot(document.getElementById('root')!, {
   onUncaughtError: (error) => console.error('QuickDrop: необработанная ошибка', error),

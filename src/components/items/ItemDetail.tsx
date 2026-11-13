@@ -47,6 +47,7 @@ const SOURCE_LABEL: Record<ItemSource, string> = {
   import: 'импорт',
   demo: 'демо',
   extension: 'Из браузера',
+  share: 'из «Поделиться»',
 }
 
 const SWITCHABLE: ItemType[] = ['text', 'idea', 'code']

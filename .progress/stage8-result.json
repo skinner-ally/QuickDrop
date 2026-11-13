@@ -1,0 +1,1194 @@
+{
+  "summary": "Этап 8: распознавание текста зрением, долги, документация, CI — спецификация, реализация, ревью, исправления",
+  "agentCount": 27,
+  "logs": [
+    "Пакетов: 10",
+    "Волна 1: готово 8/8",
+    "ui-docs: находок 8, на проверку 4",
+    "vision: находок 8, на проверку 6",
+    "Подтверждено 10, отклонено 0"
+  ],
+  "result": {
+    "plan": {
+      "summary": "Спецификация этапа 8 написана: .progress\\spec-stage8.md (12 разделов), отчёт — .progress\\agents\\spec-stage8.md. Код не менялся, git не трогался, ничего не устанавливалось.\n\nЧто выяснено по коду:\n- Поиск (индекс и сниппет), резервная копия и экспорт Markdown уже работают с ocrText и не меняются; в копию надо добавить только новое поле. Интерфейса для распознанного текста нет нигде.\n- Настройки aiAutoOcr и aiVisionModel есть, но не используются; в копию не попадают, стираются «Удалить все данные».\n- pdf.js 6.5.438 декодирует JBIG2, CCITT и JPX модулем из wasmUrl. Он не задан, а WebAssembly запрещён CSP — чёрно-белые офисные сканы ушли бы в ИИ пустыми страницами. Решение: JS-варианты декодеров (useWasm: false), два файла кладёт в сборку свой плагин Vite; CSP не меняется.\n- Мини-окно прячется сразу после сохранения, поэтому зрение в нём не запускается — запись подхватывает главное окно.\n- ItemMenu рисуется в каждой карточке, поэтому пункт «Распознать» в меню не добавляется; кнопка только в подробностях.\n\nКлючевые решения:\n- Item.ocrVisionAt — признак «пробовали зрением» (долг этапа 2); MAX_OCR_TEXT остаётся 200 000.\n- Новая настройка aiAutoOcrSince: автораспознавание касается только записей, созданных после включения, — накопленный архив молча не отправляется.\n- Изображение отправляет одна функция ai.recognizeImage; первой строкой она проверяет, что ИИ включён и настроен. Адрес, ключ и aiBaseUrlError — те же, модель — aiVisionModel или aiModel.\n- Ошибки трёх видов: config (ключ, модель без зрения, адрес — авто останавливается, отметки нет), item (отметка ocrVisionAt, без повторов), transient (без отметки, в сеансе авто запись больше не берёт).\n- Очередь: параллельность 1, авто — не чаще запроса в 3 с и не больше 100 за сеанс, ручной запрос вне очереди; настройки и корзина перепроверяются перед каждым запросом.\n- Пределы: 2000 px, исходник до 30 МБ, подготовленная картинка до 4 МБ, первые 5 страниц скана.\n- Схема Dexie и версия копии не меняются.\n- Расширение Chrome кладётся в установщик через bundle.resources, в настройках — путь и «Показать папку».\n\nРазбивка: волна 0 — ocr-data, затем ocr-facade; волна 1 — восемь пакетов, файлы не пересекаются. Интерфейс волны 1 опирается только на то, что создаёт волна 0, поэтому идёт параллельно с логикой; до сдачи ocr-logic картинки и сканы дают skipped.\n\nКаждый долг из HANDOFF либо отнесён к пакету (§5.1), либо оставлен с причиной (§5.4). Контрольный список приёмки Windows — §10 (14 групп), проверка основной сессией до приёмки — §9, текст для HANDOFF об отставших спецификациях — §11.\n\nНе проверено на этапе проработки: растеризация сканов в WebView2 с JS-декодерами, форма записи bundle.resources для каталога, точные параметры page.render в pdf.js 6.5, ответы провайдеров на запрос с image_url (таблица ошибок составлена по типовым ответам).",
+      "openQuestions": [
+        "Автораспознавание касается только записей, созданных после включения настройки (aiAutoOcrSince). Нужна ли кнопка «Распознать все накопившиеся картинки (N)» с подтверждением?",
+        "Пределы распознавания: первые 5 страниц скана, 2000 px, исходник до 30 МБ, 100 автозапросов за сеанс, пауза 3 с между автозапросами — подходят?",
+        "Расширение Chrome в установщике (bundle.resources): форма записи каталога и сборка MSI/NSIS не проверены на этапе проработки. Если приёмка Windows не пройдёт — вернуть установку из исходников?",
+        "Версия приложения всё ещё 0.1.0. Поднять до 0.2.0 в трёх файлах перед сборкой приёмки?",
+        "Распознанный текст не передаётся в «Предложить заголовок и теги». Добавить (в ИИ будет уходить больше текста)?",
+        "Пресет DeepSeek (deepseek-chat) изображения не принимает, модель со зрением пользователь вводит сам. Добавить пресет модели со зрением?",
+        "Пункт «Распознать» в меню записи, в разборе входящих и для группы записей не делается (в меню нужна была бы подписка на настройки в каждой карточке). Нужен ли он после финального ревью?",
+        "Растеризация чёрно-белых сканов (CCITT/JBIG2) JS-декодерами pdf.js в WebView2 проверяется только на приёмке. Если не заработает — разрешить 'wasm-unsafe-eval' в CSP или оставить такие сканы нераспознаваемыми?",
+        "cargo test в release.yml включён только для Windows: на macOS тесты Rust ни разу не прогонялись. Включать и там?",
+        "Применение .progress/CLAUDE.proposed.md и замена раздела «Дизайн» в CLAUDE.md — решение пользователя."
+      ]
+    },
+    "packages": [
+      {
+        "key": "ocr-data",
+        "wave": 0,
+        "model": "opus",
+        "files": [
+          "src/types.ts",
+          "src/lib/settingsSchema.ts",
+          "src/lib/settingsSchema.test.ts",
+          "src/db/repo.ts",
+          "src/db/repo.test.ts",
+          "src/lib/exportImport.ts",
+          "src/lib/exportImport.test.ts",
+          "src/db/seed.ts",
+          "src/db/seed.test.ts",
+          "src/components/items/ItemDetail.tsx"
+        ]
+      },
+      {
+        "key": "ocr-facade",
+        "wave": 0,
+        "model": "opus",
+        "files": [
+          "src/lib/ai.ts",
+          "src/lib/ai.test.ts",
+          "src/lib/ocrState.ts",
+          "src/lib/ocrState.test.ts",
+          "src/lib/actions.ts",
+          "src/lib/actions.test.ts"
+        ]
+      },
+      {
+        "key": "ocr-logic",
+        "wave": 1,
+        "model": "opus",
+        "files": [
+          "src/lib/ocr.ts",
+          "src/lib/ocr.test.ts",
+          "src/lib/visionImage.ts",
+          "src/lib/visionImage.test.ts",
+          "src/lib/pdfRender.ts",
+          "src/lib/pdfRender.test.ts",
+          "src/lib/pdfEngine.ts",
+          "src/lib/pdfEngine.test.ts",
+          "src/lib/pdfText.ts",
+          "src/lib/pdfText.test.ts",
+          "vite.config.ts",
+          "src/main.tsx"
+        ]
+      },
+      {
+        "key": "ocr-ui",
+        "wave": 1,
+        "model": "sonnet",
+        "files": [
+          "src/components/items/detail/OcrBlock.tsx",
+          "src/components/items/detail/ocrView.ts",
+          "src/components/items/detail/ocrView.test.ts",
+          "src/components/items/detail/ItemContent.tsx",
+          "src/hooks/useOcr.ts",
+          "src/views/settings/AiSection.tsx",
+          "docs/DESIGN.md"
+        ]
+      },
+      {
+        "key": "debts-search",
+        "wave": 1,
+        "model": "opus",
+        "files": [
+          "src/search/serialize.ts",
+          "src/search/search.test.ts",
+          "src/lib/queryHints.ts",
+          "src/lib/queryHints.test.ts",
+          "src/views/ItemsView.tsx",
+          "src/views/InboxView.tsx",
+          "src/views/TrashView.tsx"
+        ]
+      },
+      {
+        "key": "debts-ui",
+        "wave": 1,
+        "model": "sonnet",
+        "files": [
+          "src/components/items/FilterBar.tsx",
+          "src/pwa.ts",
+          "src/lib/pixelfx/README.md",
+          "src/lib/pixelfx/pixelfx.test.ts"
+        ]
+      },
+      {
+        "key": "ext-bundle",
+        "wave": 1,
+        "model": "opus",
+        "files": [
+          "src-tauri/tauri.conf.json",
+          "src-tauri/src/shell.rs",
+          "src-tauri/src/lib.rs",
+          "src/lib/desktop.ts",
+          "src/lib/desktop.test.ts",
+          "src/lib/shellUi.ts",
+          "src/lib/shellUi.test.ts",
+          "src/views/settings/QuickCaptureSection.tsx",
+          "extension/README.md"
+        ]
+      },
+      {
+        "key": "docs-user",
+        "wave": 1,
+        "model": "sonnet",
+        "files": [
+          "README.md",
+          "docs/ИНСТРУКЦИЯ.md"
+        ]
+      },
+      {
+        "key": "docs-claude",
+        "wave": 1,
+        "model": "sonnet",
+        "files": [
+          ".progress/CLAUDE.proposed.md"
+        ]
+      },
+      {
+        "key": "ci",
+        "wave": 1,
+        "model": "sonnet",
+        "files": [
+          ".github/workflows/release.yml",
+          ".github/workflows/ci.yml"
+        ]
+      }
+    ],
+    "results": [
+      {
+        "key": "ocr-data",
+        "status": "готово",
+        "summary": "Пакет ocr-data готов. types.ts: добавлены Item.ocrVisionAt? с комментарием и Settings.aiAutoOcrSince со значением по умолчанию 0. В комментарий aiAutoOcr дописано, куда отправляется изображение. В ITEM_SOURCES добавлен 'share'. settingsSchema: aiAutoOcrSince проверяется как конечное число >= 0, по тому же правилу, что и backupLastAt. repo.ts: добавлены setVisionText(id, text, at?) и markVisionTried(id, at?). setVisionText пишет текст через cleanOcrText и ставит ocrAt = ocrVisionAt. markVisionTried ставит только ocrVisionAt. Обе не меняют updatedAt и возвращают false, если записи нет. setOcrText не тронут. exportImport.ts: aiAutoOcrSince добавлен в PRIVATE_SETTINGS. sanitizeItem берёт ocrVisionAt через ts() и только у записи с fileId. withNewerOcr при том же вложении оставляет наибольший ocrVisionAt из двух версий. Если менять нечего, он возвращает тот же объект, так что локальная запись не перезаписывается. Комментарий о версиях формата дополнен. Версии схемы Dexie и копии не менялись. seed.ts: aiAutoOcrSince добавлен в CLEARED_SETTINGS. ItemDetail.tsx: изменена только строка SOURCE_LABEL.share = 'из «Поделиться»'. Тесты по §2.1 написаны. Тест «нет изменений» проверен намеренной поломкой кода, после неё он падает. npm run typecheck проходит без ошибок, npm test: 83 файла, 2410 тестов прошли.",
+        "deviations": [
+          "Сверх спецификации обновлены соседние комментарии, код не менялся. В types.ts в комментарии Item.ocrText теперь сказано, что пишут setOcrText и setVisionText. В repo.ts в шапке исключений из updatedAt добавлен ocrVisionAt. В exportImport.ts дополнены комментарии к PRIVATE_SETTINGS и к списку ocrOnly."
+        ],
+        "notVerified": [
+          "Работа в интерфейсе не проверялась: браузер и приложение не запускались по правилам пакета. Подпись источника «из «Поделиться»» в подробностях записи на экране не видели.",
+          "npm run build и cargo test не запускались: Rust не трогал."
+        ],
+        "forMainSession": [
+          "repairIntegrity в exportImport.ts при импорте снимает с записи fileId, если файла нет. ocrVisionAt, ocrText и ocrAt при этом остаются, как и раньше. Вреда нет, авто берёт только записи с fileId, но при желании можно чистить и ocrVisionAt.",
+          "Источник 'share' только объявлен. src/pwa.ts, по §5.1 пакет debts-ui, пока передаёт 'paste'."
+        ]
+      },
+      {
+        "key": "ocr-facade",
+        "status": "готово",
+        "summary": "Пакет ocr-facade готов. Новый src\\lib\\ocrState.ts: пределы распознавания, правила ocrKindOf/isScanPdf/needsVision/isVisionBacklog, типы OcrOutcome/OcrJob/OcrNote и хранилище состояния сеанса с подпиской (ссылки стабильны). В src\\lib\\ai.ts только добавления: VisionError (config/item/transient), visionModelOf, visionAvailability, aiHostLabel, cleanVisionAnswer, recognizeImage. recognizeImage проверяет доступность ИИ раньше, чем читает изображение или идёт в сеть. Дальше: JPEG/PNG не больше 4 МБ, data-URL через blobToBase64, тело запроса по §2.2, предел 120 с, ровно один повтор без temperature, ошибки HTTP по таблице, content строкой или массивом, content_filter даёт item, length даёт truncated. suggestForItem и aiBaseUrlError не тронуты. В src\\lib\\actions.ts добавлены actRecognize, actCancelRecognize, actSaveOcrText и actClearOcrText (с «Отменить»). createAndEnrich передаёт vision = aiEnabled && aiAutoOcr: PDF извлекается всегда, картинка — только при vision; если настройки не прочитались, авто считается выключенным. Тесты добавлены во все три тестовых файла. npm run typecheck без ошибок, npm test: 84 файла, 2499 тестов прошли, oxlint по файлам пакета чист.",
+        "deviations": [
+          "recognizeImage: один общий предел 120 с на весь вызов вместе с повтором без temperature, а не 120 с на каждую попытку. В спецификации это не уточнено.",
+          "recognizeImage: если сервис повторил API-ключ в теле ошибки, ключ заменяется на «***» в тексте ошибки. Это дополнение к требованию «ключ не попадает в сообщения об ошибках».",
+          "recognizeImage: если тело ответа с ошибкой не читается (не из-за прерывания), ошибка определяется по статусу с пустым телом. Это не пропадает как «нет связи».",
+          "actRecognize, итог ok при via === 'text-layer': подписи в описании отличаются от спецификации. Для неполных страниц: «Текст взят из первых N из M страниц». Для truncated: «Текст PDF слишком длинный — сохранено начало». В спецификации тексты есть только для зрения («Распознаны первые…», «Ответ модели оборван…»).",
+          "actSaveOcrText: если записи нет (setOcrText вернул false), показывается toast.error «Запись не найдена».",
+          "actClearOcrText: если текста нет, ничего не делает и toast не показывает. «Отменить» возвращает текст через setOcrText(id, прежний), ocrAt становится текущим временем.",
+          "isVisionBacklog: since <= 0 или не конечное число всегда даёт false (по Р3: since = 0 — авто не включали)."
+        ],
+        "notVerified": [
+          "Работа с настоящим OpenAI-совместимым сервисом со зрением: проверены только подменённые fetch.",
+          "Поведение signal.throwIfAborted и ctrl.abort(reason) в WebView2, WKWebView и Safari на iOS: проверено только в Node (vitest).",
+          "Интерфейс не проверялся (пакет без UI). npm run build не запускался по правилам задачи."
+        ],
+        "forMainSession": [
+          "Для ocr-logic: ExtractOutcome в ocr.ts пока без полей via, pages и truncated. actRecognize показывает «Текст извлечён из PDF», только когда extractItemText вернёт via: 'text-layer'. Сейчас PDF со слоем даёт toast «Текст распознан». ocr-logic должен ставить via ('text-layer' или 'vision') и сделать ExtractOutcome псевдонимом OcrOutcome.",
+          "Для ocr-logic: createAndEnrich вызывает extractItemText(item, { vision }) без force. Картинка уходит только при aiEnabled && aiAutoOcr. Проверки visionAvailability, aiAutoOcrSince и isVisionBacklog перед запросом остаются на стороне ocr-logic. actRecognize вызывает extractItemText(item, { vision: visionAvailability === null, force: true }).",
+          "В actions.test.ts модуль @/lib/ocr подменён: extractItemText — vi.fn, по умолчанию вызывает настоящий. Тесты actions, которые ocr-logic захочет менять, должны учитывать эту подмену.",
+          "ai.ts теперь импортирует @/lib/exportImport (blobToBase64, как требует спецификация) и @/lib/ocrState. ocrState импортирует @/lib/pdfText (isPdf). Циклов нет, typecheck проходит."
+        ]
+      },
+      {
+        "key": "ocr-logic",
+        "status": "готово",
+        "summary": "Пакет ocr-logic готов. typecheck проходит, npm test проходит: 88 файлов, 2603 теста. Связка ocr, actions и pdfRender прогнана 4 раза подряд без сбоев, oxlint замечаний к файлам пакета не дал.\n\nЧто сделано:\n- visionImage.ts (новый): planVisionSize и prepareVisionImage. Тип определяется по самому Blob, SVG растеризуется через toImageBlob, прозрачность заливается белым. PNG берётся, если исходник без потерь и PNG не больше 1,5 МБ, иначе JPEG 0.85 и ступени уменьшения (2000/0.7, 1600/0.7, 1200/0.6). Пределы 30 МБ и 4 МБ соблюдаются, bitmap закрывается в finally. Растровый слой подменяется в тестах.\n- PDF:\n  - PdfDocLike получил необязательный pageImage.\n  - createPdfEngine принимает третий аргумент { wasmUrl } и всегда передаёт useWasm: false. pageImage масштабирует страницу в пределах 0.5…4, рисует на белом фоне, отдаёт JPEG 0.85, затем cleanup и обнуление холста.\n  - loadPdfEngine задаёт wasmUrl = {origin}{BASE_URL}pdfjs/.\n  - pdfRender.openPdfPages не бросает. Берёт первые 5 страниц по одной, на открытие и на каждую страницу — 20 с. Неустранимые ошибки (больше 50 МБ, пароль, битый файл) помечены permanent, close повторно вызывать безопасно.\n  - Сторож времени и открытие документа вынесены из pdfText в общие функции; поведение extractPdfText не изменилось.\n- ocr.ts:\n  - Ветки картинки и скана, force означает ручной запуск.\n  - Очередь зрения: параллельность 1, ручные впереди, фоновая задача переводится в ручную при ручном вызове, повторный вызов возвращает тот же промис.\n  - Перед каждым запросом заново читаются настройки и запись (корзина, aiAutoOcr, isVisionBacklog).\n  - Для авто: не чаще одного запроса в 3 с и не больше 100 за сеанс.\n  - Остановка авто с одним toast: config — до смены настроек ИИ (у toast есть действие «Настройки»), 429 — на 60 с, 3 временные ошибки подряд — на 10 мин, предел сеанса — до перезапуска.\n  - Запись итога через setVisionText и markVisionTried. Состояние OcrJob с cancel. Прежний текст не стирается до нового результата.\n  - drainVisionBacklog и startVisionAuto; мини-окно задач зрения не создаёт. Сигнатуры textSourceOf, extractItemText, backfillPdfText и drainPdfBackfill прежние.\n- vite.config.ts: плагин quickdrop:pdf-decoders кладёт pdfjs/*_nowasm_fallback.js и licenses/pdfjs-decoders-LICENSE.txt в сборку, в dev отдаёт декодеры только по белому списку имён. В workbox.globIgnores добавлен pdfjs/**. CSP не менялся.\n- main.tsx: вызывается startVisionAuto().\n- Тесты: ocr.test.ts (старые тесты обновлены, 27 новых), visionImage.test.ts, pdfRender.test.ts, pdfEngine.test.ts (wasmUrl/useWasm, pageImage, масштаб).",
+        "deviations": [
+          "Запись в корзине теперь получает skipped и для текстового слоя PDF: раньше слой извлекался. Так требует §3.3; старый тест «запись в корзине обрабатывается» переписан.",
+          "У исходов текстового слоя добавлено via: 'text-layer'. Если прочитаны не все страницы, добавляется pages; если текст обрезан пределом символов, добавляется truncated. Старые тесты ocr.test.ts обновлены под это.",
+          "Вызов с force для записи, задача которой уже идёт, возвращает тот же промис (по спецификации). Раньше он запускал новый разбор.",
+          "Правило «force без vision для скана → empty» применено только к PDF с ocrVisionAt. PDF без ocrVisionAt при force без vision разбирается слоем заново, как раньше: на этом держится существующий тест про PDF с паролем.",
+          "OcrJob публикуется для всей задачи, включая этап текстового слоя PDF, в том числе фонового. Поэтому строка состояния и «Отменить» видны и пока извлекается слой.",
+          "PDF из мини-окна разбирается только по слою и возвращает { status: 'empty', via: 'text-layer' }, а не skipped. Задача зрения при этом не создаётся.",
+          "Дополнение: фоновый PDF не начинается, если все его страницы не умещаются в оставшийся предел сеанса. Вместо этого авто останавливается по пределу, чтобы не отправлять страницы впустую.",
+          "Ошибка config в ручной задаче авто не останавливает: остановка срабатывает только по фоновым задачам, иначе при ручном распознавании показались бы два toast.",
+          "prepareVisionImage при сбое кодирования (нет canvas, нехватка памяти) бросает исключение, а не возвращает failed. Такой сбой считается временным: отметки нет, повтор возможен.",
+          "Добавлены экспорты. ocr.ts: resetOcrSession (для тестов) и VISION_AUTO_START_DELAY_MS. visionImage.ts: VISION_PNG_MAX_BYTES, VISION_SHRINK_STEPS, типы RasterBackend и DecodedImage. pdfEngine.ts: PdfEngineOptions, pageRenderScale, PDF_RENDER_MIN_SCALE/MAX_SCALE. pdfRender.ts: PDF_PAGE_TIMEOUT_MS, PdfPagesOptions. pdfText.ts: createPdfGuard, openPdfGuarded, closePdfQuietly, describePdfFailure, PDF_ABORTED, PDF_TIMED_OUT, PDF_ERR_TOO_BIG, типы PdfGuard и PdfFailure. Пределы 1,5 МБ и ступени уменьшения лежат в visionImage.ts, потому что ocrState.ts не входит в пакет.",
+          "pdfRender: предел 20 с действует и на открытие документа. Добавлены тексты ошибок: «Не удалось открыть PDF за отведённое время», «Не удалось подготовить страницу PDF (за отведённое время)», «Не удалось подготовить страницы PDF». Документ без страниц считается неустранимой ошибкой «В PDF нет страниц».",
+          "Размер холста страницы считается через Math.round, а не floor: иначе страница 792 pt давала 1999 px вместо 2000.",
+          "drainVisionBacklog выбирает записи по возрастанию createdAt (сначала старые) и пропускает те, что уже в работе."
+        ],
+        "notVerified": [
+          "npm run build не запускался (запрещено). Не проверено: что в dist/pdfjs/ лежат два декодера, в dist/licenses/ — pdfjs-decoders-LICENSE.txt и что sw.js не включает pdfjs/** в precache.",
+          "Dev-middleware плагина (отдача /pdfjs/<имя> в npm run dev) не проверялся.",
+          "Настоящая растеризация страниц pdf.js (page.render с параметром canvas, disableWorkerRendering, белый фон) и подгрузка JS-декодеров JBIG2/CCITT/JPX worker'ом по wasmUrl не проверены ни в браузере, ни в WebView2/WKWebView. Отдельно не проверено, работает ли import() из worker при origin tauri://localhost на macOS и при CSP Tauri.",
+          "Рабочий растровый слой visionImage (OffscreenCanvas или canvas документа, createImageBitmap, ориентация EXIF, первый кадр GIF) проверен только подделкой.",
+          "Показ toast об остановке авто (sonner) и переход в настройки по кнопке «Настройки» в реальном интерфейсе не проверены, только вызовы подменённых функций.",
+          "Запросы к настоящему провайдеру ИИ не делались: recognizeImage в тестах подменён."
+        ],
+        "forMainSession": [
+          "После сдачи волны выполнить npm run build и проверить: dist/pdfjs/jbig2_nowasm_fallback.js, dist/pdfjs/openjpeg_nowasm_fallback.js, dist/licenses/pdfjs-decoders-LICENSE.txt есть, а в dist/sw.js нет pdfjs/. На приёмке Windows распознать скан PDF с JBIG2/CCITT.",
+          "Для ocr-ui: getOcrJob(id) существует и на этапе текстового слоя PDF, в том числе для каждого нового PDF в фоне. Блок покажет «Распознаётся…» и «Отменить», пока извлекается слой; если это нежелательно, надо фильтровать в ocrView, например по наличию ocrAt.",
+          "Для .progress/CLAUDE.proposed.md (не мой файл): в «Структуру» добавить lib/visionImage.ts (подготовка картинки), lib/pdfRender.ts (страницы PDF картинками), lib/ocrState.ts. В PWA-раздел: плагин quickdrop:pdf-decoders и dist/pdfjs/ вне precache. Записать, что startVisionAuto вызывается в main.tsx, мини-окно зрением не распознаёт, а pdfEngine работает с useWasm: false и wasmUrl = {base}pdfjs/.",
+          "Для docs-user: декодеры сканов лежат в dist/pdfjs/, их лицензии — в licenses/pdfjs-decoders-LICENSE.txt (текст файла собирается из LICENSE_JBIG2, LICENSE_PDFJS_JBIG2, LICENSE_OPENJPEG, LICENSE_PDFJS_OPENJPEG пакета pdfjs-dist/wasm).",
+          "Я по ошибке вызвал npx eslint: npx скачал eslint@10.14.0 в свой кэш, проверка упала без конфига. package.json и lock-файлы не изменились (git status по ним пуст). Линт проекта — npm run lint (oxlint), по файлам пакета замечаний нет."
+        ]
+      },
+      {
+        "key": "ocr-ui",
+        "status": "готово",
+        "summary": "Пакет ocr-ui сделан. Хуки useOcrJob и useOcrNote готовы. Чистая ocrBlockView покрывает всю таблицу 4.2 тестом (26 тестов). OcrBlock встроен в ItemContent между FileBlock и заметкой. В AiSection добавлен блок «Распознавание текста». В docs/DESIGN.md добавлен §14. `npm run typecheck` проходит, `npm test` — 86 файлов, 2545 тестов, `oxlint` по файлам пакета чистый. Внешний вид в обоих стилях на 1200 и 375 px не смотрел: браузер по правилам не запускался.",
+        "deviations": [
+          "ocrBlockView получила необязательный пятый параметр readOnly (по умолчанию item.deletedAt !== undefined): ItemContent получает readOnly снаружи. Четыре параметра из спецификации сохранены. Вместо aiBlocked: string|null принимается boolean; хост подставляет компонент.",
+          "Переключатель «Распознавать автоматически» недоступен, пока visionAvailability не null, но только если он выключен. Включённый можно выключить всегда, иначе при сбросе ключа его нельзя было бы снять. Причина недоступности дописана в подсказку.",
+          "«Отменить» в блоке показывается, только если у задачи задан cancel (у задачи без cancel кнопка ничего бы не делала).",
+          "Для провалившейся картинки при недоступном ИИ кнопки «Повторить» нет (actRecognize выдал бы только toast); ошибка остаётся. Для PDF «Повторить» работает локально, строка о сети не показывается.",
+          "Цвета 'white'/'black' на canvas проверочной картинки заданы в коде. Это содержимое для модели, не оформление; поясняется в комментарии и в DESIGN.md §14.",
+          "У раскрытого текста «Изменить» и правка идут через ContentEditor, поэтому «Изменить» стоит левее «Копировать/Очистить/Распознать заново». Если стёрть текст целиком, автосохранение (800 мс) равно очистке, и раздел заменяется состоянием «Распознать текст» прямо во время правки. ContentEditor не входит в пакет."
+        ],
+        "notVerified": [
+          "Внешний вид блока и настроек в «Классике» и «Осени» (день и ночь) и в «Луге», «Бумаге», «Зиме» на 1200 и 375 px. Состояния job, failed, empty, start, text в живом интерфейсе. Высота кнопок 36 px на касании.",
+          "Работа в живом UI: автораскрытие после ручного распознавания (признак — смена ocrAt за время ручной задачи), поведение ContentEditor с длинным текстом, фокус и aria. В vitest нет DOM, компоненты не покрыты тестами.",
+          "Реальный запрос «Проверить распознавание»: не вызывался. Проверочная картинка на canvas и PNG через toBlob в браузере не запускались.",
+          "Работа с настоящей очередью зрения: пакет ocr-logic идёт параллельно, а до него extractItemText для картинок и сканов возвращает skipped."
+        ],
+        "forMainSession": [
+          "В ItemMenu и TriageMode ничего не менялось (Р12). Пункта «Распознать» там нет.",
+          "OcrBlock использует useSettings() — одна подписка на блок в панели деталей, не в списке.",
+          "При стирании распознанного текста целиком во время правки раздел исчезает посреди правки (см. deviations). Если это мешает, нужно менять ContentEditor — он не входит в пакет.",
+          "Тексты для docs-user: названия кнопок «Распознать текст», «Извлечь текст», «Распознать заново», «Извлечь заново», «Повторить», «Отменить», «Копировать», «Изменить», «Очистить», «Показать весь текст»; в настройках — «Модель для распознавания», «Распознавать автоматически», «Проверить распознавание»."
+        ]
+      },
+      {
+        "key": "debts-search",
+        "status": "готово",
+        "summary": "Пакет debts-search готов. composeQuery (src/search/serialize.ts): если в строке поиска есть cat: со значением, categoryId фильтра не сериализуется — больше нет «cat:none cat:x» и дубля «cat:x cat:x»; пересечение типов сохранено, parseQuery вызывается один раз. В search.test.ts прежний тест «известное ограничение» (ожидал 'cat:Работа cat:Дом') заменён новыми: строка побеждает, «Без категории» + cat:x, cat:none/cat:без/та же категория не дублируются, cat: без значения не мешает записать категорию фильтра, cat: вместе с пересечением типов. Новый чистый src/lib/queryHints.ts: QueryHint, missingQueryTargets, queryHintText по §5.2 (не больше двух подсказок через пробел, тексты из спецификации) плюс collectTags(items). Порядок подсказок: категория строки, категория фильтра, теги; псевдоимена «без категории» подсказкой не считаются. ItemsView и InboxView ставят подсказку в описание «Ничего не найдено» перед общим текстом (теги — со всех записей включая корзину, через useItemsWithTrash; пока категории не прочитаны — подсказки нет). TrashView показывает только подсказку о категории (knownTags = null). Сохранённые поиски при удалении тега и категории не переписываются: repo не менял, deleteTag/deleteCategory таблицу searches не трогают (проверено чтением). npm run typecheck — без ошибок; npm test — 86 файлов, 2545 тестов прошли.",
+        "deviations": [
+          "В queryHints.ts добавлен экспорт collectTags(items), которого нет в §5.2: он собирает knownTags. Свои теги в представлениях берутся из него, а не из useAllTags, потому что computeAllTags пропускает записи архива, и в разделе «Архив» подсказка о теге была бы ложной.",
+          "knownTags в ItemsView и InboxView собираются со всех записей, включая корзину (useItemsWithTrash). Так не будет ложной подсказки при is:trash в строке, а deleteTag снимает тег и с записей в корзине.",
+          "Для filter-category поле name содержит id исчезнувшей категории (имени уже нет); в тексте подсказки он не показывается."
+        ],
+        "notVerified": [
+          "Вид и текст подсказки в живом интерфейсе (оба стиля, телефон): браузер и dev-сервер не запускались."
+        ],
+        "forMainSession": [
+          "Долги этапа 4 в HANDOFF «Фильтр «Без категории» + cat:x сохраняется как cat:none cat:x» и «в пустой выдаче нет подсказки «категории нет»» закрыты этим пакетом.",
+          "Поведение composeQuery изменилось: при cat: в строке поиска категория фильтра в сохранённый поиск не пишется вообще. Это совпадает с тем, что ищет строка, если выбрана та же категория или «Без категории». Если же в фильтре выбрана другая категория, на экране выдача пуста (пересечение), а сохранённый поиск найдёт записи категории из строки — то же правило «побеждает строка», что уже действует для типов."
+        ]
+      },
+      {
+        "key": "debts-ui",
+        "status": "готово",
+        "summary": "Три долга закрыты. FilterBar: при ширине меньше 768 px сортировка и вид закреплены справа вне прокручиваемого ряда, компактно (по 36 px). pwa.ts: share_target открывает быструю запись с source: 'share'. README pixelfx и имя теста больше не утверждают, что шапка math.ts попадает в сборку. typecheck проходит. Полный npm test даёт один красный тест в чужом файле (shellUi.test.ts, пакет ext-bundle), в моих файлах всё зелёное.",
+        "deviations": [
+          "Значок кнопки сортировки — chevrons-up-down: отдельного значка сортировки в наборе иконок нет, новых не добавлял.",
+          "Значок кнопки-переключателя вида показывает режим, на который она переключает (при списке — grid), подпись aria-label — по спецификации.",
+          "Кнопка сортировки на телефоне — DropdownMenu с радиопунктами, а не Select, потому что Select без подписи значения неудобен как иконка.",
+          "Правый вылет прокручиваемого ряда на телефоне убран (-ml-4 pl-4 pr-1 вместо -mx-4 px-4), иначе ряд заходил бы под закреплённые кнопки; в пиксельной сцене аналогично (pixel:-ml-2.5 pixel:pl-2.5 pixel:pr-1). От 768 px классы прежние.",
+          "В README pixelfx не утверждается, что сборка вырезает шапки: это не проверялось, сказано только, что на шапки в сборке не рассчитываем и лицензия идёт файлом public/licenses/pixelfx-LICENSE.txt."
+        ],
+        "notVerified": [
+          "Внешний вид FilterBar на телефоне и в пиксельных сценах (браузер не запускался): высоту 36 px и отсутствие наложения ряда на кнопки не смотрел, только по коду.",
+          "Фактическое открытие быстрой записи со source 'share' из реальной ссылки share_target: не проверялось (нет теста на pwa.ts, поле source есть в CaptureDraft и в ITEM_SOURCES, это видно по коду).",
+          "Полный npm test не зелёный: падает src/lib/shellUi.test.ts, тест «папка расширения — из исходников…» (ждёт 'из исходников QuickDrop', шаг 2 уже переписан другим пакетом). К моим файлам не относится.",
+          "Отдельного теста на мобильный блок FilterBar нет."
+        ],
+        "forMainSession": [
+          "Падение src/lib/shellUi.test.ts относится к пакету ext-bundle (тест нужно обновить под новый текст шага 2). Перепроверить после завершения того пакета.",
+          "В pixel-сцене стоит глазами проверить кнопки compactSortBlock: у них классы px-btn и size-9, но ручной проверки не было."
+        ]
+      },
+      {
+        "key": "ext-bundle",
+        "status": "готово",
+        "summary": "Расширение Chrome кладётся в установщик (Р11, §5.3). tauri.conf.json: bundle.resources = { \"../extension/\": \"extension/\" }. Это форма Map из tauri-utils 2.10.2: каталог обходится рекурсивно, структура сохраняется. Я сверил это по resources.rs и тесту resource_paths_iter_map_allow_walk. cargo test собирает проект, а tauri-build копирует папку в target/debug/extension (проверено через ls), так что путь есть и в dev. В shell.rs добавлены чистая extension_dir_in(&Path) -> Option<PathBuf> и команда extension_dir. extension_dir_in требует каталог extension с файлом manifest.json; путь берётся через dunce::canonicalize, при сбое — через dunce::simplified, без префикса \\\\?\\. Команда при отказе возвращает «Папка расширения не найдена» и зарегистрирована в lib.rs. Тесты Rust: папка есть; каталога нет; ресурсов нет; манифеста нет; manifest.json — каталог; extension — файл; конфиг содержит ресурс, а у исходной папки есть манифест. desktop.ts: getExtensionDir() возвращает null вне Tauri, при отказе команды и при пустом или нестроковом ответе, исключений не бросает; тесты есть. В shellUi.ts шаг 2 EXTENSION_INSTALL_STEPS переписан по тексту спецификации. Там же добавлены EXTENSION_DIR_SOURCE_HINT, EXTENSION_UPDATE_HINT и чистая extensionManifestPath(dir): разделитель как в самом пути, без удвоения; тесты есть. QuickCaptureSection: под шагами установки появился ExtensionDirRow. В нём путь моноширинным шрифтом (select-all, break-all), подсказка «нажмите «Обновить» после обновления QuickDrop» и две кнопки. «Показать папку» вызывает revealInExplorer на manifest.json, при неудаче — toast.error; «Копировать путь» вызывает copyText. Если папки нет, показывается строка «Папка расширения — extension в исходниках QuickDrop». Иконки — через Icon (folder-open, copy). Право opener:allow-reveal-item-in-dir уже есть в capabilities. extension/README.md: обновлены шаг установки и раздел «Обновление». Проверки: cargo test — 130 passed, 2 ignored, без предупреждений; npm run typecheck — ок; npm test — 2545 passed в 86 файлах. Первый прогон npm test падал в чужом queryHints.test.ts, повторный прошёл.",
+        "deviations": [
+          "Строку из §5.3 «Папка расширения — `extension` в исходниках QuickDrop» вынес в shellUi.ts как EXTENSION_DIR_SOURCE_HINT. Слово extension в UI выводится без обратных кавычек: в интерфейсе нет Markdown.",
+          "Добавлена подсказка EXTENSION_UPDATE_HINT под путём (после обновления QuickDrop нажать «Обновить» в chrome://extensions). В §5.3 это примечание требовалось только для README; в UI добавил ради согласованности.",
+          "Добавлены экспорты сверх спецификации: extensionManifestPath(dir) в shellUi.ts, нужен для «Показать папку» на manifest.json, покрыт тестами. Ещё EXTENSION_DIR_SOURCE_HINT и EXTENSION_UPDATE_HINT. Существующие сигнатуры не менялись.",
+          "extension_dir_in возвращает канонический путь (dunce::canonicalize, короткие имена 8.3 раскрыты), при сбое — dunce::simplified. В спецификации сказано только «упрощается dunce».",
+          "Тест «папка расширения — из исходников» в shellUi.test.ts заменён проверками нового текста шага 2: прежняя формулировка намеренно отменена Р11."
+        ],
+        "notVerified": [
+          "`npm run tauri build`: не проверено, что MSI и NSIS действительно содержат extension/ и что resource_dir() в установленном приложении указывает на неё. Проверен только cargo test, при котором tauri-build копирует ресурсы в target/debug/extension.",
+          "Внешний вид ExtensionDirRow в обоих стилях (пиксельные сцены и «Классика»), светлой и тёмной теме — приложение не запускал.",
+          "«Показать папку» (revealItemInDir на manifest.json) и «Копировать путь» в живом окне Tauri.",
+          "Принимает ли Chrome папку из Program Files (или из той, куда ставит установщик) через «Загрузить распакованное расширение».",
+          "macOS: путь в Contents/Resources/extension — не собирал."
+        ],
+        "forMainSession": [
+          "На приёмке (§10, п. 3 плана: Р11) проверить MSI/NSIS: папка extension есть рядом с exe, путь показан в «Настройки → Быстрый захват», «Показать папку» открывает её, Chrome загружает распакованное расширение из неё.",
+          "README.md и docs/ИНСТРУКЦИЯ.md (пакет docs-user) должны описывать установку расширения из папки установщика, а не только из исходников. Текст шага — EXTENSION_INSTALL_STEPS[1] в src/lib/shellUi.ts.",
+          "Предлагаемое дополнение для .progress/CLAUDE.proposed.md, раздел «Платформы → Tauri»: «Расширение Chrome кладётся в установщик (`bundle.resources`: `../extension/` → `extension/`); путь отдаёт команда `extension_dir` (shell.rs), в UI — `getExtensionDir()` из `lib/desktop.ts`».",
+          "Первый прогон npm test падал в src/lib/queryHints.test.ts (2 теста, порядок подсказок) — файл другого исполнителя; повторный прогон прошёл целиком."
+        ]
+      },
+      {
+        "key": "docs-user",
+        "status": "готово",
+        "summary": "README.md и docs/ИНСТРУКЦИЯ.md переписаны по §6.1 спецификации. Эти два файла и файл прогресса — всё, что я менял. В README: возможности, стек, команды (с cargo test и lint), структура репозитория, установщики, CI (ci.yml и release.yml), PWA и dist/pdfjs, данные и копии, клавиши, быстрый захват и расширение, все операторы поиска по search/query.ts, таблица «что куда уходит» для ИИ и распознавания, сторонний код. Лицензии сверены по полю license в node_modules и по cargo metadata. В инструкции убраны устаревшие места («корзины нет», «Быстрое добавление», глобальное сочетание в «Горячих клавишах»). Добавлены разделы: мини-окно, дубль ссылки, Markdown и вики-ссылки, распознанный текст, даты и сохранённые поиски, граф, корзина, оформление, автокопии, экспорт Markdown, расширение Chrome, расширенная таблица «Если что-то не так». Названия элементов сверял по коду. Для пакетов, которые ещё не были сданы, брал названия из спецификации. Проверки: npm run typecheck и npm test проходят (86 файлов, 2545 тестов). Rust не трогал.",
+        "deviations": [
+          "В README добавлен небольшой раздел «Что где лежит» (его нет в списке §6.1), вместо отдельной таблицы лицензий — список по группам: рабочие зависимости, шрифты, инструменты сборки, Rust.",
+          "У ocr-ui в AiSection ещё нет блока «Распознавание текста», а у ocr-logic — сборки dist/pdfjs и dist/licenses/pdfjs-decoders-LICENSE.txt. Эти разделы написаны по спецификации, а не по коду. Названия кнопок и настроек взяты оттуда («Распознать текст», «Распознать заново», «Извлечь текст», «Извлечь заново», «Показать весь текст», «Модель для распознавания», «Распознавать автоматически», «Проверить распознавание»).",
+          "Установщик в инструкции назван QuickDrop_<версия>_x64-setup.exe, чтобы не привязываться к 0.1.0: версия может подняться до 0.2.0 (открытый вопрос 4 спецификации).",
+          "Подсказку пустой выдачи («Категории «имя» нет…») описал строкой в таблице «Если что-то не так» по §5.2 спецификации. Код debts-search на момент записи ещё не был сдан.",
+          "has:image и has:link в README описаны как «изображения» и «ссылки» (в коде это фильтр по типу), is:untagged — как «без тегов и без категории» (в прежнем README было «без тегов», что неточно)."
+        ],
+        "notVerified": [
+          "Работу живой оболочки Windows я не проверял: мини-окно (скрытие при потере фокуса и повторном сочетании, монитор с курсором), трей, автозапуск, один экземпляр, расширение в живом Chrome. Описания взяты из кода и спецификации этапа 7.",
+          "Что установщик действительно содержит папку extension/, а в настройках показаны путь, «Показать папку» и «Копировать путь»: ext-bundle сдал это, но tauri build (MSI/NSIS) никто не гонял.",
+          "Поведение распознавания (очередь, пределы 3 с, 100 запросов, пауза 429, 10 минут; прекращение запросов при выключении ИИ) и состав dist/pdfjs описаны по §2–§3 спецификации. Реализация ocr-logic на момент записи не была проверена.",
+          "Размеры панелей и тексты интерфейса, которые пишут параллельные пакеты (OcrBlock, AiSection, queryHints), надо сверить с итоговым кодом.",
+          "Не знаю, что остаётся на диске после удаления программы (база WebView2). В инструкции об этом ничего нет.",
+          "Ссылку pixelfx на spritefusion.com и тексты лицензий декодеров pdf.js я не открывал и не сверял с сайтом. Лицензии декодеров определены по первым строкам файлов LICENSE_* в node_modules/pdfjs-dist/wasm."
+        ],
+        "forMainSession": [
+          "Перед коммитом сверить в docs/ИНСТРУКЦИЯ.md и README.md названия элементов распознавания с итоговыми OcrBlock.tsx и AiSection.tsx, подсказку пустой выдачи — с queryHints.ts, а dist/pdfjs и dist/licenses/pdfjs-decoders-LICENSE.txt — с результатом npm run build.",
+          "В README написано, что расширение входит в установщик. Если bundle.resources не пройдёт сборку MSI/NSIS, поправить два места: раздел «Быстрый захват и расширение» и строку про расширение в «Возможностях». То же в разделе «Быстрый захват и расширение» инструкции.",
+          "Решения Р1–Р12 и открытые вопросы спецификации отражены в тексте как есть. Если пределы автораспознавания (5 страниц, 2000 px, 100 запросов за сеанс, пауза 3 с) изменятся, поправить числа в инструкции (раздел «Распознанный текст») и в README (раздел «ИИ-помощник и распознавание»).",
+          "Если версия приложения поднимется до 0.2.0, в README и инструкции ничего менять не нужно: в них нет привязки к номеру версии."
+        ]
+      },
+      {
+        "key": "docs-claude",
+        "status": "готово",
+        "summary": "Написана полная предлагаемая редакция CLAUDE.md в .progress/CLAUDE.proposed.md (552 строки). Первая строка — по спецификации. Разделы по §6.2: возобновление работы, стек и команды, структура по фактическим каталогам, модель данных, контракты модулей, горячие клавиши, правила кода, «Дизайн» со ссылкой на docs/DESIGN.md и выжимкой, платформы (PWA, Tauri, расширение Chrome), безопасность данных. Экспорты существующих модулей сверены с кодом через grep по каждому файлу. Контракты ai, ocrState, actions, repo, queryHints, ocrView, useOcr, desktop.getExtensionDir, bundle.resources, shell::extension_dir сверены с уже написанным кодом. Контракты ocr (зрение, drainVisionBacklog, startVisionAuto), visionImage, pdfRender, pdfEngine (wasmUrl, pageImage) и плагин Vite quickdrop:pdf-decoders взяты из спецификации §3: код пакета ocr-logic на момент работы не был сдан. Перечень из 12 расхождений нынешнего CLAUDE.md с кодом лежит в .progress/agents/stage8-docs-claude.md, ниже — главные. CLAUDE.md не менялся. typecheck и test не запускались: исходники в этом пакете не менялись.",
+        "deviations": [
+          "Расхождение 1: deleteItem в нынешнем CLAUDE.md описан как каскадное удаление (файлы и ссылки), а в коде это перенос в корзину по deletedAt. Окончательное удаление — purgeItems, emptyTrash, purgeExpired.",
+          "Расхождение 2: в модели данных нет deletedAt, ocrText/ocrAt/ocrVisionAt, таблиц positions и searches, схемы Dexie v2, источников extension и share, большинства настроек, PRIVATE_SETTINGS и CLEARED_SETTINGS.",
+          "Расхождение 3: в структуре нет graph, icons, markdown, palette, items/detail, views Graph/Trash/Items/settings, styles, store/graph, selection, confirm, lib/graph, ambient, pixelfx. Нет также capture.html, shell.rs, backup.rs, ext_server.rs, capabilities/capture.json, extension/, scripts/, docs/, .github/.",
+          "Расхождение 4: searchItems получил 4-й аргумент options, а при пустом тексте возвращает записи, прошедшие фильтр, а не все. parseQuery принимает now. Появились операторы date/after/before, is:trash и is:untagged, русские псевдонимы. ImportReport расширен. useAllItems теперь без корзины. ItemList принимает variant 'trash'.",
+          "Расхождение 5: Del в списке теперь переносит запись в корзину, а не удаляет. Не описаны клавиши 1–5, корзины и графа, а также адрес #/раздел. Глобальное сочетание в Tauri открывает мини-окно (при captureWindow), а не поднимает главное окно.",
+          "Расхождение 6: раздел «Дизайн» устарел (одна бумажная тема, lucide напрямую). Теперь пять сцен, примитивы px-*, значки через Icon, useScene, четыре шрифта, запрет модификатора «!». Раздел заменён ссылкой на docs/DESIGN.md и короткой выжимкой.",
+          "Расхождение 7: Tauri описан с одним окном, тремя функциями desktop.ts и одним набором прав. В коде два окна, трей, автозапуск в HKCU, один экземпляр, около 20 команд Rust, два файла capabilities, ресурсы установщика, сервер расширения.",
+          "Расхождение 8: PWA share_target теперь пишет source 'share', а не 'paste'. Правила сети и записи в БД не учитывали recognizeImage, входящий сервер расширения и исключение settleStaleLinkMeta. Нет правил про корзину и распознавание (не меняют updatedAt) и про confirmDialog.",
+          "Расхождение 9: в стеке нет pdfjs-dist, react-markdown, remark-gfm, cmdk, шрифтов, oxlint, npm run lint, cargo test, check-version.mjs. Не сказано, что Vitest работает без DOM.",
+          "Отступление от §6.2: в разделе «Стек» значки lucide описаны как допустимые только в components/icons и ui/*. Это соответствует DESIGN.md §2.6, но в нынешнем CLAUDE.md такого правила нет.",
+          "Файл записан с переводами строк CRLF: питоновская правка на Windows превратила LF в CRLF. На содержание не влияет."
+        ],
+        "notVerified": [
+          "Контракты ocr.ts (зрение, drainVisionBacklog, startVisionAuto), visionImage.ts, pdfRender.ts, pdfEngine.ts (wasmUrl, pageImage), pdfText.ts (pageImage) и плагин quickdrop:pdf-decoders записаны по спецификации §3: на момент работы этих файлов в коде не было. После сдачи ocr-logic сверить имена и сигнатуры.",
+          "Утверждения про precache (pdfjs/** не в precache) и dist/pdfjs/ взяты из спецификации, в vite.config.ts это ещё не реализовано.",
+          "Состав файлов проверен на момент чтения: ocr-ui, debts-ui, debts-search, ext-bundle, ci и docs-user работали параллельно. Описание desktop.getExtensionDir, shell::extension_dir, queryHints, useOcr, ocrView, ci.yml сверено с кодом, который уже лежал в рабочем каталоге.",
+          "Конкретные поля ввода и тексты в UI (кроме перечисленных в спецификации) не сверялись.",
+          "Правки Rust-кода и настройки в живом окне Tauri не проверялись: описание оболочки взято из исходников и HANDOFF."
+        ],
+        "forMainSession": [
+          "Перед применением .progress/CLAUDE.proposed.md сверить раздел «ocr.ts, ocrState.ts, visionImage.ts, pdfText.ts, pdfEngine.ts, pdfRender.ts» с готовым кодом ocr-logic: имена экспортов, VISION_*, drainVisionBacklog, startVisionAuto, openPdfPages, createPdfEngine(.., options).",
+          "Если ocr-logic при сдаче изменит vite.config.ts (workbox.globIgnores для pdfjs/**), раздел «Платформы → PWA» уже это описывает. Если нет — поправить две строки там и в расхождении 9 в .progress/agents/stage8-docs-claude.md.",
+          "Предложение по HANDOFF §11: после применения новой редакции убрать из HANDOFF пометку «CLAUDE.md ждёт пользователя» и закрыть вопрос 7 из спецификации (замена раздела «Дизайн»).",
+          "В редакции перечислены состав настроек и PRIVATE_SETTINGS/CLEARED_SETTINGS по коду на сейчас. Если ocr-data что-то изменит, список надо обновить.",
+          "Файл CLAUDE.proposed.md лежит с CRLF. Если нужен LF, нормализовать при применении.",
+          "Для HANDOFF: правило «Del в списке — в корзину» в нынешнем CLAUDE.md устарело ещё с этапа 4 и есть в моём списке расхождений."
+        ]
+      },
+      {
+        "key": "ci",
+        "status": "готово",
+        "summary": "Создан ci.yml (web на ubuntu: check-version без тега, npm ci, typecheck, test, build; rust на windows: npm ci, npm run build, cargo test --locked; триггеры push в main и pull_request, права contents: read). В release.yml в задачу desktop перед tauri-action добавлены шаги сборки фронтенда и cargo test с условием matrix.platform == 'windows-latest'; остальное не менялось. Версии действий как в release.yml.",
+        "deviations": [],
+        "notVerified": [
+          "Реальный прогон workflow на GitHub Actions",
+          "Разбор YAML парсером (пакет yaml не установлен; отступы сверены вручную)",
+          "cargo test и npm run build локально не запускал (Rust не трогал; build запрещён заданием)"
+        ],
+        "forMainSession": [
+          "Выполнено локально: node scripts/check-version.mjs без аргумента проходит, npm run typecheck и npm test (84 файла, 2499 тестов) зелёные.",
+          "Git Windows предупреждает о конвертации LF в CRLF для release.yml; файлы записаны с LF."
+        ]
+      }
+    ],
+    "review": {
+      "confirmed": [
+        {
+          "dim": "vision",
+          "title": "«Очистить» распознанный текст у PDF с текстовым слоем превращает его в «скан»: страницы уходят в ИИ, текст возвращается",
+          "file": "src/lib/ocrState.ts",
+          "severity": "серьёзно"
+        },
+        {
+          "dim": "vision",
+          "title": "Повторное включение ИИ отправляет всё, что добавлено за время, пока он был выключен",
+          "file": "src/lib/ocr.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "vision",
+          "title": "Импорт копии: записи с createdAt после включения авто молча уходят в ИИ (спецификация обещает обратное)",
+          "file": "src/lib/ocrState.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "vision",
+          "title": "Любой ответ 400 со словом «image» считается ошибкой настройки: одна «плохая» картинка навсегда блокирует автораспознавание",
+          "file": "src/lib/ai.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "vision",
+          "title": "Сбой страницы PDF считается временным: при каждом запуске предыдущие страницы скана отправляются в ИИ заново, текст не сохраняется никогда",
+          "file": "src/lib/ocr.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "vision",
+          "title": "Вытянутые изображения (длинные скриншоты) ужимаются до нечитаемых и навсегда получают «Текст не найден»",
+          "file": "src/lib/visionImage.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "ui-docs",
+          "title": "Стёртый в редакторе распознанный текст уничтожается автосохранением без «Отменить», редактор исчезает посреди правки",
+          "file": "src/components/items/detail/OcrBlock.tsx",
+          "severity": "серьёзно"
+        },
+        {
+          "dim": "ui-docs",
+          "title": "«Отменить» у распознавания не действует при включённом автораспознавании: запись снова уходит в ИИ при возврате к окну",
+          "file": "src/lib/ocr.ts",
+          "severity": "серьёзно"
+        },
+        {
+          "dim": "ui-docs",
+          "title": "После «Очистить» PDF с текстовым слоем считается сканом: ложное «нет текстового слоя», а с ИИ — отправка страниц вместо локального извлечения",
+          "file": "src/components/items/detail/ocrView.ts",
+          "severity": "средне"
+        },
+        {
+          "dim": "ui-docs",
+          "title": "Повторное включение ИИ отправляет картинки, добавленные, пока он был выключен",
+          "file": "src/views/settings/AiSection.tsx",
+          "severity": "средне"
+        }
+      ],
+      "rejected": [],
+      "minor": [
+        {
+          "title": "Временный отказ открытия PDF для зрения не попадает в autoSkip: документ переразбирается на каждом обходе и может занять всю порцию задела",
+          "file": "src/lib/ocr.ts"
+        },
+        {
+          "title": "Мелочи логики распознавания и сети (одним списком)",
+          "file": "src/lib/ai.ts"
+        },
+        {
+          "title": "Строка «Изображение будет отправлено на …» остаётся под полем правки распознанного текста",
+          "file": "src/components/items/detail/OcrBlock.tsx"
+        },
+        {
+          "title": "Утверждения «при выключенном ИИ ничего не отправляется» расходятся с кнопками проверки",
+          "file": "src/views/settings/AiSection.tsx"
+        },
+        {
+          "title": "Инструкция: переключатель «Просмотр / Исходник» находится не над текстом",
+          "file": "docs/ИНСТРУКЦИЯ.md"
+        },
+        {
+          "title": "В предлагаемом CLAUDE.md потеряны действующие правила и неточно записана сигнатура pickDirectory",
+          "file": ".progress/CLAUDE.proposed.md"
+        }
+      ]
+    },
+    "fixes": [
+      {
+        "group": "logic",
+        "count": 9,
+        "summary": "Исправлено 7 находок полностью, 8-я и 9-я — частично. `npm run typecheck` и `npm test` проходят: 89 файлов, 2651 тест. Rust не трогал, cargo test не запускал.\n\nНовые поля и функции (сигнатуры не менялись, только добавления):\n- в Item: `ocrClearedAt` («текст убрал пользователь») и `ocrAutoSkipAt` («автораспознавание запись не берёт»);\n- в repo: `clearOcrText`, `markVisionAutoSkip`;\n- в visionImage: `planVisionTiles` и статус 'tiles';\n- в pdfRender: `PDF_OPEN_TIMEOUT_MS`;\n- в VisionError: флаг `unknown`.\n\nОтсчёт задела теперь сдвигает db/settings.setSettings, а не интерфейс: когда автораспознавание снова начинает работать или меняется хост. Явно переданный `aiAutoOcrSince` уважается, поэтому `setAutoOcr` в AiSection работает как раньше.\n\nИмпорт сделан по варианту A: свой задел устройства сохраняется. Отметка `ocrAutoSkipAt` не экспортируется и не читается из копии.\n\nОтчёт: .progress\\agents\\fix-review8-logic.md.",
+        "fixed": [
+          "1 [серьёзно] Очистка текста PDF со слоем больше не делает его «сканом». Поле Item.ocrClearedAt и repo.clearOcrText. isScanPdf и needsVision это поле учитывают. actClearOcrText и actSaveOcrText с пустым текстом вызывают clearOcrText, «Отменить» через setOcrText снимает отметку. Импорт и экспорт переносят поле, при слиянии оно идёт вместе с победившим текстом. Тесты в ocrState, repo, actions, ocr и exportImport.",
+          "2 [средне] Когда ИИ включают снова, возвращают ключ или модель или меняют хост API, отсчёт aiAutoOcrSince сдвигается на текущий момент. Это делает db/settings.setSettings в одной транзакции с чтением, setSetting вызывает его же. Явно переданный aiAutoOcrSince не меняется. Тесты в repo.test (settings) и в ocr.test: включение после выключения → drainVisionBacklog=0, новая запись → 1.",
+          "3 [средне] Импорт: новым записям из копии, которые ждут распознавания, ставится ocrAutoSkipAt (вариант A, свой задел устройства остаётся). isVisionBacklog такие записи исключает. Своя отметка сохраняется, даже если победила версия из копии. В экспорт поле не попадает, из копии не читается. Тесты в exportImport.test для merge и replace.",
+          "4 [средне] Классификация ошибок в ai.ts. Ответ с признаками ошибки самого изображения (IMAGE_REJECTED) даёт VisionError('item'). VISION_REJECTED сужен до явных «модель не принимает изображения». 408 теперь transient. Непонятные 400/422 остаются config с флагом unknown: фоновая задача кладёт запись в autoSkip и увеличивает failStreak, авто останавливается только после серии VISION_AUTO_FAIL_STREAK таких ошибок. Тесты в ai.test и ocr.test.",
+          "5 [средне] Сбой doc.page(n) кроме прерывания стал VisionError('item') с отметкой ocrVisionAt. В следующем сеансе страницы заново не отправляются. AbortError даёт skipped без отметки. Тесты в ocr.test.",
+          "6 [средне] Вытянутые изображения режутся на полосы (planVisionTiles). Режутся картинки, у которых одна сторона больше другой в 3 раза и более. Полосы не длиннее 2000 px, с перекрытием 80 px, их не больше 5, короткая сторона без лишнего уменьшения. PreparedImage получил статус 'tiles', RasterBackend.encode — необязательный source. ocr.ts отправляет каждую полосу отдельным запросом, заранее проверяет предел сеанса и склеивает тексты. Тесты в visionImage.test и ocr.test.",
+          "7 [серьёзно] «Отменить» у задачи добавляет запись в autoSkip и записывает ocrAutoSkipAt (repo.markVisionAutoSkip). Задача завершается только после этой записи. Прерывание сигналом или resetOcrSession отказом не считается. Ручная кнопка работает. Тесты (а)–(д) в ocr.test.",
+          "8 [мелочь] Временный отказ открытия PDF в фоне добавляет запись в autoSkip, failStreak не растёт: это не сбой сервиса. Предел времени открытия для зрения выровнен с текстовым слоем: PDF_OPEN_TIMEOUT_MS = PDF_TIMEOUT_MS = 30 с. Тесты в ocr.test и pdfRender.test.",
+          "9.1 Оба fetch к ИИ (recognizeImage и suggestForItem) идут с redirect: 'error'. Тест в ai.test.",
+          "9.2 Поле message.refusal при пустом content даёт VisionError('item') «Модель отказалась распознавать изображение». Блоки <think>…</think> вырезаются. Фразы отказа эвристикой не ловятся: риск ложных срабатываний. Тесты в ai.test.",
+          "9.3 Ограда снимается, только если внутри нет другой строки-ограды. Тест в ai.test.",
+          "9.5 По окончании паузы (429 или серия ошибок) задел разбирается по таймеру. Таймер ставится только после startVisionAuto, resetOcrSession его снимает. Тест в ocr.test.",
+          "9.9 drainVisionBacklog выбирает записи через where('createdAt').aboveOrEqual(since) вместо перебора всей таблицы."
+        ],
+        "skipped": [
+          "UI, src/components/items/detail/ocrView.ts, ocrBlockView, перед строкой 120 (комментарий «PDF, у которого текстовый слой ещё не проверен…»): добавить `if (kind === 'pdf' && item.ocrClearedAt !== undefined && item.ocrVisionAt === undefined) return { kind: 'start', label: 'Извлечь текст', network: null }`. Сейчас после моей правки isScanPdf=false, поэтому кнопка уже «Извлечь текст» и запуск идёт локально (проверено тестом в ocr.test). Но при включённом ИИ рядом выводится ложная строка о сети (network:'pdf'). Тест для ocrView.test.ts: очищенный PDF со слоем {ocrAt:5, ocrClearedAt:5} при aiBlocked=true и false даёт {kind:'start', label:'Извлечь текст', network:null}.",
+          "9.7 UI, src/views/settings/AiSection.tsx: абзац «Пока ИИ-помощник выключен, ничего не отправляется» заменить на «…ничего не отправляется, кроме проверок по кнопкам ниже». Подсказку автораспознавания («Записи, добавленные раньше, не трогаются») можно дополнить: «а также добавленные, пока ИИ был выключен, и пришедшие из резервной копии». Логика в AiSection больше не нужна: сдвиг since делает db/settings.",
+          "9.4 Предел 100 запросов за сеанс сделать скользящим окном (например, 100 за сутки) и показывать состояние. Это меняет спецификацию (Р8, текст toast «за сеанс… после перезапуска»), решение за основной сессией.",
+          "9.6 Снимать config-остановку по таймеру или кнопке (402/403 после пополнения баланса). Это меняет спецификацию, решение за основной сессией.",
+          "9.8 Несколько вкладок веб-версии ведут независимые очереди. Нужна блокировка через Web Locks или BroadcastChannel. Это крупная правка без тестовой среды, лучше в долги.",
+          "9.10 Пустой ответ при «Распознать заново» стирает прежний, в том числе исправленный вручную, текст. Так записано в спецификации. Изменить поведение может только основная сессия.",
+          "5 (доп.) Записывать частичный текст PDF и вести постоянный счётчик transient-неудач между сеансами (в том числе «200 без choices» и 5xx на одной странице). Это меняет spec-stage8.md:306-307 и Р8. Сделано только главное: сбой растеризации получает отметку.",
+          "6.3 Отличать нехватку памяти при createImageBitmap от «не картинка». Без размеров до декодирования надёжного признака нет. Если бросать вместо failed, битые файлы перечитывались бы каждый сеанс, а failStreak смешивался бы с ошибками сервиса. Решение за основной сессией. Для длинных скриншотов полосы декодируются из одного bitmap, лишней памяти не требуют.",
+          "Документы (не моя группа): .progress/spec-stage8.md — §3.3 и строка 341 (импорт), 338-341 (Р3: сдвиг since при повторном включении и смене хоста), таблица 183-189 и Р8 (item для ошибок изображения, unknown 400/422, 408, сбой страницы = item), 351 (отмена = ocrAutoSkipAt). .progress/CLAUDE.proposed.md:301/540 — поля ocrClearedAt и ocrAutoSkipAt, функции repo.clearOcrText и markVisionAutoSkip, сдвиг aiAutoOcrSince в db/settings, нарезка длинных изображений."
+        ]
+      },
+      {
+        "group": "ui",
+        "count": 5,
+        "summary": "Исправлены находки 1, 3, 4, 5 и UI-часть находки 2. Чужие файлы не трогал. typecheck и npm test проходят (89 файлов, 2607 тестов). Отчёт: .progress\\agents\\fix-review8-ui.md.\n\nНаходка 2 исправлена только в ocrView. Серверная часть (ocr.ts) остаётся за другим исполнителем, см. skipped. Пока она не сделана, при включённом ИИ кнопка «Извлечь текст» у очищенного PDF по-прежнему уйдёт сразу в зрение. При выключенном ИИ исправление работает полностью.",
+        "fixed": [
+          "1. OcrBlock.tsx: пустой черновик правки (isBlankOcrDraft в ocrView.ts, через cleanOcrText) не сохраняется автосохранением (onSave возвращает false, база autosave откатывается, редактор не исчезает). Очистка идёт в onCommitted через actClearOcrText, то есть с toast и «Отменить». В ContentEditor добавлен необязательный onEditingChange. Тест isBlankOcrDraft добавлен в ocrView.test.ts.",
+          "2 (UI-часть). ocrView.ts: PDF без ocrVisionAt и без note.empty показывает «Извлечь текст» (сеть указана только при доступном ИИ). Примечание «В PDF нет текстового слоя» — только при note.empty или ocrVisionAt. Тесты ocrView.test.ts обновлены: PDF после очистки при aiBlocked true и false, note.empty, ocrVisionAt.",
+          "3. AiSection.tsx: переключатель ИИ идёт через setAiEnabled и новую чистую aiEnabledPatch (src/views/settings/aiPatch.ts, тест aiPatch.test.ts). При включении ИИ с уже включённым aiAutoOcr aiAutoOcrSince сдвигается на Date.now() одним setSettings. Тексты раздела дополнены: добавленное при выключенном ИИ не распознаётся автоматически. Пояснение «Сейчас недоступно» теперь видно и при включённом авторазборе.",
+          "4. OcrBlock.tsx: строка «Изображение будет отправлено на …» не рисуется, пока открыто поле правки (через onEditingChange). Находка подтверждена по коду.",
+          "5. AiSection.tsx: формулировка уточнена: при выключенном ИИ записи и их изображения не отправляются, кнопки проверки отправляют только проверочные данные. Находка подтверждена по коду: проверки работают с aiEnabled: true."
+        ],
+        "skipped": [
+          "2. src/lib/ocr.ts:144 (чужая группа): заменить `if (vision && isScanPdf(item))` на `if (vision && !force && isScanPdf(item))`, чтобы ручной запуск PDF без ocrVisionAt сначала читал текстовый слой. Обновить doc-комментарий extractItemText (ocr.ts:103-104). Добавить тесты в ocr.test.ts: extractItemText(item,{force:true,vision:true}) вызывает extractPdfText, не зрение, via='text-layer'; без force поведение прежнее (pdf-vision). Добавить строку «PDF без ocrVisionAt, ocrAt есть, текста нет → «Извлечь текст»» в таблицу spec-stage8.md §4.2.",
+          "2 (картинка после «Очистить»). Не менял: «Распознать заново» вместо «Текст не найден» для картинки с ocrVisionAt и без note убрало бы честное «Текст не найден» у действительно пустых картинок (после перезапуска они выглядят так же), а выигрыш только косметический. Существующий тест это поведение закрепляет. Чисто правится в actions.ts, как и repo.ts: не отделять очистку пользователем от «пробовали, текста нет» без нового поля.",
+          "3. src/lib/actions.ts:277 (чужая группа): исправить комментарий actSaveOcrText. Пустой текст из интерфейса сюда больше не приходит (OcrBlock не вызывает его с пустым черновиком), очистка идёт через actClearOcrText. Сигнатуру не менять.",
+          "3 (необязательно). Сдвиг aiAutoOcrSince при смене aiBaseUrl или пресета не делал: пометка находки «менее важный случай», вне основного сценария.",
+          "5. README.md:333 и .progress/CLAUDE.proposed.md:434 (чужие файлы): заменить «никакие запросы к ИИ не отправляются» / «при aiEnabled = false не уходит ничего» на «записи и их изображения не отправляются; кнопки проверки в настройках отправляют только проверочные данные»."
+        ]
+      },
+      {
+        "group": "docs-ci",
+        "count": 2,
+        "summary": "Обе находки подтвердились по коду и исправлены. typecheck и npm test (88 файлов, 2603 теста) проходят. Rust не трогал.",
+        "fixed": [
+          "1. docs/ИНСТРУКЦИЯ.md:182 — переключатель «Просмотр / Исходник» теперь описан как стоящий под текстом справа рядом с «Изменить» (у файлов .md — над предпросмотром). Подтверждено: ContentEditor.tsx:173–177 и FilePreview.tsx:116.",
+          "2. .progress/CLAUDE.proposed.md — в раздел «Дизайн» возвращены строка про bg-surface/bg-sidebar и правило про ThemeProvider/useTheme, next-themes и ui/sonner. Подтверждено: ui/sonner.tsx:3 импортирует useTheme из ThemeProvider.",
+          "2б. .progress/CLAUDE.proposed.md:351 — запись pickDirectory(purpose) заменена на pickDirectory({ purpose?, defaultPath? }). Подтверждено: desktop.ts:291.",
+          "2в. .progress/CLAUDE.proposed.md — у TagInput возвращено примечание «автодополнение из useAllTags, Enter/запятая/пробел добавляют». Подтверждено: TagInput.tsx использует useAllTags и обрабатывает Enter."
+        ],
+        "skipped": []
+      }
+    ],
+    "checks": {
+      "typecheck": "npm run typecheck (tsc -b): успешно, код выхода 0, ошибок нет.",
+      "tests": "npm test (vitest run): 89 файлов тестов, 2651 тест, все прошли, упавших нет. Код выхода 0.",
+      "cargo": "cargo test --manifest-path src-tauri/Cargo.toml: прошло 130, упало 0, игнорировано 2 (shell::tests::autostart_writes_current_user_only, tests::fetch_public_page). Doc-tests и бинарный тест без тестов, ошибок нет. Код выхода 0. Предупреждения компилятора: в последних 120 строках вывода не видны, полный вывод компиляции не проверялся, поэтому наличие предупреждений не подтверждено. Файлы не менялись."
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Спецификация"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Основа"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Пакеты"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 4,
+      "title": "Поиск"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 5,
+      "title": "Проверка"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 6,
+      "title": "Исправления"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 7,
+      "title": "Прогон"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "spec-stage8",
+      "phaseIndex": 1,
+      "phaseTitle": "Спецификация",
+      "agentId": "a4eb321829f4b4a96",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1794539805789,
+      "queuedAt": 1794539805406,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Спецификация этапа 8 написана: .progress\\spec-…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794540712218,
+      "tokens": 313866,
+      "toolCalls": 57,
+      "durationMs": 906429,
+      "resultPreview": "{\"summary\":\"Спецификация этапа 8 написана: .progress\\\\spec-stage8.md (12 разделов), отчёт — .progress\\\\agents\\\\spec-stage8.md. Код не менялся, git не трогался, ничего не устанавливалось.\\n\\nЧто выяснено по коду:\\n- Поиск (индекс и сниппет), резервная копия и экспорт Markdown уже работают с ocrText и не меняются; в копию надо добавить только новое поле. Интерфейса для …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "stage8:ocr-data",
+      "phaseIndex": 2,
+      "phaseTitle": "Основа",
+      "agentId": "ab02dbd4121d9b0a7",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794540712237,
+      "queuedAt": 1794540712221,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794540928652,
+      "tokens": 135862,
+      "toolCalls": 73,
+      "durationMs": 216415,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Пакет ocr-data готов. types.ts: добавлены Item.ocrVisionAt? с комментарием и Settings.aiAutoOcrSince со значением по умолчанию 0. В комментарий aiAutoOcr дописано, куда отправляется изображение. В ITEM_SOURCES добавлен 'share'. settingsSchema: aiAutoOcrSince проверяется как конечное число >= 0, по тому же правилу, что и backupLastAt. repo.ts: добавлены setVisionText(i…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "stage8:ocr-facade",
+      "phaseIndex": 2,
+      "phaseTitle": "Основа",
+      "agentId": "ac2494f42089399f3",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794540928655,
+      "queuedAt": 1794540928653,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541364467,
+      "tokens": 166478,
+      "toolCalls": 43,
+      "durationMs": 435812,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Пакет ocr-facade готов. Новый src\\\\lib\\\\ocrState.ts: пределы распознавания, правила ocrKindOf/isScanPdf/needsVision/isVisionBacklog, типы OcrOutcome/OcrJob/OcrNote и хранилище состояния сеанса с подпиской (ссылки стабильны). В src\\\\lib\\\\ai.ts только добавления: VisionError (config/item/transient), visionModelOf, visionAvailability, aiHost…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "stage8:ocr-logic",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "a0ce2ba5dc6f0804e",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794542586718,
+      "tokens": 295053,
+      "toolCalls": 101,
+      "durationMs": 1222232,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Пакет ocr-logic готов. typecheck проходит, npm test проходит: 88 файлов, 2603 теста. Связка ocr, actions и pdfRender прогнана 4 раза подряд без сбоев, oxlint замечаний к файлам пакета не дал.\\n\\nЧто сделано:\\n- visionImage.ts (новый): planVisionSize и prepareVisionImage. Тип определяется по самому Blob, SVG растеризуется через toImageBlob, прозрачность заливается белы…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "stage8:ocr-ui",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "a0f35e6172431f949",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541633699,
+      "tokens": 165273,
+      "toolCalls": 26,
+      "durationMs": 269210,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Пакет ocr-ui сделан. Хуки useOcrJob и useOcrNote готовы. Чистая ocrBlockView покрывает всю таблицу 4.2 тестом (26 тестов). OcrBlock встроен в ItemContent между FileBlock и заметкой. В AiSection добавлен блок «Распознавание текста». В docs/DESIGN.md добавлен §14. `npm run typecheck` проходит, `npm test` — 86 файлов, 2545 тестов, `oxlint` по файлам пакета чистый. Внешни…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "stage8:debts-search",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "ac59cb44386548241",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541576062,
+      "tokens": 124813,
+      "toolCalls": 48,
+      "durationMs": 211572,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Пакет debts-search готов. composeQuery (src/search/serialize.ts): если в строке поиска есть cat: со значением, categoryId фильтра не сериализуется — больше нет «cat:none cat:x» и дубля «cat:x cat:x»; пересечение типов сохранено, parseQuery вызывается один раз. В search.test.ts прежний тест «известное ограничение» (ожидал 'cat:Работа cat:Дом') заменён новыми: строка по…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "stage8:debts-ui",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "ad7c28d9aae0a01ac",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541478738,
+      "tokens": 95051,
+      "toolCalls": 14,
+      "durationMs": 112917,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Три долга закрыты. FilterBar: при ширине меньше 768 px сортировка и вид закреплены справа вне прокручиваемого ряда, компактно (по 36 px). pwa.ts: share_target открывает быструю запись с source: 'share'. README pixelfx и имя теста больше не утверждают, что шапка math.ts попадает в сборку. typecheck проходит. Полный npm test даёт один красный тест в чужом файле (shellUi…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "stage8:ext-bundle",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "a2ba7373fef7726cd",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541587807,
+      "tokens": 146845,
+      "toolCalls": 57,
+      "durationMs": 223316,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Расширение Chrome кладётся в установщик (Р11, §5.3). tauri.conf.json: bundle.resources = { \\\"../extension/\\\": \\\"extension/\\\" }. Это форма Map из tauri-utils 2.10.2: каталог обходится рекурсивно, структура сохраняется. Я сверил это по resources.rs и тесту resource_paths_iter_map_allow_walk. cargo test собирает проект, а tauri-build копирует папку в target/debug/extensi…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "stage8:docs-user",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "af2cb3886182a8a76",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364472,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541813601,
+      "tokens": 329324,
+      "toolCalls": 79,
+      "durationMs": 447778,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"README.md и docs/ИНСТРУКЦИЯ.md переписаны по §6.1 спецификации. Эти два файла и файл прогресса — всё, что я менял. В README: возможности, стек, команды (с cargo test и lint), структура репозитория, установщики, CI (ci.yml и release.yml), PWA и dist/pdfjs, данные и копии, клавиши, быстрый захват и расширение, все операторы поиска по search/query.ts, таблица «что куда у…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 10,
+      "label": "stage8:docs-claude",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "ad446f5e8327a381b",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364473,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541691653,
+      "tokens": 274660,
+      "toolCalls": 50,
+      "durationMs": 325829,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Написана полная предлагаемая редакция CLAUDE.md в .progress/CLAUDE.proposed.md (552 строки). Первая строка — по спецификации. Разделы по §6.2: возобновление работы, стек и команды, структура по фактическим каталогам, модель данных, контракты модулей, горячие клавиши, правила кода, «Дизайн» со ссылкой на docs/DESIGN.md и выжимкой, платформы (PWA, Tauri, расширение Chro…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 11,
+      "label": "stage8:ci",
+      "phaseIndex": 3,
+      "phaseTitle": "Пакеты",
+      "agentId": "a3fb1c503f217f917",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794541364486,
+      "queuedAt": 1794541364473,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "готово",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794541406357,
+      "tokens": 71820,
+      "toolCalls": 7,
+      "durationMs": 40532,
+      "resultPreview": "{\"status\":\"готово\",\"summary\":\"Создан ci.yml (web на ubuntu: check-version без тега, npm ci, typecheck, test, build; rust на windows: npm ci, npm run build, cargo test --locked; триггеры push в main и pull_request, права contents: read). В release.yml в задачу desktop перед tauri-action добавлены шаги сборки фронтенда и cargo test с условием matrix.platform == 'windows-latest'; остальное не менялос…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 12,
+      "label": "review8:vision",
+      "phaseIndex": 4,
+      "phaseTitle": "Поиск",
+      "agentId": "af75bddcb7bbfa10f",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1794542586741,
+      "queuedAt": 1794542586723,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Прочитано целиком: .progress/spec-stage8.md (§0–§6.2 полнос…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543387437,
+      "tokens": 231877,
+      "toolCalls": 40,
+      "durationMs": 800696,
+      "resultPreview": "{\"findings\":[{\"title\":\"«Очистить» распознанный текст у PDF с текстовым слоем превращает его в «скан»: страницы уходят в ИИ, текст возвращается\",\"file\":\"src/lib/ocrState.ts\",\"line\":49,\"severity\":\"серьёзно\",\"description\":\"isScanPdf = pdf && ocrAt !== undefined && (!ocrText || ocrVisionAt !== undefined). actClearOcrText (src/lib/actions.ts:285) и правка текста до пустого (actSaveOcrText, :278) вызыва…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 13,
+      "label": "review8:ui-docs",
+      "phaseIndex": 4,
+      "phaseTitle": "Поиск",
+      "agentId": "a0ea3a2ca5bd9e6df",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1794542586741,
+      "queuedAt": 1794542586723,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Прочитано целиком: .progress/plan-combined.md; .progress/HA…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543367060,
+      "tokens": 354174,
+      "toolCalls": 66,
+      "durationMs": 779492,
+      "resultPreview": "{\"findings\":[{\"title\":\"Стёртый в редакторе распознанный текст уничтожается автосохранением без «Отменить», редактор исчезает посреди правки\",\"file\":\"src/components/items/detail/OcrBlock.tsx\",\"line\":201,\"severity\":\"серьёзно\",\"description\":\"OcrBlock отдаёт ContentEditor `onSave={(v) => actSaveOcrText(item.id, v)}`. ContentEditor сохраняет черновик через useAutosave: по таймеру 800 мс, при blur и при…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 14,
+      "label": "verify8:ui-docs:1",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a1a3d800179e5bc21",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543367084,
+      "queuedAt": 1794543367065,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "серьёзно",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543425656,
+      "tokens": 91642,
+      "toolCalls": 10,
+      "durationMs": 58571,
+      "resultPreview": "{\"real\":true,\"severity\":\"серьёзно\",\"evidence\":\"Опровергнуть не удалось: сценарий подтверждается кодом от начала до конца.\\n\\n1. Поле стёрто, через 800 мс уходит пустая запись. В ContentEditor.tsx:46 стоит useAutosave(saved, onSave, 800). AutoTextarea на onChange вызывает setValue(''), autosave.ts:93 ставит таймер на flush. flush в autosave.ts:50-65 видит отличие от сохранённого и вызывает save('')…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 15,
+      "label": "verify8:ui-docs:2",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "aa1f89c451c491b6b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543367084,
+      "queuedAt": 1794543367065,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "серьёзно",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543422639,
+      "tokens": 88838,
+      "toolCalls": 11,
+      "durationMs": 54647,
+      "resultPreview": "{\"real\":true,\"severity\":\"серьёзно\",\"evidence\":\"Дефект подтверждён по коду. Опровергнуть не удалось.\\n\\n1. Отмена ничего не запоминает. В src\\\\lib\\\\ocr.ts:161 стоит `cancel: () => ctrl.abort()`. Через `publish` (строка 81) эта функция попадает в OcrJob, а `actCancelRecognize` (src/lib/actions.ts:274) вызывает именно её. Прерывание уходит в одну из двух веток. Если задача ещё ждёт оче…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 16,
+      "label": "verify8:ui-docs:3",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a4b61d364c2a421f0",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543367084,
+      "queuedAt": 1794543367065,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543409837,
+      "tokens": 79486,
+      "toolCalls": 8,
+      "durationMs": 41844,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"I traced the code; the defect is confirmed.\\n\\n1. `src/lib/actions.ts:285-298`: `actClearOcrText` calls `setOcrText(item.id, '')`. Saving empty text in the editor does the same, through `actSaveOcrText` at line 278.\\n2. `src/db/repo.ts:962-968`: `setOcrText` stores `{ ocrText: undefined, ocrAt: Date.now() }` and leaves `ocrVisionAt` unset. The repo comm…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 17,
+      "label": "verify8:ui-docs:4",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a26585d8cb65024fb",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543367085,
+      "queuedAt": 1794543367065,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543421335,
+      "tokens": 87302,
+      "toolCalls": 9,
+      "durationMs": 53341,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Дефект подтверждён по коду, и его закрепляет существующий тест.\\n\\n1. Переключатель ИИ в src\\\\views\\\\settings\\\\AiSection.tsx:155-158 вызывает только `setSetting('aiEnabled', v)`. `aiAutoOcrSince` записывается только в `setAutoOcr` (строки 139-143), когда включают «Распознавать автоматически». Выключение ИИ не сбрасывает ни `aiAutoOcr`, ни…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 18,
+      "label": "verify8:vision:1",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a3cd2523533f967dd",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "серьёзно",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543432172,
+      "tokens": 87943,
+      "toolCalls": 9,
+      "durationMs": 44719,
+      "resultPreview": "{\"real\":true,\"severity\":\"серьёзно\",\"evidence\":\"Опровергнуть не удалось, дефект настоящий. Цепочка подтверждается кодом и тестами, которые уже есть в репозитории.\\n\\n1) Состояние после очистки. Чем больше. actClearOcrText (src/lib/actions.ts:285-299) и actSaveOcrText с пустым текстом (:278-282) вызывают repo.setOcrText(id, ''). Тест src/db/repo.test.ts:1010 и спецификация (.progress/spec-stage8.md:…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 19,
+      "label": "verify8:vision:2",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a51d6f7db9e47b324",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543431999,
+      "tokens": 84704,
+      "toolCalls": 9,
+      "durationMs": 44544,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Я пытался опровергнуть находку, но код её подтверждает.\\n\\n1. src/lib/ocrState.ts:69-71: запись считается заделом, если `isVisionBacklog = since > 0 && item.createdAt >= since && needsVision(item)`. Состояние ИИ в момент создания записи не учитывается, отметка «добавлено при выключенном ИИ» не ставится.\\n2. Пока ИИ выключен, отметок тоже нет. Фоновая за…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 20,
+      "label": "verify8:vision:3",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "af60d610ebc63d554",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543440490,
+      "tokens": 84779,
+      "toolCalls": 11,
+      "durationMs": 53034,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Подтверждаю, дефект настоящий: код делает не то, что обещают спецификация и проект CLAUDE.proposed.md.\\n\\n1) src/lib/ocrState.ts:69-71. Защита задела одна: `isVisionBacklog = since > 0 && item.createdAt >= since && needsVision(item)`. О происхождении записи она ничего не знает.\\n2) src/lib/exportImport.ts:410. sanitizeItem берёт createdAt из копии (`ts(…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 21,
+      "label": "verify8:vision:4",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "afcea6ab66e41be78",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543444877,
+      "tokens": 89979,
+      "toolCalls": 8,
+      "durationMs": 57420,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Опровергнуть не удалось, сценарий прослеживается по коду.\\n\\n1. Классификация ответов, src/lib/ai.ts:247-266. `VISION_REJECTED = /image|vision|multi-?modal|unknown variant|content.{0,40}(string|array)/i`. При статусе 400/415/422 любое тело, где встречается «image», превращается в `VisionError('config', 'Модель «…» не принимает изображения…')`. Под это п…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 22,
+      "label": "verify8:vision:5",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a1127a19787170611",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543443326,
+      "tokens": 80328,
+      "toolCalls": 10,
+      "durationMs": 55868,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Опровергнуть не удалось, механизм подтверждается чтением кода.\\n\\n1. Ошибка растеризации никак не помечена. В src/lib/pdfRender.ts:121-139 `page(n)` бросает обычный `Error`: при истечении 20 с — ERR_PAGE_TIMEOUT, при любом сбое `render` или пустом Blob — ERR_PAGE («Не удалось подготовить страницу PDF»). `VisionError` там не создаётся.\\n\\n2. Такая ошибка…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 23,
+      "label": "verify8:vision:6",
+      "phaseIndex": 5,
+      "phaseTitle": "Проверка",
+      "agentId": "a15835e9ecebc42fb",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543387453,
+      "queuedAt": 1794543387442,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "средне",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543427994,
+      "tokens": 74140,
+      "toolCalls": 5,
+      "durationMs": 40536,
+      "resultPreview": "{\"real\":true,\"severity\":\"средне\",\"evidence\":\"Опровергнуть не удалось. src/lib/visionImage.ts:60-72: planVisionSize берёт k = min(1, 2000 / max(w, h)) и отсекает только стороны меньше VISION_MIN_SIDE = 24 (ocrState.ts:9). Соотношение сторон нигде не проверяется. Получается 1080×12000 → 180×2000, 1280×9000 → 284×2000. Шрифт 16 px сжимается до 2,3–2,7 px, такой текст прочитать невозможно. Спецификаци…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 24,
+      "label": "fix8:logic",
+      "phaseIndex": 6,
+      "phaseTitle": "Исправления",
+      "agentId": "a9e0bbec912a5f6b0",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794543444897,
+      "queuedAt": 1794543444880,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Исправлено 7 находок полностью, 8-я и 9-я — частично. `npm …",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794544254160,
+      "tokens": 260304,
+      "toolCalls": 108,
+      "durationMs": 809262,
+      "resultPreview": "{\"summary\":\"Исправлено 7 находок полностью, 8-я и 9-я — частично. `npm run typecheck` и `npm test` проходят: 89 файлов, 2651 тест. Rust не трогал, cargo test не запускал.\\n\\nНовые поля и функции (сигнатуры не менялись, только добавления):\\n- в Item: `ocrClearedAt` («текст убрал пользователь») и `ocrAutoSkipAt` («автораспознавание запись не берёт»);\\n- в repo: `clearOcrText`, `markVisionAutoSkip`;\\…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 25,
+      "label": "fix8:ui",
+      "phaseIndex": 6,
+      "phaseTitle": "Исправления",
+      "agentId": "aac1cc9abb536b0d6",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794543444897,
+      "queuedAt": 1794543444880,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Исправлены находки 1, 3, 4, 5 и UI-часть находки 2. Чужие ф…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543578155,
+      "tokens": 112580,
+      "toolCalls": 17,
+      "durationMs": 133256,
+      "resultPreview": "{\"summary\":\"Исправлены находки 1, 3, 4, 5 и UI-часть находки 2. Чужие файлы не трогал. typecheck и npm test проходят (89 файлов, 2607 тестов). Отчёт: .progress\\\\agents\\\\fix-review8-ui.md.\\n\\nНаходка 2 исправлена только в ocrView. Серверная часть (ocr.ts) остаётся за другим исполнителем, см. skipped. Пока она не сделана, при включённом ИИ кнопка «Извлечь текст» у очищенного PDF по-пр…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 26,
+      "label": "fix8:docs-ci",
+      "phaseIndex": 6,
+      "phaseTitle": "Исправления",
+      "agentId": "a2925b27f6710efea",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794543444897,
+      "queuedAt": 1794543444881,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Обе находки подтвердились по коду и исправлены. typecheck и…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Идёт обновление по плану .progress/plan-combined.md (прочитай «Этап 8. Распознавание и приёмка», «Отложено», «Отклонено»). Этапы 0–7 закоммичены. Состояние, долги всех этапов и перечень непроверенного — .progress/HANDOFF.md (прочитай целиком верхние разделы этапов 4–7 и «Долги после ревью этапов 1–2»). CLAUDE.md в силе: сигнатуры не менять (только добавлять)…",
+      "promptFramed": true,
+      "lastProgressAt": 1794543488294,
+      "tokens": 77247,
+      "toolCalls": 20,
+      "durationMs": 42553,
+      "resultPreview": "{\"summary\":\"Обе находки подтвердились по коду и исправлены. typecheck и npm test (88 файлов, 2603 теста) проходят. Rust не трогал.\",\"fixed\":[\"1. docs/ИНСТРУКЦИЯ.md:182 — переключатель «Просмотр / Исходник» теперь описан как стоящий под текстом справа рядом с «Изменить» (у файлов .md — над предпросмотром). Подтверждено: ContentEditor.tsx:173–177 и FilePreview.tsx:116.\",\"2. .progress/CLAUDE.proposed…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 27,
+      "label": "stage8-checks",
+      "phaseIndex": 7,
+      "phaseTitle": "Прогон",
+      "agentId": "ae743c08b2835f729",
+      "model": "claude-haiku-5-5",
+      "state": "done",
+      "startedAt": 1794544254177,
+      "queuedAt": 1794544254162,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "npm run typecheck (tsc -b): успешно, код выхода 0, ошибок н…",
+      "promptPreview": "Проект QuickDrop, каталог <корень проекта>. Запусти команды и верни результат. Файлы не менять, git только чтение. Все поля — обычные строки.\n1) `npm run typecheck` → typecheck. 2) `npm test` → tests: число файлов и тестов, упавшие. 3) `cargo test --manifest-path src-tauri/Cargo.toml` → cargo: прошло/упало, предупреждения.",
+      "promptFramed": true,
+      "lastProgressAt": 1794544278483,
+      "tokens": 67783,
+      "toolCalls": 4,
+      "durationMs": 24306,
+      "resultPreview": "{\"typecheck\":\"npm run typecheck (tsc -b): успешно, код выхода 0, ошибок нет.\",\"tests\":\"npm test (vitest run): 89 файлов тестов, 2651 тест, все прошли, упавших нет. Код выхода 0.\",\"cargo\":\"cargo test --manifest-path src-tauri/Cargo.toml: прошло 130, упало 0, игнорировано 2 (shell::tests::autostart_writes_current_user_only, tests::fetch_public_page). Doc-tests и бинарный тест без тестов, ошибок нет.…"
+    }
+  ],
+  "totalTokens": 4072151,
+  "totalToolCalls": 900
+}

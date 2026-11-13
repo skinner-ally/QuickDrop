@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
 import { ItemList } from '@/components/items/ItemList'
-import { useVisibleItems } from '@/hooks/useItems'
+import { useCategoryList, useItemsWithTrash, useVisibleItems } from '@/hooks/useItems'
+import { collectTags, missingQueryTargets, queryHintText } from '@/lib/queryHints'
 import { useUi } from '@/store/ui'
 import type { ItemFilter } from '@/types'
 
@@ -33,13 +34,24 @@ export function ItemsView({ title, subtitle, base, variant, emptyState }: ItemsV
   const resetFilter = useUi((s) => s.resetFilter)
   const setQuery = useUi((s) => s.setQuery)
 
+  const allItems = useItemsWithTrash()
+  const categories = useCategoryList()
+
   const narrowed = query.trim() !== '' || Object.values(filter).some((v) => v !== undefined)
+  const nothingFound = !loading && hits.length === 0 && narrowed
+
+  // Чего из запроса нет в базе (удалённые тег или категория в сохранённом поиске). Теги — со всех записей,
+  // включая корзину: deleteTag снимает тег и там. Пока категории не прочитаны — не подсказываем.
+  const hint = useMemo(() => {
+    if (!nothingFound || !allItems || !categories) return null
+    return queryHintText(missingQueryTargets(query, filter, categories, collectTags(allItems)))
+  }, [nothingFound, allItems, categories, query, filter])
 
   const noResults = (
     <EmptyState
       icon="search-x"
       title="Ничего не найдено"
-      description="Попробуйте изменить запрос или ослабить фильтры."
+      description={hint ? `${hint} Попробуйте изменить запрос или ослабить фильтры.` : 'Попробуйте изменить запрос или ослабить фильтры.'}
       action={
         <Button
           variant="outline"

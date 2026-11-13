@@ -28,6 +28,7 @@ export function ContentEditor({
   readOnly,
   toolbar,
   onCommitted,
+  onEditingChange,
 }: {
   value: string
   onSave: (value: string) => unknown
@@ -41,6 +42,8 @@ export function ContentEditor({
   toolbar?: React.ReactNode
   /** Выход из правки с изменённым текстом: blur, Ctrl/⌘+Enter, размонтирование во время правки (Esc и тот же текст — нет). */
   onCommitted?: (value: string) => void
+  /** Поле правки открыто или закрыто (при размонтировании — false). */
+  onEditingChange?: (editing: boolean) => void
 }) {
   const [editing, setEditing] = useState(false)
   const { value, setValue, flush } = useAutosave(saved, onSave, AUTOSAVE_DELAY)
@@ -77,6 +80,15 @@ export function ContentEditor({
     },
     [flush],
   )
+
+  const editingChangeRef = useRef(onEditingChange)
+  useEffect(() => {
+    editingChangeRef.current = onEditingChange
+  })
+  useEffect(() => {
+    editingChangeRef.current?.(editing && !readOnly)
+  }, [editing, readOnly])
+  useEffect(() => () => editingChangeRef.current?.(false), [])
 
   useEffect(() => {
     if (!editing) return

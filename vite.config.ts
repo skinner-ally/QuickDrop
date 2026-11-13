@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -60,6 +61,55 @@ function webCsp(): Plugin {
   }
 }
 
+/** JS-декодеры сканов pdf.js (JBIG2, CCITT, JPX): worker подгружает их из `{base}pdfjs/` (wasmUrl). */
+const PDF_DECODERS = ['jbig2_nowasm_fallback.js', 'openjpeg_nowasm_fallback.js']
+const PDF_DECODER_LICENSES = ['LICENSE_JBIG2', 'LICENSE_PDFJS_JBIG2', 'LICENSE_OPENJPEG', 'LICENSE_PDFJS_OPENJPEG']
+const pdfjsWasmDir = path.resolve(import.meta.dirname, 'node_modules/pdfjs-dist/wasm')
+
+/**
+ * Кладёт декодеры в dist/pdfjs/ и их лицензии одним файлом в dist/licenses/, в dev отдаёт декодеры
+ * сам (только по белому списку имён). WebAssembly не нужен (useWasm: false), CSP не меняется:
+ * модуль подгружается worker'ом с того же origin.
+ */
+function pdfDecoders(): Plugin {
+  return {
+    name: 'quickdrop:pdf-decoders',
+    configureServer(server) {
+      const prefixes = [...new Set([`${base}pdfjs/`, '/pdfjs/'])]
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split(/[?#]/)[0]
+        const prefix = prefixes.find((p) => url.startsWith(p))
+        const name = prefix ? url.slice(prefix.length) : ''
+        if (!PDF_DECODERS.includes(name)) {
+          next()
+          return
+        }
+        res.setHeader('Content-Type', 'text/javascript; charset=utf-8')
+        res.end(fs.readFileSync(path.join(pdfjsWasmDir, name)))
+      })
+    },
+    generateBundle() {
+      for (const name of PDF_DECODERS) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `pdfjs/${name}`,
+          source: fs.readFileSync(path.join(pdfjsWasmDir, name)),
+        })
+      }
+      const licenses = PDF_DECODER_LICENSES.map(
+        (name) => `===== ${name} (pdfjs-dist/wasm) =====\n\n${fs.readFileSync(path.join(pdfjsWasmDir, name), 'utf8').trim()}\n`,
+      )
+      this.emitFile({
+        type: 'asset',
+        fileName: 'licenses/pdfjs-decoders-LICENSE.txt',
+        source:
+          'Декодеры сканов PDF (pdfjs/jbig2_nowasm_fallback.js, pdfjs/openjpeg_nowasm_fallback.js) из пакета pdfjs-dist.\n\n' +
+          licenses.join('\n'),
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base,
@@ -67,6 +117,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     webCsp(),
+    pdfDecoders(),
     // autoUpdate: данные лежат в IndexedDB и SW их не трогает. Перезагрузку после обновления
     // src/pwa.ts откладывает, пока пользователь что-то вводит.
     VitePWA({
@@ -112,6 +163,8 @@ export default defineConfig({
       workbox: {
         // txt — уведомление лицензии pixelfx (public/licenses): в кэше для офлайна и открывается сам, а не оболочкой.
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2,txt}'],
+        // Декодеры сканов PDF нужны только распознаванию, а оно без сети невозможно: в precache не кладутся.
+        globIgnores: ['**/node_modules/**/*', 'pdfjs/**'],
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/\/licenses\//],
         cleanupOutdatedCaches: true,

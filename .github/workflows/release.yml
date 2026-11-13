@@ -40,6 +40,15 @@ jobs:
       - name: Установка зависимостей
         run: npm ci
 
+      # Тесты Rust гоняются только в Windows: на macOS их не запускали, выпуск они блокировать не должны
+      - name: Сборка фронтенда для тестов Rust
+        if: matrix.platform == 'windows-latest'
+        run: npm run build
+
+      - name: Тесты Rust
+        if: matrix.platform == 'windows-latest'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
       - name: Сборка и публикация черновика релиза
         uses: tauri-apps/tauri-action@v1
         env:

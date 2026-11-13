@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web (typecheck, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      # Без тега: проверяется только согласованность версии в трёх файлах
+      - name: Проверка версии
+        run: node scripts/check-version.mjs
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Проверка типов
+        run: npm run typecheck
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка веб-версии
+        run: npm run build
+
+  rust:
+    name: Rust (cargo test, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      # Каталог dist нужен для сборки контекста Tauri (frontendDist)
+      - name: Сборка фронтенда для тестов Rust
+        run: npm run build
+
+      - name: Тесты Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked

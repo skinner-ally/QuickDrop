@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { Icon } from '@/components/icons'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -7,11 +7,12 @@ import { ErrorBoundary, lazyRetry, RetryFallback } from '@/components/layout/Err
 import { EmptyState } from '@/components/items/EmptyState'
 import { FilterBar } from '@/components/items/FilterBar'
 import { ItemList } from '@/components/items/ItemList'
-import { getAllItemsSnapshot, useCounts, useVisibleItems } from '@/hooks/useItems'
+import { getAllItemsSnapshot, useCategoryList, useCounts, useItemsWithTrash, useVisibleItems } from '@/hooks/useItems'
 import { createAndEnrich } from '@/lib/actions'
 import { detectInput } from '@/lib/detect'
 import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
+import { collectTags, missingQueryTargets, queryHintText } from '@/lib/queryHints'
 import { useUi } from '@/store/ui'
 import type { NewItemInput } from '@/types'
 
@@ -132,13 +133,23 @@ export function InboxView() {
     return () => window.clearTimeout(h)
   }, [])
 
+  const allItems = useItemsWithTrash()
+  const categories = useCategoryList()
+
   const narrowed = query.trim() !== '' || Object.values(filter).some((v) => v !== undefined)
+  const nothingFound = !loading && hits.length === 0 && narrowed
+
+  // Чего из запроса нет в базе — как в ItemsView: теги со всех записей, включая корзину.
+  const hint = useMemo(() => {
+    if (!nothingFound || !allItems || !categories) return null
+    return queryHintText(missingQueryTargets(query, filter, categories, collectTags(allItems)))
+  }, [nothingFound, allItems, categories, query, filter])
 
   const noResults = (
     <EmptyState
       icon="search-x"
       title="Ничего не найдено"
-      description="Попробуйте изменить запрос или ослабить фильтры."
+      description={hint ? `${hint} Попробуйте изменить запрос или ослабить фильтры.` : 'Попробуйте изменить запрос или ослабить фильтры.'}
       action={
         <Button
           variant="outline"

@@ -403,7 +403,7 @@ describe('пороги «рядом с нодой» растут с размер
 })
 
 describe('лицензия', () => {
-  it('в шапке math.ts полный текст MIT (в сборке файла LICENSE нет)', () => {
+  it('в шапке math.ts полный текст MIT (для исходников; в сборке — public/licenses)', () => {
     const src = read('math.ts')
     expect(src.startsWith('/*!')).toBe(true)
     expect(src).toContain('Permission is hereby granted')

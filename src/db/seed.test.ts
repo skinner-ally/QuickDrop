@@ -214,6 +214,7 @@ describe('seedDemoData', () => {
       ...kept,
       aiVisionModel: 'vision-x',
       aiAutoOcr: true,
+      aiAutoOcrSince: 1_762_819_200_000,
       extEnabled: true,
       extToken: 'tok-secret',
     })
@@ -227,6 +228,7 @@ describe('seedDemoData', () => {
     expect(s).toMatchObject(kept)
     expect(s.aiVisionModel).toBe('')
     expect(s.aiAutoOcr).toBe(false)
+    expect(s.aiAutoOcrSince).toBe(0)
     expect(s.extEnabled).toBe(false)
     expect(s.extToken).toBe('')
   })

@@ -35,7 +35,7 @@ function handleLaunchParams() {
   const rest = params.toString()
   history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash)
 
-  if (text) useUi.getState().openCapture({ text })
+  if (text) useUi.getState().openCapture({ text, source: 'share' })
   else useUi.getState().openCapture()
 }
 

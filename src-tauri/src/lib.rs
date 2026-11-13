@@ -365,6 +365,7 @@ pub fn run() {
             shell::quit_app,
             shell::get_autostart,
             shell::set_autostart,
+            shell::extension_dir,
             ext_server::ext_server_apply,
             ext_server::ext_server_status,
             ext_server::ext_take_pending,

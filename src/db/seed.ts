@@ -317,6 +317,7 @@ const CLEARED_SETTINGS: ReadonlyArray<keyof Settings> = [
   'linkProxyUrl',
   'aiVisionModel',
   'aiAutoOcr',
+  'aiAutoOcrSince',
   'extEnabled',
   'extToken',
 ]

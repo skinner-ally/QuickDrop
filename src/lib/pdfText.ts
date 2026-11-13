@@ -10,6 +10,11 @@ export const PDF_MIN_TEXT_CHARS = 20
 export interface PdfDocLike {
   numPages: number
   pageText(page: number): Promise<string>
+  /**
+   * Страница картинкой (JPEG на белом фоне), большая сторона — около maxSide px. Необязателен: движок
+   * без растеризации (тесты, старые подделки) его не даёт, и распознавание сканов тогда недоступно.
+   */
+  pageImage?(page: number, maxSide: number): Promise<Blob>
   close(): Promise<void>
 }
 
@@ -43,7 +48,8 @@ export interface PdfTextResult {
   permanent?: true
 }
 
-const ERR_TOO_BIG = 'PDF больше 50 МБ — текст не извлекается'
+export const PDF_ERR_TOO_BIG = 'PDF больше 50 МБ — текст не извлекается'
+const ERR_TOO_BIG = PDF_ERR_TOO_BIG
 const ERR_TIMEOUT = 'Не удалось прочитать PDF за отведённое время'
 const ERR_PASSWORD = 'PDF защищён паролем'
 const ERR_READ = 'Не удалось прочитать PDF'
@@ -55,15 +61,24 @@ export function isPdf(file: { mimeType?: string; fileName?: string }): boolean {
   return typeof file.fileName === 'string' && /\.pdf$/i.test(file.fileName.trim())
 }
 
-const ABORTED = Symbol('aborted')
-const TIMED_OUT = Symbol('timeout')
+/** Причины остановки сторожа (createPdfGuard): их бросают check() и run(). */
+export const PDF_ABORTED = Symbol('aborted')
+export const PDF_TIMED_OUT = Symbol('timeout')
+const ABORTED = PDF_ABORTED
+const TIMED_OUT = PDF_TIMED_OUT
 /** Сколько ждать закрытия документа: зависший worker не должен держать вызывающего. */
 const CLOSE_WAIT_MS = 2_000
+
+export type PdfGuard = ReturnType<typeof createGuard>
 
 /**
  * Прерывание по сигналу и по времени. Проверки между страницами мало: pdf.js на битом файле или
  * без worker может не ответить вовсе, поэтому каждое ожидание ещё и состязается с остановкой.
  */
+export function createPdfGuard(signal: AbortSignal | undefined, timeoutMs: number) {
+  return createGuard(signal, timeoutMs)
+}
+
 function createGuard(signal: AbortSignal | undefined, timeoutMs: number) {
   const deadline = Date.now() + timeoutMs
   let stop: (reason: symbol) => void = () => {}
@@ -111,6 +126,30 @@ function joinPages(parts: string[], maxChars: number): string {
   return cleanOcrText(text)
 }
 
+/** Закрывает документ, не дольше CLOSE_WAIT_MS и без исключений. */
+export function closePdfQuietly(doc: PdfDocLike): Promise<void> {
+  return closeQuietly(doc)
+}
+
+/**
+ * Открывает документ под сторожем. Прерванное или просроченное открытие обрывается своим сигналом
+ * (движок сам освобождает worker), а документ, который всё же успел открыться, закрывается.
+ */
+export async function openPdfGuarded(engine: PdfEngine, bytes: Uint8Array, guard: PdfGuard): Promise<PdfDocLike> {
+  // Свой сигнал, а не signal вызывающего: открытие нужно оборвать и по времени.
+  const openCtrl = new AbortController()
+  const opening = engine.open(bytes, openCtrl.signal)
+  try {
+    return await guard.run(opening)
+  } catch (e) {
+    if (e === ABORTED || e === TIMED_OUT) {
+      openCtrl.abort()
+      opening.then((late) => late.close()).catch(() => {})
+    }
+    throw e
+  }
+}
+
 async function closeQuietly(doc: PdfDocLike): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -130,6 +169,12 @@ async function closeQuietly(doc: PdfDocLike): Promise<void> {
 interface Failure {
   error: string
   permanent: boolean
+}
+export type PdfFailure = Failure
+
+/** Причина сбоя pdf.js по-русски и признак «повтор с тем же файлом даст то же». */
+export function describePdfFailure(e: unknown): PdfFailure {
+  return describeFailure(e)
 }
 
 function describeFailure(e: unknown): Failure {
@@ -191,19 +236,7 @@ async function extract(data: Blob, options: PdfTextOptions): Promise<PdfTextResu
     const bytes = new Uint8Array(await guard.run(data.arrayBuffer()))
     guard.check()
 
-    // Свой сигнал, а не signal вызывающего: открытие нужно оборвать и по времени.
-    const openCtrl = new AbortController()
-    const opening = engine.open(bytes, openCtrl.signal)
-    try {
-      doc = await guard.run(opening)
-    } catch (e) {
-      if (e === ABORTED || e === TIMED_OUT) {
-        // Движок по сигналу уничтожает worker сам; документ, который всё же успел открыться, закрываем.
-        openCtrl.abort()
-        opening.then((late) => late.close()).catch(() => {})
-      }
-      throw e
-    }
+    doc = await openPdfGuarded(engine, bytes, guard)
 
     pages = Number.isInteger(doc.numPages) && doc.numPages > 0 ? doc.numPages : 0
     const lastPage = Math.min(pages, maxPages)

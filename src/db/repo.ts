@@ -47,7 +47,7 @@ export { matchesFilter } from '@/lib/filter'
  *
  * Исключения из «updatedAt на каждой мутации» — правки, которые пользователь не делал руками и которые
  * не должны переиндексировать поиск и влиять на слияние копий: корзина (deletedAt), распознанный
- * текст (ocrText/ocrAt), техническая чистка связей при окончательном удалении.
+ * текст (ocrText/ocrAt/ocrVisionAt), техническая чистка связей при окончательном удалении.
  */
 
 /**
@@ -963,7 +963,68 @@ export async function setOcrText(id: string, text: string, at?: number): Promise
   const ocrText = cleanOcrText(text)
   return db.transaction('rw', db.items, async () => {
     if (!(await db.items.get(id))) return false
-    await db.items.update(id, { ocrText: ocrText || undefined, ocrAt: at ?? Date.now() })
+    // Новый результат (в т.ч. «текста нет») заменяет отметку «текст убрал пользователь».
+    await db.items.update(id, { ocrText: ocrText || undefined, ocrAt: at ?? Date.now(), ocrClearedAt: undefined })
+    return true
+  })
+}
+
+/**
+ * Пользователь убрал распознанный текст: ocrText удаляется, ocrAt и ocrClearedAt = at ?? Date.now().
+ * ocrVisionAt не трогается. По ocrClearedAt PDF с текстовым слоем не принимается за скан и не уходит в ИИ.
+ * updatedAt не меняется. false — записи нет.
+ */
+export async function clearOcrText(id: string, at?: number): Promise<boolean> {
+  const when = at ?? Date.now()
+  return db.transaction('rw', db.items, async () => {
+    if (!(await db.items.get(id))) return false
+    await db.items.update(id, { ocrText: undefined, ocrAt: when, ocrClearedAt: when })
+    return true
+  })
+}
+
+/**
+ * Итог распознавания моделью со зрением: ocrText (очистка cleanOcrText; пусто — поле удаляется),
+ * ocrAt = ocrVisionAt = at ?? Date.now(). updatedAt не меняется. false — записи нет.
+ * Запись в корзине обновляется как обычная: результат уже получен, терять его незачем.
+ */
+export async function setVisionText(id: string, text: string, at?: number): Promise<boolean> {
+  const ocrText = cleanOcrText(text)
+  const when = at ?? Date.now()
+  return db.transaction('rw', db.items, async () => {
+    if (!(await db.items.get(id))) return false
+    await db.items.update(id, {
+      ocrText: ocrText || undefined,
+      ocrAt: when,
+      ocrVisionAt: when,
+      ocrClearedAt: undefined,
+    })
+    return true
+  })
+}
+
+/**
+ * Автораспознавание запись больше не берёт (отмена пользователем, импорт): ставит ocrAutoSkipAt,
+ * остальное не трогает. Ручное распознавание работает. updatedAt не меняется. false — записи нет.
+ */
+export async function markVisionAutoSkip(id: string, at?: number): Promise<boolean> {
+  const when = at ?? Date.now()
+  return db.transaction('rw', db.items, async () => {
+    if (!(await db.items.get(id))) return false
+    await db.items.update(id, { ocrAutoSkipAt: when })
+    return true
+  })
+}
+
+/**
+ * Неустранимая ошибка распознавания зрением: ставит только ocrVisionAt (повторно авто запись не берёт);
+ * ocrText и ocrAt не трогает. updatedAt не меняется. false — записи нет.
+ */
+export async function markVisionTried(id: string, at?: number): Promise<boolean> {
+  const when = at ?? Date.now()
+  return db.transaction('rw', db.items, async () => {
+    if (!(await db.items.get(id))) return false
+    await db.items.update(id, { ocrVisionAt: when })
     return true
   })
 }

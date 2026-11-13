@@ -12,10 +12,14 @@ import {
   purgeItems,
   restoreFromTrash,
   restoreItems,
+  setOcrText,
   setPositions,
   updateItem,
 } from '@/db/repo'
+import { setSettings } from '@/db/settings'
 import { relativeRange } from '@/lib/dates'
+import type { extractItemText } from '@/lib/ocr'
+import { getOcrNote, resetOcrState, setOcrJob, setOcrNote, type OcrOutcome } from '@/lib/ocrState'
 import type { PdfTextResult } from '@/lib/pdfText'
 import type { ConfirmOptions } from '@/store/confirm'
 import { useGraph } from '@/store/graph'
@@ -25,6 +29,8 @@ import {
   NOTHING_TO_SAVE,
   actApplySearch,
   actApplyWikiLinks,
+  actCancelRecognize,
+  actClearOcrText,
   actDelete,
   actDeleteSearch,
   actDownloadMarkdown,
@@ -35,10 +41,12 @@ import {
   actMoveSearch,
   actPurge,
   actPurgeAsk,
+  actRecognize,
   actRelayoutGraph,
   actRenameSearch,
   actRestoreFromTrash,
   actSaveCurrentSearch,
+  actSaveOcrText,
   actSaveSearch,
   actSetCategory,
   actUnlinkItems,
@@ -57,6 +65,9 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   fetchLinkMeta: vi.fn(),
   extractPdfText: vi.fn(),
+  // OcrOutcome: исход с полями этапа 8 (via, pages, truncated), ExtractOutcome в ocr.ts — его подмножество.
+  extractItemText: vi.fn<(...args: Parameters<typeof extractItemText>) => Promise<OcrOutcome>>(),
+  realExtractItemText: undefined as typeof extractItemText | undefined,
   confirm: vi.fn<(options: ConfirmOptions) => Promise<boolean>>(),
   openExternal: vi.fn<(u: string) => Promise<boolean>>(),
   allSnapshot: vi.fn<() => Item[] | undefined>(),
@@ -84,6 +95,13 @@ vi.mock('@/lib/pdfText', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/pdfText')>()),
   extractPdfText: mocks.extractPdfText,
 }))
+
+// Распознавание: по умолчанию — настоящий extractItemText (с подменённым разбором PDF), тесты задают исход сами.
+vi.mock('@/lib/ocr', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/ocr')>()
+  mocks.realExtractItemText = real.extractItemText
+  return { ...real, extractItemText: mocks.extractItemText }
+})
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -135,6 +153,9 @@ beforeEach(async () => {
   ])
   mocks.fetchLinkMeta.mockReset()
   mocks.extractPdfText.mockReset()
+  mocks.extractItemText.mockReset()
+  mocks.extractItemText.mockImplementation((...args) => mocks.realExtractItemText!(...args))
+  resetOcrState()
   mocks.toast.mockReset()
   mocks.toastError.mockReset()
   mocks.toastSuccess.mockReset()
@@ -489,6 +510,256 @@ describe('текст PDF при создании записи', () => {
     await settle()
     expect(mocks.extractPdfText).toHaveBeenCalledTimes(1)
     expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+})
+
+const AI_ON = { aiEnabled: true, aiApiKey: 'sk-test' } as const
+const png = () => new File([new Uint8Array([137, 80, 78, 71])], 'Скриншот.png', { type: 'image/png' })
+const pdfFile = () => new File(['%PDF-1.7'], 'Скан.pdf', { type: 'application/pdf' })
+
+describe('распознавание при создании записи', () => {
+  /** Опции последнего вызова extractItemText (ждёт, пока фоновая задача его сделает). */
+  async function extractOptions(): Promise<Parameters<typeof extractItemText>[1]> {
+    await until(async () => mocks.extractItemText.mock.calls.length > 0)
+    return mocks.extractItemText.mock.calls.at(-1)![1]
+  }
+
+  beforeEach(() => {
+    mocks.extractItemText.mockResolvedValue({ status: 'skipped' })
+  })
+
+  it('картинка при выключенном ИИ не идёт в распознавание', async () => {
+    await createAndEnrich({ type: 'image', file: png() })
+    await settle()
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+  })
+
+  it('картинка: ИИ включён, но автораспознавание нет — не идёт', async () => {
+    await setSettings(AI_ON)
+    await createAndEnrich({ type: 'image', file: png() })
+    await settle()
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+  })
+
+  it('картинка: ИИ и автораспознавание включены — vision', async () => {
+    await setSettings({ ...AI_ON, aiAutoOcr: true })
+    const item = await createAndEnrich({ type: 'image', file: png() })
+    expect(await extractOptions()).toEqual({ vision: true })
+    expect((mocks.extractItemText.mock.calls[0][0] as Item).id).toBe(item.id)
+  })
+
+  it('автораспознавание без включённого ИИ — без vision', async () => {
+    await setSettings({ aiAutoOcr: true })
+    await createAndEnrich({ type: 'file', file: pdfFile() })
+    expect(await extractOptions()).toEqual({ vision: false })
+  })
+
+  it('PDF извлекается всегда; vision — по настройкам', async () => {
+    await createAndEnrich({ type: 'file', file: pdfFile() })
+    expect(await extractOptions()).toEqual({ vision: false })
+
+    mocks.extractItemText.mockClear()
+    await setSettings({ ...AI_ON, aiAutoOcr: true })
+    await createAndEnrich({ type: 'file', file: pdfFile() })
+    expect(await extractOptions()).toEqual({ vision: true })
+  })
+
+  it('настройки не прочитались — авто выключено: PDF без vision, картинка не идёт', async () => {
+    await setSettings({ ...AI_ON, aiAutoOcr: true })
+    vi.spyOn(db.meta, 'bulkGet').mockRejectedValue(new Error('база недоступна'))
+    await createAndEnrich({ type: 'image', file: png() })
+    await createAndEnrich({ type: 'file', file: pdfFile() })
+    expect(await extractOptions()).toEqual({ vision: false })
+    await settle()
+    expect(mocks.extractItemText).toHaveBeenCalledTimes(1)
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('возврат записи не ждёт распознавания; записи без вложения не трогаются', async () => {
+    await setSettings({ ...AI_ON, aiAutoOcr: true })
+    const slow = deferred<OcrOutcome>()
+    mocks.extractItemText.mockReturnValue(slow.promise)
+    const item = await createAndEnrich({ type: 'image', file: png() })
+    expect(item.ocrAt).toBeUndefined()
+    await createAndEnrich({ type: 'text', content: 'просто текст' })
+    await settle()
+    expect(mocks.extractItemText).toHaveBeenCalledTimes(1)
+    slow.resolve({ status: 'skipped' })
+  })
+})
+
+describe('actRecognize', () => {
+  const image = () => createItem({ type: 'image', file: png() })
+  const pdf = () => createItem({ type: 'file', file: pdfFile() })
+
+  it('картинка при выключенном ИИ — причина в toast, до extractItemText не доходит', async () => {
+    const item = await image()
+    await actRecognize(item)
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Включите ИИ-помощника в настройках')
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+  })
+
+  it('картинка без ключа — своя причина', async () => {
+    await setSettings({ aiEnabled: true })
+    await actRecognize(await image())
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Укажите API-ключ в «Настройки → ИИ-помощник»')
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+  })
+
+  it('PDF при выключенном ИИ — локальное извлечение без vision', async () => {
+    mocks.extractItemText.mockResolvedValue({ status: 'ok', via: 'text-layer' })
+    const item = await pdf()
+    await actRecognize(item)
+    expect(mocks.extractItemText).toHaveBeenCalledExactlyOnceWith(item, { vision: false, force: true })
+    expect(mocks.toastSuccess).toHaveBeenCalledExactlyOnceWith('Текст извлечён из PDF')
+  })
+
+  it('запись в корзине и запись без вложения — ничего', async () => {
+    await setSettings(AI_ON)
+    const trashed = { ...(await image()), deletedAt: Date.now() }
+    await actRecognize(trashed)
+    await actRecognize(await note('текст'))
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+    expect(mocks.toast).not.toHaveBeenCalled()
+  })
+
+  it('ok зрением — «Текст распознан», ручной запуск с vision', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({ status: 'ok', via: 'vision' })
+    const item = await image()
+    await actRecognize(item)
+    expect(mocks.extractItemText).toHaveBeenCalledExactlyOnceWith(item, { vision: true, force: true })
+    expect(mocks.toastSuccess).toHaveBeenCalledExactlyOnceWith('Текст распознан')
+    expect(getOcrNote(item.id)).toBeUndefined()
+  })
+
+  it('ok: не все страницы и оборванный ответ — в описании', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({
+      status: 'ok',
+      via: 'vision',
+      pages: { read: 5, total: 12 },
+      truncated: true,
+    })
+    await actRecognize(await pdf())
+    expect(mocks.toastSuccess).toHaveBeenCalledExactlyOnceWith('Текст распознан', {
+      description: 'Распознаны первые 5 из 12 страниц. Ответ модели оборван, текст неполный',
+    })
+  })
+
+  it('ok: все страницы прочитаны — без описания', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({ status: 'ok', via: 'vision', pages: { read: 3, total: 3 } })
+    await actRecognize(await pdf())
+    expect(mocks.toastSuccess).toHaveBeenCalledExactlyOnceWith('Текст распознан')
+  })
+
+  it('empty — примечание и «Текст не найден»', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({ status: 'empty', via: 'vision' })
+    const item = await image()
+    await actRecognize(item)
+    expect(getOcrNote(item.id)).toMatchObject({ status: 'empty' })
+    expect(mocks.toast).toHaveBeenCalledExactlyOnceWith('Текст не найден')
+  })
+
+  it('failed — примечание с ошибкой и toast.error', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({ status: 'failed', error: 'Неверный API-ключ (401)' })
+    const item = await image()
+    await actRecognize(item)
+    expect(getOcrNote(item.id)).toMatchObject({ status: 'failed', error: 'Неверный API-ключ (401)' })
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Неверный API-ключ (401)')
+  })
+
+  it('skipped (отмена) — без сообщений; прежнее примечание снято', async () => {
+    await setSettings(AI_ON)
+    mocks.extractItemText.mockResolvedValue({ status: 'skipped' })
+    const item = await image()
+    setOcrNote(item.id, { status: 'failed', error: 'было', at: 1 })
+    await actRecognize(item)
+    expect(getOcrNote(item.id)).toBeUndefined()
+    expect(mocks.toast).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('настройки не прочитались — ошибка в toast, без распознавания', async () => {
+    const item = await image()
+    vi.spyOn(db.meta, 'bulkGet').mockRejectedValue(new Error('база недоступна'))
+    await actRecognize(item)
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('база недоступна')
+    expect(mocks.extractItemText).not.toHaveBeenCalled()
+  })
+})
+
+describe('actCancelRecognize', () => {
+  it('вызывает cancel задачи; задачи нет — ничего', () => {
+    const cancel = vi.fn()
+    setOcrJob('a', { phase: 'running', manual: true, cancel })
+    actCancelRecognize('a')
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(() => actCancelRecognize('нет')).not.toThrow()
+    setOcrJob('b', { phase: 'queued', manual: false })
+    expect(() => actCancelRecognize('b')).not.toThrow()
+  })
+})
+
+describe('правка и очистка распознанного текста', () => {
+  it('actSaveOcrText записывает текст, updatedAt прежний', async () => {
+    const item = await note('с картинкой')
+    await actSaveOcrText(item.id, '  Исправленный текст  ')
+    const after = (await getItem(item.id))!
+    expect(after.ocrText).toBe('Исправленный текст')
+    expect(after.ocrAt).toBeDefined()
+    expect(after.updatedAt).toBe(item.updatedAt)
+  })
+
+  it('actSaveOcrText: записи нет — toast.error', async () => {
+    await actSaveOcrText('нет-такой', 'текст')
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Запись не найдена')
+  })
+
+  it('actClearOcrText очищает и «Отменить» возвращает прежний текст', async () => {
+    const item = await note('скан')
+    await setOcrText(item.id, 'Распознанное')
+    await actClearOcrText(item)
+    expect((await getItem(item.id))!.ocrText).toBeUndefined()
+    const { text, options } = lastToast()
+    expect(text).toBe('Распознанный текст очищен')
+    expect(options?.action?.label).toBe('Отменить')
+    options!.action!.onClick()
+    await until(async () => (await getItem(item.id))?.ocrText === 'Распознанное')
+  })
+
+  it('очистка ставит отметку «текст убрал пользователь», «Отменить» её снимает; правка до пустого — то же', async () => {
+    const item = await note('договор')
+    await setOcrText(item.id, 'Текст слоя')
+    await actClearOcrText(item)
+    const cleared = (await getItem(item.id))!
+    expect(cleared.ocrClearedAt).toBeTypeOf('number')
+    expect(cleared.ocrAt).toBe(cleared.ocrClearedAt)
+    lastToast().options!.action!.onClick()
+    await until(async () => (await getItem(item.id))?.ocrText === 'Текст слоя')
+    expect((await getItem(item.id))!.ocrClearedAt).toBeUndefined()
+
+    await actSaveOcrText(item.id, ' \n\t ')
+    const emptied = (await getItem(item.id))!
+    expect(emptied.ocrText).toBeUndefined()
+    expect(emptied.ocrClearedAt).toBeTypeOf('number')
+    expect(emptied.updatedAt).toBe(item.updatedAt)
+    expect(mocks.toastError).not.toHaveBeenCalled()
+
+    await actSaveOcrText('нет-такой', '')
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith('Запись не найдена')
+  })
+
+  it('actClearOcrText: текста нет — ничего', async () => {
+    const item = await note('пусто')
+    await actClearOcrText(item)
+    expect(mocks.toast).not.toHaveBeenCalled()
+    expect((await getItem(item.id))!.ocrAt).toBeUndefined()
   })
 })
 

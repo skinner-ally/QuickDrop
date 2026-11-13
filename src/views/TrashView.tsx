@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/items/EmptyState'
 import { ItemList } from '@/components/items/ItemList'
 import { useSettings } from '@/db/settings'
-import { useTrashCount, useVisibleItems } from '@/hooks/useItems'
+import { useCategoryList, useTrashCount, useVisibleItems } from '@/hooks/useItems'
 import { actEmptyTrashAsk } from '@/lib/actions'
+import { missingQueryTargets, queryHintText } from '@/lib/queryHints'
 import { trashDaysLabel } from '@/lib/trash'
 import { parseQuery, queryWords } from '@/search'
 import { useUi } from '@/store/ui'
@@ -36,6 +37,14 @@ export function TrashView() {
 
   const autoPurge = trashDays > 0
   const narrowed = query.trim() !== '' || Object.values(filter).some((v) => v !== undefined)
+  const nothingFound = !loading && hits.length === 0 && narrowed
+  const categories = useCategoryList()
+
+  // В корзине — только подсказка о категории (cat: в строке или категория фильтра), теги не проверяются.
+  const hint = useMemo(() => {
+    if (!nothingFound || !categories) return null
+    return queryHintText(missingQueryTargets(query, filter, categories, null))
+  }, [nothingFound, categories, query, filter])
 
   const emptyState = (
     <EmptyState
@@ -53,6 +62,7 @@ export function TrashView() {
     <EmptyState
       icon="search-x"
       title="Ничего не найдено"
+      description={hint ?? undefined}
       action={
         <Button
           variant="outline"

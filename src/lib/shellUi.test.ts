@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EXTENSION_DIR_SOURCE_HINT,
   EXTENSION_INSTALL_STEPS,
+  EXTENSION_UPDATE_HINT,
   EXT_PORT_MAX,
   EXT_PORT_MIN,
   QUICK_CAPTURE_DESKTOP_HINT,
+  extensionManifestPath,
   extStatusText,
   globalShortcutHint,
   isExtensionToken,
@@ -114,9 +117,27 @@ describe('тексты', () => {
     expect(QUICK_CAPTURE_DESKTOP_HINT).toContain('Windows')
   })
 
-  it('папка расширения — из исходников, не «из комплекта»: установщик её не содержит', () => {
-    expect(EXTENSION_INSTALL_STEPS[1]).toContain('из исходников QuickDrop')
-    expect(EXTENSION_INSTALL_STEPS[1]).not.toContain('комплект')
+  it('шаг 2 ведёт к папке из установщика: путь ниже и «Показать папку»', () => {
+    expect(EXTENSION_INSTALL_STEPS[1]).toContain('«Загрузить распакованное расширение»')
+    expect(EXTENSION_INSTALL_STEPS[1]).toContain('путь показан ниже')
+    expect(EXTENSION_INSTALL_STEPS[1]).toContain('«Показать папку»')
+    expect(EXTENSION_INSTALL_STEPS[1]).not.toContain('в установщик она не входит')
+    expect(EXTENSION_DIR_SOURCE_HINT).toContain('extension')
+    expect(EXTENSION_DIR_SOURCE_HINT).toContain('исходниках')
+    expect(EXTENSION_UPDATE_HINT).toContain('chrome://extensions')
+  })
+
+  it('extensionManifestPath: разделитель как в пути, без удвоения', () => {
+    expect(extensionManifestPath('C:\\Program Files\\QuickDrop\\extension')).toBe(
+      'C:\\Program Files\\QuickDrop\\extension\\manifest.json',
+    )
+    expect(extensionManifestPath('C:\\QuickDrop\\extension\\')).toBe('C:\\QuickDrop\\extension\\manifest.json')
+    expect(extensionManifestPath('/Applications/QuickDrop.app/Contents/Resources/extension')).toBe(
+      '/Applications/QuickDrop.app/Contents/Resources/extension/manifest.json',
+    )
+    expect(extensionManifestPath('/opt/quickdrop/extension/')).toBe('/opt/quickdrop/extension/manifest.json')
+    // смешанные разделители — прямая косая (Windows её тоже понимает)
+    expect(extensionManifestPath('C:\\x/extension')).toBe('C:\\x/extension/manifest.json')
   })
 
   it('подсказка глобального сочетания зависит от мини-окна', () => {

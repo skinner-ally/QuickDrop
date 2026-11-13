@@ -10,6 +10,7 @@ import { AutoLinkText } from './AutoLinkText'
 import { ContentEditor } from './ContentEditor'
 import { FileBlock } from './FileBlock'
 import { LinkCard } from './LinkCard'
+import { OcrBlock } from './OcrBlock'
 import { saveItem } from './save'
 
 const PLAIN = '__plain'
@@ -121,6 +122,7 @@ export function ItemContent({ item, readOnly }: { item: Item; readOnly?: boolean
       return (
         <div className="flex flex-col gap-3">
           <FileBlock item={item} />
+          <OcrBlock key={item.id} item={item} readOnly={readOnly} />
           <MarkdownContent
             item={item}
             readOnly={readOnly}

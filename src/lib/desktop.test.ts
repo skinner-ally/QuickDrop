@@ -45,6 +45,7 @@ import {
   forgetDirectory,
   generateExtensionToken,
   getAutostart,
+  getExtensionDir,
   getExtServerStatus,
   initDesktop,
   openInMain,
@@ -441,6 +442,34 @@ describe('getExtServerStatus', () => {
     mocks.invoke.mockClear()
     mocks.tauri = false
     expect(await getExtServerStatus()).toEqual({ running: false, port: null, error: DESKTOP_ONLY_MESSAGE })
+    expect(mocks.invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe('getExtensionDir', () => {
+  it('путь из Rust', async () => {
+    mocks.invoke.mockResolvedValueOnce('C:\\Program Files\\QuickDrop\\extension')
+    expect(await getExtensionDir()).toBe('C:\\Program Files\\QuickDrop\\extension')
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('extension_dir')
+  })
+
+  it('нет папки, отказ команды, пустой или не строковый ответ — null, не бросает', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.invoke.mockRejectedValueOnce('Папка расширения не найдена')
+    expect(await getExtensionDir()).toBeNull()
+    mocks.invoke.mockRejectedValueOnce(new Error('Command extension_dir not found'))
+    expect(await getExtensionDir()).toBeNull()
+    mocks.invoke.mockResolvedValueOnce('   ')
+    expect(await getExtensionDir()).toBeNull()
+    mocks.invoke.mockResolvedValueOnce(null)
+    expect(await getExtensionDir()).toBeNull()
+    mocks.invoke.mockResolvedValueOnce({ path: 'C:\\x' })
+    expect(await getExtensionDir()).toBeNull()
+  })
+
+  it('вне Tauri — null без вызова Rust', async () => {
+    mocks.tauri = false
+    expect(await getExtensionDir()).toBeNull()
     expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

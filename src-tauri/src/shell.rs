@@ -1,7 +1,8 @@
 //! Оболочка настольного приложения: мини-окно быстрой записи, значок в трее, закрытие главного окна,
-//! второй запуск exe и автозапуск. Модуль самодостаточен (не ссылается на `crate::…`).
+//! второй запуск exe, автозапуск и путь к папке расширения Chrome из установщика. Модуль самодостаточен (не ссылается на `crate::…`).
 
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Window, WindowEvent};
@@ -25,6 +26,10 @@ const TRAY_ID: &str = "main";
 const MENU_OPEN: &str = "open";
 const MENU_CAPTURE: &str = "capture";
 const MENU_QUIT: &str = "quit";
+
+/// Каталог расширения в ресурсах (ключ-назначение `extension/` в `bundle.resources`).
+const EXTENSION_DIR_NAME: &str = "extension";
+const EXTENSION_DIR_MISSING: &str = "Папка расширения не найдена";
 
 const AUTOSTART_DEBUG_REASON: &str = "В отладочной сборке автозапуск не настраивается";
 const AUTOSTART_UNAVAILABLE: &str = "Автозапуск недоступен";
@@ -119,6 +124,17 @@ fn scale_size(size: (u32, u32), from_scale: f64, to_scale: f64) -> (u32, u32) {
 /// id записи из веб-слоя: непустой, до 128 символов, без управляющих символов.
 fn is_valid_item_id(id: &str) -> bool {
     !id.trim().is_empty() && id.chars().count() <= MAX_ITEM_ID_CHARS && !id.chars().any(char::is_control)
+}
+
+/// Каталог расширения Chrome внутри ресурсов приложения (`bundle.resources` в tauri.conf.json): `extension`
+/// с файлом `manifest.json`. Путь — без префикса `\\?\` (его Chrome в диалоге выбора папки не примет) и, если
+/// удалось, канонический: короткие имена вида `USER~1` раскрыты, чтобы путь совпал с видимым в проводнике.
+pub fn extension_dir_in(resource_dir: &Path) -> Option<PathBuf> {
+    let dir = resource_dir.join(EXTENSION_DIR_NAME);
+    if !dir.is_dir() || !dir.join("manifest.json").is_file() {
+        return None;
+    }
+    Some(dunce::canonicalize(&dir).unwrap_or_else(|_| dunce::simplified(&dir).to_path_buf()))
 }
 
 /// Состояние автозапуска по итогу чтения из системы (`None` — плагин не подключён).
@@ -582,9 +598,88 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     write_autostart(&app, enabled)
 }
 
+/// Путь к папке расширения Chrome из установщика (для «Загрузить распакованное расширение»).
+#[tauri::command]
+pub fn extension_dir(app: AppHandle) -> Result<String, String> {
+    let resources = app.path().resource_dir().map_err(|_| EXTENSION_DIR_MISSING.to_string())?;
+    extension_dir_in(&resources)
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| EXTENSION_DIR_MISSING.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Временный каталог теста; удаляется при выходе из области видимости.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::AtomicUsize;
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let path = std::env::temp_dir().join(format!("quickdrop-shell-{name}-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            // Канонический вид: temp_dir() в Windows бывает с коротким именем (USER~1).
+            Self(dunce::canonicalize(&path).unwrap())
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn extension_dir_found_with_manifest() {
+        let tmp = TempDir::new("ext-ok");
+        let ext = tmp.0.join("extension");
+        std::fs::create_dir_all(ext.join("icons")).unwrap();
+        std::fs::write(ext.join("manifest.json"), b"{}").unwrap();
+        let found = extension_dir_in(&tmp.0).expect("папка расширения");
+        assert_eq!(found, ext);
+        assert!(!found.display().to_string().starts_with(r"\\?\"), "без префикса \\\\?\\");
+    }
+
+    #[test]
+    fn extension_dir_missing() {
+        let tmp = TempDir::new("ext-none");
+        assert_eq!(extension_dir_in(&tmp.0), None);
+        // каталога ресурсов нет вовсе
+        assert_eq!(extension_dir_in(&tmp.0.join("нет-такой")), None);
+    }
+
+    #[test]
+    fn extension_dir_without_manifest() {
+        let tmp = TempDir::new("ext-empty");
+        let ext = tmp.0.join("extension");
+        std::fs::create_dir_all(&ext).unwrap();
+        std::fs::write(ext.join("background.js"), b"").unwrap();
+        assert_eq!(extension_dir_in(&tmp.0), None);
+        // manifest.json — каталог, а не файл
+        std::fs::create_dir_all(ext.join("manifest.json")).unwrap();
+        assert_eq!(extension_dir_in(&tmp.0), None);
+    }
+
+    #[test]
+    fn extension_dir_must_be_directory() {
+        let tmp = TempDir::new("ext-file");
+        std::fs::write(tmp.0.join("extension"), b"").unwrap();
+        assert_eq!(extension_dir_in(&tmp.0), None);
+    }
+
+    #[test]
+    fn bundle_includes_extension_resources() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let resources = &conf["bundle"]["resources"];
+        assert_eq!(resources["../extension/"], "extension/", "каталог extension копируется в ресурсы как extension/");
+        // Источник в репозитории действительно содержит манифест.
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../extension");
+        assert!(extension_dir_in(src.parent().unwrap()).is_some());
+    }
 
     #[test]
     fn capture_position_centers_and_sets_top() {

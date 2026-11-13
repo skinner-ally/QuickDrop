@@ -17,8 +17,10 @@ import {
   type BackupData,
   type ImportReport,
 } from '@/lib/exportImport'
+import { getSettings } from '@/db/settings'
 import { snapToGrid } from '@/lib/graphLayout'
 import { MAX_OCR_TEXT } from '@/lib/normalize'
+import { isVisionBacklog, needsVision } from '@/lib/ocrState'
 import { cleanupTrash } from '@/lib/trashCleanup'
 import {
   DEFAULT_SETTINGS,
@@ -218,7 +220,8 @@ describe('exportBackup / importBackup: полный цикл', () => {
     const report = await importBackup(blob, 'replace')
     expect(report).toEqual({ items: 2, files: 1, categories: 1, skipped: 0, positions: 0, searches: 0, trashed: 0 })
 
-    expect(await db.items.get('img')).toEqual(image)
+    // Картинка без распознанного текста пришла импортом: авто её не отправляет (ocrAutoSkipAt).
+    expect(await db.items.get('img')).toEqual({ ...image, ocrAutoSkipAt: expect.any(Number) })
     expect(await db.items.get('note')).toEqual(note)
     expect(await db.categories.toArray()).toEqual([category])
 
@@ -1154,11 +1157,161 @@ describe('версия 2: корзина, распознанный текст, �
     }
 
     expect(clean({ source: 'extension' }).source).toBe('extension')
+    expect(clean({ source: 'share' }).source).toBe('share')
     expect(clean({ source: 'telepathy' }).source).toBe('import')
 
     // Запись прежнего формата новых полей не получает.
     const old = clean({})
-    for (const key of ['deletedAt', 'ocrText', 'ocrAt']) expect(Object.hasOwn(old, key), key).toBe(false)
+    for (const key of ['deletedAt', 'ocrText', 'ocrAt', 'ocrVisionAt']) expect(Object.hasOwn(old, key), key).toBe(false)
+  })
+
+  it('sanitizeItem: ocrVisionAt — только у записи с вложением и только допустимая дата', () => {
+    const now = 1_000_000_000
+    const clean = (patch: Record<string, unknown>) => sanitizeItem({ ...makeItem('x'), ...patch }, now)!
+
+    expect(clean({ type: 'image', fileId: 'f1', ocrVisionAt: 7_000 }).ocrVisionAt).toBe(7_000)
+    // Без ocrAt и ocrText — «пробовали зрением, неустранимая ошибка».
+    const tried = clean({ type: 'file', fileId: 'f1', ocrVisionAt: 8_000 })
+    expect(tried.ocrVisionAt).toBe(8_000)
+    expect(Object.hasOwn(tried, 'ocrAt')).toBe(false)
+    // Без fileId отметка отбрасывается.
+    expect(Object.hasOwn(clean({ type: 'image', ocrVisionAt: 7_000 }), 'ocrVisionAt')).toBe(false)
+    expect(Object.hasOwn(clean({ type: 'image', fileId: '', ocrVisionAt: 7_000 }), 'ocrVisionAt')).toBe(false)
+    for (const bad of [9e15, -5, '7000', null, Number.NaN]) {
+      expect(Object.hasOwn(clean({ fileId: 'f1', ocrVisionAt: bad }), 'ocrVisionAt'), String(bad)).toBe(false)
+    }
+  })
+
+  it('полный цикл: ocrVisionAt и источник share переживают экспорт и импорт', async () => {
+    const png = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
+    await db.files.bulkPut([
+      { id: 'f1', itemId: 'seen', blob: png, name: 'a.png', mimeType: 'image/png', size: 3, createdAt: 1 },
+      { id: 'f2', itemId: 'failed', blob: png, name: 'b.png', mimeType: 'image/png', size: 3, createdAt: 1 },
+    ])
+    const seen = makeItem('seen', {
+      type: 'image',
+      fileId: 'f1',
+      fileName: 'a.png',
+      source: 'share',
+      ocrText: 'Счёт № 7',
+      ocrAt: 4_000,
+      ocrVisionAt: 4_000,
+    })
+    // Неустранимая ошибка зрения: только отметка.
+    const failed = makeItem('failed', { type: 'image', fileId: 'f2', fileName: 'b.png', ocrVisionAt: 5_000 })
+    const shared = makeItem('shared', { source: 'share' })
+    await db.items.bulkPut([seen, failed, shared])
+
+    const { blob, data } = await readExport()
+    expect(data.items.find((i) => i.id === 'seen')).toEqual(seen)
+    expect(data.items.find((i) => i.id === 'failed')).toEqual(failed)
+
+    await reset()
+    expect(await importBackup(blob, 'replace')).toEqual(rep({ items: 3, files: 2 }))
+    expect(await db.items.get('seen')).toEqual(seen)
+    expect(await db.items.get('failed')).toEqual(failed)
+    expect(await db.items.get('shared')).toEqual(shared)
+  })
+
+  describe('импорт и автораспознавание (ревью этапа 8)', () => {
+    const png = () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
+    const fileRec = (id: string, itemId: string) => ({
+      id,
+      itemId,
+      name: `${id}.png`,
+      mimeType: 'image/png',
+      size: 3,
+      createdAt: 1,
+      data: 'AQID',
+    })
+    const SINCE = 5_000
+    const enableAuto = () =>
+      db.meta.bulkPut([
+        { key: 'aiAutoOcr', value: true },
+        { key: 'aiAutoOcrSince', value: SINCE },
+      ])
+
+    it('новые записи из копии, ждущие распознавания, авто не берёт (merge и replace)', async () => {
+      for (const mode of ['merge', 'replace'] as const) {
+        await reset()
+        await enableAuto()
+        const copy = backup({
+          items: [
+            makeItem('pic', { type: 'image', fileId: 'f1', fileName: 'f1.png', createdAt: SINCE + 1_000 }),
+            makeItem('done', {
+              type: 'image',
+              fileId: 'f2',
+              fileName: 'f2.png',
+              createdAt: SINCE + 1_000,
+              ocrText: 'есть',
+              ocrAt: 6_000,
+              ocrVisionAt: 6_000,
+            }),
+          ],
+          files: [fileRec('f1', 'pic'), fileRec('f2', 'done')],
+        })
+        await importBackup(backupBlob(copy), mode)
+        const pic = (await db.items.get('pic'))!
+        expect(pic.ocrAutoSkipAt, mode).toBeTypeOf('number')
+        expect(isVisionBacklog(pic, (await getSettings()).aiAutoOcrSince), mode).toBe(false)
+        expect(needsVision(pic), mode).toBe(true) // кнопка «Распознать» остаётся
+        expect(Object.hasOwn((await db.items.get('done'))!, 'ocrAutoSkipAt'), mode).toBe(false)
+      }
+    })
+
+    it('merge: своя запись из задела в нём и остаётся; отметка не экспортируется и из копии не читается', async () => {
+      await enableAuto()
+      await db.files.put({ id: 'f1', itemId: 'own', blob: png(), name: 'a.png', mimeType: 'image/png', size: 3, createdAt: 1 })
+      const own = makeItem('own', { type: 'image', fileId: 'f1', fileName: 'a.png', createdAt: SINCE + 1, updatedAt: 100 })
+      await db.items.put(own)
+      // в копии — та же запись новее и чужая отметка
+      const copy = backup({
+        items: [{ ...own, title: 'новее', updatedAt: 200, ocrAutoSkipAt: 1 } as Item],
+        files: [fileRec('f1', 'own')],
+      })
+      await importBackup(backupBlob(copy), 'merge')
+      const after = (await db.items.get('own'))!
+      expect(after.title).toBe('новее')
+      expect(Object.hasOwn(after, 'ocrAutoSkipAt')).toBe(false)
+      expect(isVisionBacklog(after, SINCE)).toBe(true)
+
+      await db.items.update('own', { ocrAutoSkipAt: 7_000 })
+      const { data } = await readExport()
+      expect(Object.hasOwn(data.items.find((i) => i.id === 'own')!, 'ocrAutoSkipAt')).toBe(false)
+      // здешняя отметка переживает победу версии из копии
+      await importBackup(backupBlob(backup({ items: [{ ...own, title: 'ещё новее', updatedAt: 300 }] })), 'merge')
+      expect((await db.items.get('own'))!.ocrAutoSkipAt).toBe(7_000)
+    })
+
+    it('ocrClearedAt: переносится у записи с вложением без текста и идёт вместе с победившим текстом', () => {
+      const clean = (patch: Record<string, unknown>) => sanitizeItem({ ...makeItem('x'), ...patch }, 1_000_000_000)!
+      expect(clean({ type: 'file', fileId: 'f1', ocrAt: 5_000, ocrClearedAt: 5_000 }).ocrClearedAt).toBe(5_000)
+      expect(Object.hasOwn(clean({ type: 'file', ocrAt: 5_000, ocrClearedAt: 5_000 }), 'ocrClearedAt')).toBe(false)
+      expect(
+        Object.hasOwn(clean({ type: 'file', fileId: 'f1', ocrText: 'текст', ocrClearedAt: 5_000 }), 'ocrClearedAt'),
+      ).toBe(false)
+    })
+
+    it('merge: очистка на другом устройстве (свежее ocrAt) приходит вместе с отметкой', async () => {
+      await db.files.put({ id: 'f1', itemId: 'doc', blob: png(), name: 'a.pdf', mimeType: 'application/pdf', size: 3, createdAt: 1 })
+      const local = makeItem('doc', {
+        type: 'file',
+        fileId: 'f1',
+        fileName: 'a.pdf',
+        mimeType: 'application/pdf',
+        ocrText: 'слой',
+        ocrAt: 3_000,
+        updatedAt: 500,
+      })
+      await db.items.put(local)
+      const { ocrText: _text, ...rest } = local
+      const copy = backup({ items: [{ ...rest, ocrAt: 4_000, ocrClearedAt: 4_000, updatedAt: 400 }] })
+      await importBackup(backupBlob(copy), 'merge')
+      const after = (await db.items.get('doc'))!
+      expect(after.ocrText).toBeUndefined()
+      expect(after.ocrClearedAt).toBe(4_000)
+      expect(needsVision(after)).toBe(false)
+    })
   })
 
   it('deletedAt вне диапазона дат отбрасывается: запись приходит не в корзину', async () => {
@@ -1355,6 +1508,73 @@ describe('версия 2: корзина, распознанный текст, �
       expect(Object.hasOwn(other, 'ocrText')).toBe(false)
       expect(Object.hasOwn(other, 'ocrAt')).toBe(false)
     })
+
+    describe('ocrVisionAt — наибольший из двух версий', () => {
+      it('побеждает версия из копии, локальная отметка зрения позже — остаётся локальная', async () => {
+        await db.items.put(scan({ updatedAt: 100, ocrVisionAt: 300 }))
+        await importBackup(backupBlob(backup({ items: [scan({ title: 'с телефона', updatedAt: 500, ocrVisionAt: 120 })] })), 'merge')
+        expect(await db.items.get('scan')).toMatchObject({ title: 'с телефона', ocrVisionAt: 300 })
+      })
+
+      it('побеждает версия из копии без отметки — локальная «пробовали зрением» не теряется', async () => {
+        // Неустранимая ошибка: только ocrVisionAt, без текста и ocrAt.
+        await db.items.put(scan({ updatedAt: 100, ocrVisionAt: 250 }))
+        await importBackup(backupBlob(backup({ items: [scan({ updatedAt: 500 })] })), 'merge')
+        const merged = (await db.items.get('scan'))!
+        expect(merged.ocrVisionAt).toBe(250)
+        expect(Object.hasOwn(merged, 'ocrAt')).toBe(false)
+        expect(Object.hasOwn(merged, 'ocrText')).toBe(false)
+      })
+
+      it('локальная версия новее, отметка зрения пришла из копии — переносится, отчёт «пропущено»', async () => {
+        await db.items.put(scan({ title: 'здесь', updatedAt: 900, ocrText: 'слой', ocrAt: 500, ocrVisionAt: 100 }))
+        const report = await importBackup(
+          backupBlob(backup({ items: [scan({ updatedAt: 100, ocrAt: 200, ocrVisionAt: 200 })] })),
+          'merge',
+        )
+        expect(report).toEqual(rep({ skipped: 1 }))
+        // Текст локальный (ocrAt свежее), отметка зрения — наибольшая.
+        expect(await db.items.get('scan')).toMatchObject({
+          title: 'здесь',
+          updatedAt: 900,
+          ocrText: 'слой',
+          ocrAt: 500,
+          ocrVisionAt: 200,
+        })
+      })
+
+      it('текст победил из копии, а отметка зрения больше у локальной — берётся локальная отметка', async () => {
+        await db.items.put(scan({ updatedAt: 900, ocrAt: 150, ocrVisionAt: 700 }))
+        await importBackup(
+          backupBlob(backup({ items: [scan({ updatedAt: 100, ocrText: 'Итого', ocrAt: 400, ocrVisionAt: 400 })] })),
+          'merge',
+        )
+        expect(await db.items.get('scan')).toMatchObject({ ocrText: 'Итого', ocrAt: 400, ocrVisionAt: 700 })
+      })
+
+      it('нет изменений — локальная запись не перезаписывается', async () => {
+        const local = scan({ updatedAt: 900, ocrText: 'x', ocrAt: 500, ocrVisionAt: 500 })
+        await db.items.put(local)
+        const put = vi.spyOn(db.items, 'bulkPut')
+        const report = await importBackup(
+          backupBlob(backup({ items: [scan({ updatedAt: 100, ocrAt: 300, ocrVisionAt: 300 })] })),
+          'merge',
+        )
+        expect(report).toEqual(rep({ skipped: 1 }))
+        expect(await db.items.get('scan')).toEqual(local)
+        // Ни одна запись не записана повторно ни слиянием, ни починкой целостности.
+        for (const call of put.mock.calls) expect(call[0]).toEqual([])
+      })
+
+      it('другое вложение — отметка не переносится', async () => {
+        await db.items.put(makeItem('other', { type: 'image', fileId: 'f-local', updatedAt: 100, ocrVisionAt: 900 }))
+        await importBackup(
+          backupBlob(backup({ items: [makeItem('other', { type: 'image', fileId: 'f-copy', updatedAt: 500 })] })),
+          'merge',
+        )
+        expect(Object.hasOwn((await db.items.get('other'))!, 'ocrVisionAt')).toBe(false)
+      })
+    })
   })
 })
 
@@ -1433,7 +1653,10 @@ describe('копия прежнего формата (версия 1)', () => {
 
     expect(await importBackup(v1Blob(), 'replace')).toEqual(rep({ items: 2, files: 1, categories: 1 }))
 
-    expect(await db.items.toArray()).toEqual(V1_COPY.items)
+    // Картинка без распознанного текста пришла импортом: авто её не отправляет (ocrAutoSkipAt).
+    expect(await db.items.toArray()).toEqual(
+      V1_COPY.items.map((it) => (it.id === 'img' ? { ...it, ocrAutoSkipAt: expect.any(Number) } : it)),
+    )
     expect(await db.categories.toArray()).toEqual(V1_COPY.categories)
     const file = (await db.files.get('file-1'))!
     expect(file).toMatchObject({ itemId: 'img', name: 'photo.png', mimeType: 'image/png', size: 5, createdAt: 1_000 })
@@ -1552,6 +1775,7 @@ describe('новые настройки', () => {
       { key: 'backupKeep', value: 3 },
       { key: 'mdExportDir', value: 'D:\\Vault\\Notes' },
       { key: 'aiAutoOcr', value: true },
+      { key: 'aiAutoOcrSince', value: 1_762_819_200_123 },
       { key: 'aiVisionModel', value: 'vision-x' },
       { key: 'extEnabled', value: true },
       { key: 'extPort', value: 50123 },
@@ -1569,6 +1793,8 @@ describe('новые настройки', () => {
       'backupKeep',
       'mdExportDir',
       'aiAutoOcr',
+      'aiAutoOcrSince',
+      '1762819200123',
       'aiVisionModel',
       'extEnabled',
       'extPort',
@@ -1588,6 +1814,7 @@ describe('новые настройки', () => {
       backupKeep: 30,
       mdExportDir: 'C:\\MineMd',
       aiAutoOcr: false,
+      aiAutoOcrSince: 222,
       aiVisionModel: 'local-vision',
       extEnabled: false,
       extPort: 47821,
@@ -1614,6 +1841,7 @@ describe('новые настройки', () => {
           backupKeep: 1,
           mdExportDir: 'C:\\EvilMd',
           aiAutoOcr: true,
+          aiAutoOcrSince: 1,
           aiVisionModel: 'evil-vision',
           extEnabled: true,
           extPort: 2000,

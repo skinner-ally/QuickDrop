@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PDF_DESTROY_WAIT_MS, createPdfEngine } from './pdfEngine'
+import { VISION_JPEG_QUALITY } from './ocrState'
+import {
+  PDF_DESTROY_WAIT_MS,
+  PDF_RENDER_MAX_SCALE,
+  PDF_RENDER_MIN_SCALE,
+  createPdfEngine,
+  pageRenderScale,
+} from './pdfEngine'
 import type { PdfJsApi } from './pdfEngine'
 
 /** Порт worker: запоминает сообщения, сам не отвечает — как worker, занятый синхронным разбором. */
@@ -136,6 +143,22 @@ describe('createPdfEngine: свой worker на документ', () => {
     expect(calls.workerDestroy).toBe(0)
   })
 
+  it('getDocument: useWasm: false всегда, wasmUrl — если задан, с завершающим «/»', async () => {
+    const first = fakePdfjs({ promise: Promise.resolve(fakeDoc), destroy: async () => {} })
+    await (await createPdfEngine(first.api).open(data())).close()
+    expect(first.calls.getDocument[0]).toMatchObject({ useWasm: false })
+    expect(first.calls.getDocument[0]).not.toHaveProperty('wasmUrl')
+
+    const second = fakePdfjs({ promise: Promise.resolve(fakeDoc), destroy: async () => {} })
+    const engine = createPdfEngine(second.api, undefined, { wasmUrl: 'http://tauri.localhost/pdfjs' })
+    await (await engine.open(data())).close()
+    expect(second.calls.getDocument[0]).toMatchObject({ useWasm: false, wasmUrl: 'http://tauri.localhost/pdfjs/' })
+
+    const third = fakePdfjs({ promise: Promise.resolve(fakeDoc), destroy: async () => {} })
+    await (await createPdfEngine(third.api, undefined, { wasmUrl: 'https://x.test/app/pdfjs/' }).open(data())).close()
+    expect(third.calls.getDocument[0].wasmUrl).toBe('https://x.test/app/pdfjs/')
+  })
+
   it('настоящий pdf.js, worker молчит после GetDocRequest: брошенное открытие останавливает поток', async () => {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -151,5 +174,90 @@ describe('createPdfEngine: свой worker на документ', () => {
     await vi.advanceTimersByTimeAsync(PDF_DESTROY_WAIT_MS)
     await failed
     expect(port.terminated).toBe(1)
+  })
+})
+
+describe('pageRenderScale', () => {
+  it('большая сторона ≈ maxSide, в пределах 0.5…4', () => {
+    expect(pageRenderScale(612, 792, 2000)).toBeCloseTo(2000 / 792)
+    expect(pageRenderScale(792, 612, 1584)).toBe(2)
+    expect(pageRenderScale(100, 50, 2000)).toBe(PDF_RENDER_MAX_SCALE)
+    expect(pageRenderScale(14_400, 14_400, 2000)).toBe(PDF_RENDER_MIN_SCALE)
+    expect(pageRenderScale(0, 0, 2000)).toBe(1)
+    expect(pageRenderScale(Number.NaN, 10, 2000)).toBe(1)
+  })
+})
+
+describe('pageImage: страница картинкой', () => {
+  /** Холст-подделка: запоминает размеры и тип кодирования. */
+  function fakeCanvas(result: 'blob' | 'null' = 'blob') {
+    const canvas = {
+      width: 0,
+      height: 0,
+      sizes: [] as Array<[number, number]>,
+      encoded: [] as Array<[string | undefined, number | undefined]>,
+      toBlob(cb: (b: Blob | null) => void, type?: string, quality?: number) {
+        this.sizes.push([this.width, this.height])
+        this.encoded.push([type, quality])
+        cb(result === 'blob' ? new Blob(['jpeg'], { type: type ?? 'image/png' }) : null)
+      },
+    }
+    vi.stubGlobal('document', { createElement: (tag: string) => (tag === 'canvas' ? canvas : null) })
+    return canvas
+  }
+
+  function docWithPage(render?: () => Promise<void>) {
+    const page = {
+      cleanups: 0,
+      renders: [] as Array<Record<string, unknown>>,
+      getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale, scale }),
+      render(params: Record<string, unknown>) {
+        page.renders.push(params)
+        return { promise: render ? render() : Promise.resolve() }
+      },
+      cleanup() {
+        page.cleanups++
+      },
+    }
+    const doc = { numPages: 2, getPage: async () => page }
+    return { doc, page }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('JPEG на белом фоне, масштаб по maxSide; холст и страница освобождаются', async () => {
+    const canvas = fakeCanvas()
+    const { doc, page } = docWithPage()
+    const { api } = fakePdfjs({ promise: Promise.resolve(doc), destroy: async () => {} })
+    const opened = await createPdfEngine(api).open(data())
+    const blob = await opened.pageImage!(1, 2000)
+    expect(blob.type).toBe('image/jpeg')
+    expect(canvas.sizes).toEqual([[Math.round(612 * (2000 / 792)), 2000]])
+    expect(canvas.encoded).toEqual([['image/jpeg', VISION_JPEG_QUALITY]])
+    expect(page.renders).toHaveLength(1)
+    expect(page.renders[0]).toMatchObject({ canvas, background: 'white' })
+    expect((page.renders[0].viewport as { scale: number }).scale).toBeCloseTo(2000 / 792)
+    expect(page.cleanups).toBe(1)
+    expect(canvas.width).toBe(0)
+    expect(canvas.height).toBe(0)
+    await opened.close()
+  })
+
+  it('сбой отрисовки или кодирования — отказ; уборка всё равно', async () => {
+    const canvas = fakeCanvas('null')
+    const { doc, page } = docWithPage()
+    const { api } = fakePdfjs({ promise: Promise.resolve(doc), destroy: async () => {} })
+    const opened = await createPdfEngine(api).open(data())
+    await expect(opened.pageImage!(1, 2000)).rejects.toThrow('Не удалось подготовить страницу PDF')
+    expect(page.cleanups).toBe(1)
+    expect(canvas.width).toBe(0)
+
+    const broken = docWithPage(() => Promise.reject(new Error('render')))
+    const second = fakePdfjs({ promise: Promise.resolve(broken.doc), destroy: async () => {} })
+    const doc2 = await createPdfEngine(second.api).open(data())
+    await expect(doc2.pageImage!(1, 2000)).rejects.toThrow('render')
+    expect(broken.page.cleanups).toBe(1)
   })
 })

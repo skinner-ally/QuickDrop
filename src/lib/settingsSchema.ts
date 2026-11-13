@@ -37,7 +37,8 @@ export function isValidSetting<K extends keyof Settings>(key: K, value: unknown)
     if (!Number.isFinite(value)) return false
     const range = INT_RANGES[key]
     if (range) return Number.isInteger(value) && value >= range[0] && value <= range[1]
-    if (key === 'backupLastAt') return value >= 0
+    // Отметки времени (мс): 0 — «ни разу».
+    if (key === 'backupLastAt' || key === 'aiAutoOcrSince') return value >= 0
   }
 
   return true

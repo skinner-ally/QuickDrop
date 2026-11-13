@@ -55,13 +55,18 @@ describe('isValidSetting', () => {
     expect(isValidSetting(key, Infinity)).toBe(false)
   })
 
-  it('backupLastAt — конечное неотрицательное число', () => {
-    expect(isValidSetting('backupLastAt', 0)).toBe(true)
-    expect(isValidSetting('backupLastAt', 1_762_819_200_000)).toBe(true)
-    expect(isValidSetting('backupLastAt', 0.5)).toBe(true)
-    expect(isValidSetting('backupLastAt', -1)).toBe(false)
-    expect(isValidSetting('backupLastAt', NaN)).toBe(false)
-    expect(isValidSetting('backupLastAt', Infinity)).toBe(false)
+  it.each(['backupLastAt', 'aiAutoOcrSince'] as const)('%s — конечное неотрицательное число', (key) => {
+    expect(isValidSetting(key, 0)).toBe(true)
+    expect(isValidSetting(key, 1_762_819_200_000)).toBe(true)
+    expect(isValidSetting(key, 0.5)).toBe(true)
+    expect(isValidSetting(key, -1)).toBe(false)
+    expect(isValidSetting(key, NaN)).toBe(false)
+    expect(isValidSetting(key, Infinity)).toBe(false)
+    expect(isValidSetting(key, '0')).toBe(false)
+  })
+
+  it('aiAutoOcrSince по умолчанию 0', () => {
+    expect(DEFAULT_SETTINGS.aiAutoOcrSince).toBe(0)
   })
 
   it('строки — не длиннее предела', () => {
@@ -93,6 +98,7 @@ describe('mergeSettings', () => {
       { key: 'backupKeep', value: 0 },
       { key: 'extPort', value: 80 },
       { key: 'backupLastAt', value: -5 },
+      { key: 'aiAutoOcrSince', value: -1 },
       { key: 'чужой-ключ', value: 1 },
     ])
     expect(merged).toEqual(DEFAULT_SETTINGS)
@@ -109,6 +115,7 @@ describe('mergeSettings', () => {
       { key: 'extPort', value: 50000 },
       { key: 'closeToTray', value: true },
       { key: 'captureWindow', value: false },
+      { key: 'aiAutoOcrSince', value: 1_762_819_200_000 },
     ])
     expect(merged).toEqual({
       ...DEFAULT_SETTINGS,
@@ -121,6 +128,7 @@ describe('mergeSettings', () => {
       extPort: 50000,
       closeToTray: true,
       captureWindow: false,
+      aiAutoOcrSince: 1_762_819_200_000,
     })
   })
 })

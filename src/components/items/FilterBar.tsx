@@ -430,8 +430,49 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
     filter.to !== undefined
 
   const showSort = mode === 'list'
+  const sortLabel = SORT_ITEMS.find((s) => s.value === sort)?.label ?? ''
+  const nextLayout = layout === 'list' ? 'grid' : 'list'
+  const layoutName = (l: 'list' | 'grid') => (l === 'list' ? 'список' : 'карточки')
+  // Телефон (< 768 px): сортировка и вид закреплены справа вне прокручиваемого ряда, компактно, 36 px.
+  const compactSortBlock = (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="outline"
+              size="icon-lg"
+              className="px-btn"
+              aria-label={`Сортировка: ${sortLabel}`}
+              title={sortLabel}
+            />
+          }
+        >
+          <Icon name="chevrons-up-down" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuRadioGroup value={sort} onValueChange={(v) => setSort(v as SortMode)}>
+            {SORT_ITEMS.map((s) => (
+              <DropdownMenuRadioItem key={s.value} value={s.value}>
+                {s.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button
+        variant="outline"
+        size="icon-lg"
+        className="px-btn"
+        aria-label={`Вид: ${layoutName(layout)}. Переключить на ${layoutName(nextLayout)}`}
+        onClick={() => setLayout(nextLayout)}
+      >
+        <Icon name={nextLayout} />
+      </Button>
+    </div>
+  )
   const sortBlock = (
-    <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 md:ml-0">
+    <div className="flex shrink-0 items-center gap-1.5">
       <Select value={sort} onValueChange={(v) => v && setSort(v as SortMode)} items={SORT_ITEMS}>
         <SelectTrigger size="sm" aria-label="Сортировка" className="text-2sm">
           <SelectValue />
@@ -477,7 +518,7 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <div className="flex items-center gap-1.5">
-        <div className="no-scrollbar min-w-0 flex-1 -mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0 pixel:-mx-2.5 pixel:-my-1 pixel:px-2.5 pixel:py-1 pixel:md:-mx-1 pixel:md:px-1">
+        <div className="no-scrollbar min-w-0 flex-1 -ml-4 flex items-center gap-1.5 overflow-x-auto pr-1 pl-4 md:mx-0 md:px-0 pixel:-ml-2.5 pixel:-my-1 pixel:pr-1 pixel:pl-2.5 pixel:py-1 pixel:md:-mx-1 pixel:md:px-1">
           <TypeChips />
           <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border pixel:w-0.5" />
           <CategoryFilter />
@@ -498,9 +539,8 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
             Без тегов и категории
           </button>
           <PeriodFilter />
-          {showSort && !isDesktop && sortBlock}
         </div>
-        {showSort && isDesktop && sortBlock}
+        {showSort && (isDesktop ? sortBlock : compactSortBlock)}
       </div>
 
       {(hasActive || query.trim() !== '') && (

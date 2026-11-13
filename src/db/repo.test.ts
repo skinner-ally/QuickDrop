@@ -4,6 +4,7 @@ import {
   addPositions,
   addTags,
   applyLinkMeta,
+  clearOcrText,
   clearPositions,
   createCategory,
   createItem,
@@ -22,6 +23,8 @@ import {
   listCategories,
   listSavedSearches,
   makeThumb,
+  markVisionAutoSkip,
+  markVisionTried,
   matchesFilter,
   MAX_FILE_SIZE,
   normalizeTag,
@@ -40,6 +43,7 @@ import {
   setOcrText,
   setPositions,
   setStatus,
+  setVisionText,
   sortItems,
   toggleFavorite,
   unarchive,
@@ -59,6 +63,7 @@ import {
   type GraphPoint,
   type Item,
   type LinkMeta,
+  type Settings,
 } from '@/types'
 
 const DAY = 86_400_000
@@ -1026,6 +1031,116 @@ describe('распознанный текст и дубли ссылок', () =>
     expect(await db.items.count()).toBe(1)
   })
 
+  it('setVisionText: текст, ocrAt = ocrVisionAt, updatedAt прежний', async () => {
+    const item = await createItem({ type: 'image', file: new Blob(['png'], { type: 'image/png' }), fileName: 'a.png' })
+    await tick()
+
+    expect(await setVisionText(item.id, '  Счёт\r\nNo 5\u0000  ', 5000)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrText: 'Счёт\nNo 5', ocrAt: 5000, ocrVisionAt: 5000 })
+
+    // Отметка по умолчанию — текущее время, обе отметки одинаковые.
+    const before = Date.now()
+    expect(await setVisionText(item.id, 'другой')).toBe(true)
+    const got = (await getItem(item.id))!
+    expect(got.ocrText).toBe('другой')
+    expect(got.ocrAt).toBeGreaterThanOrEqual(before)
+    expect(got.ocrVisionAt).toBe(got.ocrAt)
+    expect(got.updatedAt).toBe(item.updatedAt)
+  })
+
+  it('setVisionText: пустой текст удаляет ocrText, обе отметки стоят', async () => {
+    const item = await createItem({ type: 'image', file: new Blob(['png'], { type: 'image/png' }), fileName: 'a.png' })
+    await setVisionText(item.id, 'было', 1000)
+
+    expect(await setVisionText(item.id, ' \r\n\t ', 7000)).toBe(true)
+    const empty = (await getItem(item.id))!
+    expect('ocrText' in empty).toBe(false)
+    expect(empty).toEqual({ ...item, ocrAt: 7000, ocrVisionAt: 7000 })
+  })
+
+  it('setVisionText: обрезка до MAX_OCR_TEXT, запись в корзине, несуществующая запись', async () => {
+    const item = await createItem({ type: 'text', content: 'x' })
+    await setVisionText(item.id, 'я'.repeat(MAX_OCR_TEXT + 500), 1)
+    expect((await getItem(item.id))!.ocrText).toHaveLength(MAX_OCR_TEXT)
+
+    await deleteItem(item.id)
+    const trashed = (await getItem(item.id))!
+    expect(await setVisionText(item.id, 'в корзине', 2)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...trashed, ocrText: 'в корзине', ocrAt: 2, ocrVisionAt: 2 })
+
+    expect(await setVisionText('missing', 'текст')).toBe(false)
+    expect(await getItem('missing')).toBeUndefined()
+    expect(await db.items.count()).toBe(1)
+  })
+
+  it('markVisionTried: ставит только ocrVisionAt, ocrText/ocrAt/updatedAt не трогает', async () => {
+    const item = await createItem({ type: 'file', file: new Blob(['%PDF']), fileName: 'a.pdf' })
+    await setOcrText(item.id, 'слой PDF', 3000)
+    await tick()
+
+    expect(await markVisionTried(item.id, 9000)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrText: 'слой PDF', ocrAt: 3000, ocrVisionAt: 9000 })
+
+    // Без ocrAt: отметка зрения ocrAt не создаёт.
+    const bare = await createItem({ type: 'image', file: new Blob(['png'], { type: 'image/png' }), fileName: 'b.png' })
+    const before = Date.now()
+    expect(await markVisionTried(bare.id)).toBe(true)
+    const got = (await getItem(bare.id))!
+    expect('ocrAt' in got).toBe(false)
+    expect('ocrText' in got).toBe(false)
+    expect(got.ocrVisionAt).toBeGreaterThanOrEqual(before)
+    expect(got.updatedAt).toBe(bare.updatedAt)
+
+    expect(await markVisionTried('missing')).toBe(false)
+    expect(await getItem('missing')).toBeUndefined()
+  })
+
+  it('setOcrText не снимает ocrVisionAt (ручная правка и очистка)', async () => {
+    const item = await createItem({ type: 'image', file: new Blob(['png'], { type: 'image/png' }), fileName: 'a.png' })
+    await setVisionText(item.id, 'распознано', 4000)
+
+    expect(await setOcrText(item.id, 'исправлено', 5000)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrText: 'исправлено', ocrAt: 5000, ocrVisionAt: 4000 })
+
+    expect(await setOcrText(item.id, '', 6000)).toBe(true)
+    const cleared = (await getItem(item.id))!
+    expect('ocrText' in cleared).toBe(false)
+    expect(cleared).toEqual({ ...item, ocrAt: 6000, ocrVisionAt: 4000 })
+  })
+
+  it('clearOcrText: убирает текст, ставит ocrAt и ocrClearedAt, updatedAt и ocrVisionAt не трогает', async () => {
+    const item = await createItem({ type: 'file', file: new Blob(['%PDF']), fileName: 'a.pdf' })
+    await setOcrText(item.id, 'слой PDF', 3000)
+    await tick()
+
+    expect(await clearOcrText(item.id, 5000)).toBe(true)
+    const cleared = (await getItem(item.id))!
+    expect('ocrText' in cleared).toBe(false)
+    expect(cleared).toEqual({ ...item, ocrAt: 5000, ocrClearedAt: 5000 })
+
+    // новый текст (правка, «Отменить», повторное извлечение) снимает отметку; «текста нет» — тоже
+    expect(await setOcrText(item.id, 'вернули', 6000)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrText: 'вернули', ocrAt: 6000 })
+    await clearOcrText(item.id, 7000)
+    expect(await setOcrText(item.id, '', 8000)).toBe(true)
+    expect('ocrClearedAt' in (await getItem(item.id))!).toBe(false)
+    await clearOcrText(item.id, 9000)
+    expect(await setVisionText(item.id, '', 9500)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrAt: 9500, ocrVisionAt: 9500 })
+
+    expect(await clearOcrText('missing')).toBe(false)
+    expect(await getItem('missing')).toBeUndefined()
+  })
+
+  it('markVisionAutoSkip: ставит только ocrAutoSkipAt, updatedAt не трогает', async () => {
+    const item = await createItem({ type: 'image', file: new Blob(['png'], { type: 'image/png' }), fileName: 'a.png' })
+    await tick()
+    expect(await markVisionAutoSkip(item.id, 4000)).toBe(true)
+    expect(await getItem(item.id)).toEqual({ ...item, ocrAutoSkipAt: 4000 })
+    expect(await markVisionAutoSkip('missing')).toBe(false)
+    expect(await getItem('missing')).toBeUndefined()
+  })
+
   it('findDuplicateLink: по нормализованному адресу, без корзины и excludeId', async () => {
     const link = await createItem({ type: 'link', url: 'https://www.example.com/a/?utm_source=x' })
     await createItem({ type: 'link', url: 'https://example.com/b' })
@@ -1422,5 +1537,55 @@ describe('settings', () => {
     expect(s.aiModel).toBe('gpt-4o-mini')
     expect(s.autoFetchLinkTitle).toBe(DEFAULT_SETTINGS.autoFetchLinkTitle)
     expect('unknown' in s).toBe(false)
+  })
+
+  describe('отсчёт задела автораспознавания (aiAutoOcrSince)', () => {
+    const AI: Partial<Settings> = {
+      aiEnabled: true,
+      aiApiKey: 'sk-test',
+      aiBaseUrl: 'https://api.example.com/v1',
+      aiModel: 'vision-model',
+      aiAutoOcr: true,
+      aiAutoOcrSince: 1000,
+    }
+
+    it('повторное включение ИИ сдвигает отсчёт: накопленное при выключенном не уходит', async () => {
+      await setSettings(AI)
+      await setSetting('aiEnabled', false)
+      expect((await getSettings()).aiAutoOcrSince).toBe(1000)
+      const before = Date.now()
+      await setSetting('aiEnabled', true)
+      expect((await getSettings()).aiAutoOcrSince).toBeGreaterThanOrEqual(before)
+    })
+
+    it('вернули ключ или модель — тоже сдвиг; смена ключа при работающем ИИ — нет', async () => {
+      await setSettings(AI)
+      await setSetting('aiApiKey', 'sk-other')
+      expect((await getSettings()).aiAutoOcrSince).toBe(1000)
+      await setSetting('aiApiKey', '')
+      await setSettings({ aiAutoOcrSince: 1000 })
+      const before = Date.now()
+      await setSetting('aiApiKey', 'sk-back')
+      expect((await getSettings()).aiAutoOcrSince).toBeGreaterThanOrEqual(before)
+    })
+
+    it('смена хоста API сдвигает отсчёт; тот же хост с другим путём — нет', async () => {
+      await setSettings(AI)
+      await setSetting('aiBaseUrl', 'https://api.example.com/v2')
+      expect((await getSettings()).aiAutoOcrSince).toBe(1000)
+      const before = Date.now()
+      await setSettings({ aiBaseUrl: 'https://other.example.net/v1' })
+      expect((await getSettings()).aiAutoOcrSince).toBeGreaterThanOrEqual(before)
+    })
+
+    it('явно переданный отсчёт не меняется; без автораспознавания отсчёт не трогается', async () => {
+      await setSettings({ ...AI, aiEnabled: false })
+      await setSettings({ aiEnabled: true, aiAutoOcrSince: 500 })
+      expect((await getSettings()).aiAutoOcrSince).toBe(500)
+
+      await setSettings({ aiAutoOcr: false, aiEnabled: false })
+      await setSetting('aiEnabled', true)
+      expect((await getSettings()).aiAutoOcrSince).toBe(500)
+    })
   })
 })

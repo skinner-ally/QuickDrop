@@ -144,7 +144,8 @@ export function serializeFilter(
  * Запрос целиком для сохранённого поиска: операторы фильтра + строка поиска.
  * Типы на экране пересекаются (фильтр и type:/has: строки поиска), а parseQuery объединяет все
  * типы строки в «любой из», поэтому при типах с обеих сторон пишется одно пересечение. Пустое
- * пересечение (на экране — ничего) записать нечем: побеждают типы строки поиска, как и cat:.
+ * пересечение (на экране — ничего) записать нечем: побеждают типы строки поиска. Категория — так же:
+ * при cat: в строке поиска категория фильтра не пишется (иначе «cat:none cat:x» или дубль «cat:x cat:x»).
  */
 export function composeQuery(
   query: string,
@@ -155,16 +156,20 @@ export function composeQuery(
 ): string {
   let text = (query ?? '').trim()
   let ownFilter = filter
+  const parsed = text ? parseQuery(text, now) : null
+  if (parsed?.categoryName !== undefined && filter.categoryId !== undefined) {
+    ownFilter = { ...ownFilter, categoryId: undefined }
+  }
   const own = [...new Set(filter.types ?? [])].filter((t) => ITEM_TYPES.includes(t))
-  if (own.length > 0 && text) {
-    const fromQuery = parseQuery(text, now).filter.types ?? []
+  if (own.length > 0 && parsed) {
+    const fromQuery = parsed.filter.types ?? []
     if (fromQuery.length > 0) {
       const both = own.filter((t) => fromQuery.includes(t))
       if (both.length > 0) {
-        ownFilter = { ...filter, types: both }
+        ownFilter = { ...ownFilter, types: both }
         text = withoutTypeOperators(text)
       } else {
-        ownFilter = { ...filter, types: undefined }
+        ownFilter = { ...ownFilter, types: undefined }
       }
     }
   }

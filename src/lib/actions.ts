@@ -1,6 +1,7 @@
 import { toast } from 'sonner'
 import {
   applyLinkMeta,
+  clearOcrText,
   clearPositions,
   createItem,
   createSavedSearch,
@@ -21,6 +22,7 @@ import {
   restoreItems,
   restoreSavedSearch,
   setCategory,
+  setOcrText,
   setPositions,
   setStatus,
   toggleFavorite,
@@ -30,12 +32,14 @@ import {
 } from '@/db/repo'
 import { getSettings } from '@/db/settings'
 import { getAllItemsSnapshot, getTrashedItemsSnapshot } from '@/hooks/useItems'
+import { visionAvailability } from '@/lib/ai'
 import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { fetchLinkMeta } from '@/lib/linkMeta'
-import { hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
-import { extractItemText, textSourceOf } from '@/lib/ocr'
+import { cleanOcrText, hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
+import { extractItemText } from '@/lib/ocr'
+import { getOcrJob, ocrKindOf, setOcrNote, type OcrKind, type OcrOutcome } from '@/lib/ocrState'
 import { isTauri } from '@/lib/platform'
 import {
   alreadySavedText,
@@ -134,12 +138,29 @@ async function finishLinkMeta(
 }
 
 /**
- * Создаёт запись; метаданные ссылки и текст PDF подтягиваются в фоне и не задерживают возврат.
+ * Фоновое извлечение текста новой записи. PDF — всегда (текстовый слой локально; скан уходит в ИИ, только
+ * если включено автораспознавание), картинка — только при автораспознавании. Настройки не прочитались —
+ * авто считается выключенным. Не бросает.
+ */
+async function extractInBackground(item: Item, kind: OcrKind): Promise<void> {
+  let vision = false
+  try {
+    const settings = await getSettings()
+    vision = settings.aiEnabled && settings.aiAutoOcr
+  } catch {
+    vision = false
+  }
+  // extractItemText не бросает; текст попадёт в поиск, когда будет готов.
+  if (kind === 'pdf' || vision) await extractItemText(item, { vision })
+}
+
+/**
+ * Создаёт запись; метаданные ссылки и текст вложения подтягиваются в фоне и не задерживают возврат.
  */
 export async function createAndEnrich(input: NewItemInput): Promise<Item> {
   const item = await createItem(input)
-  // extractItemText не бросает; текст попадёт в поиск, когда будет готов.
-  if (textSourceOf(item) === 'pdf') void extractItemText(item)
+  const kind = ocrKindOf(item)
+  if (kind) void extractInBackground(item, kind).catch(() => {})
   // Связи по [[вики-ссылкам]] — молча: запись только что создана, toast о связях был бы шумом.
   if (item.type !== 'code' && mayHaveWikiLinks(item.content)) {
     void actApplyWikiLinks(item.id, item.content, { silent: true })
@@ -176,6 +197,107 @@ export async function refreshLinkMeta(item: Item): Promise<void> {
     if (!job) return
     const outcome = await finishLinkMeta(item.id, url, settings.linkProxyUrl, job, keep)
     if (outcome === 'kept') toast.error('Не удалось обновить данные ссылки — оставлены прежние')
+  })
+}
+
+// ───────────────────────── распознанный текст ─────────────────────────
+
+/** Пояснение к успешному итогу: не все страницы или оборванный текст. */
+function recognizedDescription(outcome: OcrOutcome): string | undefined {
+  const parts: string[] = []
+  const fromLayer = outcome.via === 'text-layer'
+  if (outcome.pages && outcome.pages.read < outcome.pages.total) {
+    const { read, total } = outcome.pages
+    parts.push(
+      fromLayer ? `Текст взят из первых ${read} из ${total} страниц` : `Распознаны первые ${read} из ${total} страниц`,
+    )
+  }
+  if (outcome.truncated) {
+    parts.push(fromLayer ? 'Текст PDF слишком длинный — сохранено начало' : 'Ответ модели оборван, текст неполный')
+  }
+  return parts.length ? parts.join('. ') : undefined
+}
+
+/**
+ * Кнопки «Распознать текст», «Распознать заново», «Повторить» в подробностях записи. Запись в корзине или без
+ * вложения для распознавания — ничего. Картинка при недоступном ИИ — toast с причиной, без запроса; PDF при
+ * недоступном ИИ разбирается только локально (текстовый слой). Итог — toast и примечание в состоянии сеанса.
+ */
+export async function actRecognize(item: Item): Promise<void> {
+  if (item.deletedAt !== undefined) return
+  const kind = ocrKindOf(item)
+  if (!kind) return
+  let blocked: string | null
+  try {
+    blocked = visionAvailability(await getSettings())
+  } catch (e) {
+    toast.error(describeError(e))
+    return
+  }
+  if (kind === 'image' && blocked !== null) {
+    toast.error(blocked)
+    return
+  }
+  setOcrNote(item.id, null)
+  let outcome: OcrOutcome
+  try {
+    outcome = await extractItemText(item, { vision: blocked === null, force: true })
+  } catch (e) {
+    // extractItemText не бросает по контракту; на всякий случай — тот же путь, что у failed.
+    outcome = { status: 'failed', error: describeError(e, 'Не удалось распознать текст') }
+  }
+  switch (outcome.status) {
+    case 'ok': {
+      const title = outcome.via === 'text-layer' ? 'Текст извлечён из PDF' : 'Текст распознан'
+      const description = recognizedDescription(outcome)
+      if (description) toast.success(title, { description })
+      else toast.success(title)
+      return
+    }
+    case 'empty':
+      setOcrNote(item.id, { status: 'empty', at: Date.now() })
+      toast('Текст не найден')
+      return
+    case 'failed': {
+      const error = outcome.error || 'Не удалось распознать текст'
+      setOcrNote(item.id, { status: 'failed', error, at: Date.now() })
+      toast.error(error)
+      return
+    }
+    case 'skipped':
+      // отмена или задача уже идёт — сообщать нечего
+      return
+  }
+}
+
+/** «Отменить» у идущего или ждущего распознавания. */
+export function actCancelRecognize(id: string): void {
+  getOcrJob(id)?.cancel?.()
+}
+
+/** Правка распознанного текста; пустой текст равен очистке (отметка «текст убрал пользователь»). */
+export async function actSaveOcrText(id: string, text: string): Promise<void> {
+  await safe(async () => {
+    const saved = cleanOcrText(text) ? await setOcrText(id, text) : await clearOcrText(id)
+    if (!saved) throw new Error('Запись не найдена')
+  })
+}
+
+/** Очищает распознанный текст; «Отменить» возвращает прежний. Текста нет — ничего. */
+export async function actClearOcrText(item: Item): Promise<void> {
+  await safe(async () => {
+    const previous = (await getItem(item.id))?.ocrText
+    if (!previous) return
+    // Не setOcrText(''): PDF со слоем без текста неотличим от скана и ушёл бы в ИИ.
+    if (!(await clearOcrText(item.id))) return
+    toast('Распознанный текст очищен', {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => setOcrText(item.id, previous))
+        },
+      },
+    })
   })
 }
 

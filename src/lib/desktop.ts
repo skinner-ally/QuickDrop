@@ -572,6 +572,22 @@ export async function getExtServerStatus(): Promise<ExtServerStatus> {
   }
 }
 
+/**
+ * extension_dir: путь к папке расширения Chrome, которую кладёт установщик (bundle.resources). Вне Tauri, без
+ * папки (сборка без ресурсов) и при отказе команды — null. Не бросает.
+ */
+export async function getExtensionDir(): Promise<string | null> {
+  if (!isTauri()) return null
+  try {
+    const invoke = await desktopInvoke()
+    const dir = await invoke<unknown>('extension_dir')
+    return typeof dir === 'string' && dir.trim() ? dir : null
+  } catch (err) {
+    console.warn('[desktop] папка расширения не найдена', err)
+    return null
+  }
+}
+
 /** Показать файл или папку в проводнике. false — вне Tauri или не удалось. Никогда не бросает. */
 export async function revealInExplorer(path: string): Promise<boolean> {
   if (!isTauri() || !path) return false

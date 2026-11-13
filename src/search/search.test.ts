@@ -992,10 +992,39 @@ describe('composeQuery', () => {
     expect(resolveQueryFilter(parsed, cats)).toEqual(filter)
   })
 
-  it('категория из строки поиска сильнее категории фильтра (известное ограничение)', () => {
+  it('при cat: в строке поиска категория фильтра не пишется — побеждает строка', () => {
     const q = composeQuery('cat:Дом', { categoryId: 'c1' }, cats, NOW)
-    expect(q).toBe('cat:Работа cat:Дом')
+    expect(q).toBe('cat:Дом')
     expect(resolveQueryFilter(parseQuery(q, NOW), cats)).toEqual({ categoryId: 'c2' })
+    // Прочие части фильтра остаются.
+    expect(composeQuery('отчёт cat:Дом', { categoryId: 'c1', tags: ['q4'], favorite: true }, cats, NOW)).toBe(
+      'is:fav #q4 отчёт cat:Дом',
+    )
+  })
+
+  it('«Без категории» + cat:x — без «cat:none cat:x»', () => {
+    const q = composeQuery('cat:Дом api', { categoryId: null }, cats, NOW)
+    expect(q).toBe('cat:Дом api')
+    expect(q).not.toMatch(/cat:none/)
+    expect(resolveQueryFilter(parseQuery(q, NOW), cats)).toEqual({ categoryId: 'c2' })
+  })
+
+  it('cat:none не дублируется, одинаковая категория не дублируется', () => {
+    expect(composeQuery('cat:none', { categoryId: null }, cats, NOW)).toBe('cat:none')
+    expect(composeQuery('cat:без', { categoryId: null }, cats, NOW)).toBe('cat:без')
+    expect(composeQuery('cat:Работа', { categoryId: 'c1' }, cats, NOW)).toBe('cat:Работа')
+    expect(composeQuery('кат:"работа"', { categoryId: 'c1' }, cats, NOW)).toBe('кат:"работа"')
+  })
+
+  it('cat: без значения не считается оператором — категория фильтра пишется', () => {
+    expect(composeQuery('cat:', { categoryId: 'c1' }, cats, NOW)).toBe('cat:Работа cat:')
+    expect(composeQuery('api', { categoryId: null }, cats, NOW)).toBe('cat:none api')
+  })
+
+  it('cat: в строке и типы с обеих сторон: категория строки, пересечение типов', () => {
+    const q = composeQuery('type:link,code cat:Дом', { types: ['code'], categoryId: 'c1' }, cats, NOW)
+    expect(q).toBe('type:code cat:Дом')
+    expect(resolveQueryFilter(parseQuery(q, NOW), cats)).toEqual({ types: ['code'], categoryId: 'c2' })
   })
 
   it('типы фильтра и строки поиска пересекаются, как на экране', () => {

@@ -14,6 +14,7 @@ import {
   searchNameKey,
   settleLinkMeta,
 } from '@/lib/normalize'
+import { needsVision } from '@/lib/ocrState'
 import { isValidSetting } from '@/lib/settingsSchema'
 import {
   CATEGORY_COLORS,
@@ -44,6 +45,8 @@ import {
  *  1 — настройки, категории, записи, файлы;
  *  2 — добавлены разделы positions (положения нод графа) и searches (сохранённые поиски),
  *      у записей — deletedAt (корзина), ocrText, ocrAt. Оба раздела необязательны в любой версии.
+ *      У записей также ocrVisionAt и ocrClearedAt (с этапа 8, необязательные; номер версии не менялся).
+ *      ocrAutoSkipAt (решение этого устройства) не выгружается и при импорте не читается.
  */
 
 export const BACKUP_APP = 'quickdrop'
@@ -103,7 +106,7 @@ export interface BackupData {
  * отправили бы локальный ключ и содержимое записей на чужой хост, linkProxyUrl — каждую новую ссылку
  * на чужой прокси, autoFetchLinkTitle — включил бы запросы, которые пользователь выключил;
  * к тому же шаблон прокси может содержать токен, которому не место в файле копии.
- * По той же причине: aiAutoOcr/aiVisionModel включили бы отправку картинок в ИИ, extEnabled/extPort/
+ * По той же причине: aiAutoOcr/aiAutoOcrSince/aiVisionModel включили бы отправку картинок в ИИ, extEnabled/extPort/
  * extToken — приём записей по сети с чужим секретом. backupDir/mdExportDir/backupLastAt — пути и
  * состояние этого компьютера: чужая копия направила бы автоматические копии в произвольную папку.
  * backupEvery/backupKeep действуют вместе с локальной папкой: меньшее число копий из импортированной
@@ -123,6 +126,8 @@ export const PRIVATE_SETTINGS: ReadonlySet<string> = new Set<keyof Settings>([
   'backupKeep',
   'mdExportDir',
   'aiAutoOcr',
+  // состояние этого компьютера, включает отправку
+  'aiAutoOcrSince',
   'aiVisionModel',
   'extEnabled',
   'extPort',
@@ -251,9 +256,15 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
     categories: snapshot.categories,
     // Незавершённая загрузка метаданных в копию не попадает: восстановленная, она висела бы вечно.
     // Записи корзины идут как есть (с deletedAt): копия возвращает и корзину.
-    items: snapshot.items.map((it) =>
-      it.linkMeta?.status === 'pending' ? { ...it, linkMeta: settleLinkMeta(it.linkMeta) } : it,
-    ),
+    // ocrAutoSkipAt — решение этого устройства («авто не брать»), в копию не идёт.
+    items: snapshot.items.map((it) => {
+      let out = it.linkMeta?.status === 'pending' ? { ...it, linkMeta: settleLinkMeta(it.linkMeta) } : it
+      if (out.ocrAutoSkipAt !== undefined) {
+        const { ocrAutoSkipAt: _local, ...rest } = out
+        out = rest
+      }
+      return out
+    }),
     positions: snapshot.positions.filter((p) => itemIds.has(p.id)),
     searches: snapshot.searches,
   }
@@ -455,6 +466,13 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   }
   const ocrAt = ts(raw.ocrAt, now)
   if (ocrAt !== undefined) item.ocrAt = ocrAt
+  // Отметка распознавания зрением имеет смысл только у записи с вложением.
+  const ocrVisionAt = ts(raw.ocrVisionAt, now)
+  if (ocrVisionAt !== undefined && item.fileId) item.ocrVisionAt = ocrVisionAt
+  // «Текст убрал пользователь» — тоже только у записи с вложением и без текста. ocrAutoSkipAt из копии не
+  // читается: импорт ставит его сам всем новым записям, ждущим распознавания (importBackup).
+  const ocrClearedAt = ts(raw.ocrClearedAt, now)
+  if (ocrClearedAt !== undefined && item.fileId && !item.ocrText) item.ocrClearedAt = ocrClearedAt
   // 0 не годится: корзину выбирают по индексу deletedAt > 0, запись с нулём выпала бы из «Очистить корзину».
   const deletedAt = ts(raw.deletedAt, now)
   if (deletedAt !== undefined && deletedAt > 0) item.deletedAt = deletedAt
@@ -627,14 +645,25 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
  * Победившая при слиянии версия записи с распознанным текстом того же вложения из другой версии, если тот
  * свежее. setOcrText не меняет updatedAt, поэтому распознавание в выборе версии не участвует и иначе
  * терялось бы: текст пропал бы из поиска, а автораспознавание отправило бы картинку в ИИ повторно.
+ * ocrVisionAt — наибольший из двух версий, чей бы текст ни победил: попытку зрением не повторяем.
+ * Без изменений возвращает сам winner (вызывающий сравнивает по ссылке).
  */
 function withNewerOcr(winner: Item, other: Item): Item {
-  if (!winner.fileId || winner.fileId !== other.fileId || other.ocrAt === undefined) return winner
-  if (winner.ocrAt !== undefined && winner.ocrAt >= other.ocrAt) return winner
-  const next: Item = { ...winner, ocrAt: other.ocrAt }
-  // ocrAt без ocrText — «пробовали, текста нет»
-  if (other.ocrText !== undefined) next.ocrText = other.ocrText
-  else delete next.ocrText
+  if (!winner.fileId || winner.fileId !== other.fileId) return winner
+  let next = winner
+  if (other.ocrAt !== undefined && (winner.ocrAt === undefined || winner.ocrAt < other.ocrAt)) {
+    next = { ...winner, ocrAt: other.ocrAt }
+    // ocrAt без ocrText — «пробовали, текста нет» или «текст убрал пользователь» (ocrClearedAt — вместе с текстом)
+    if (other.ocrText !== undefined) next.ocrText = other.ocrText
+    else delete next.ocrText
+    if (other.ocrClearedAt !== undefined) next.ocrClearedAt = other.ocrClearedAt
+    else delete next.ocrClearedAt
+  }
+  const vision =
+    other.ocrVisionAt === undefined
+      ? winner.ocrVisionAt
+      : Math.max(other.ocrVisionAt, winner.ocrVisionAt ?? other.ocrVisionAt)
+  if (vision !== next.ocrVisionAt) next = { ...next, ocrVisionAt: vision }
   return next
 }
 
@@ -829,7 +858,8 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
     const localDays = isValidSetting('trashDays', storedDays) ? storedDays : DEFAULT_SETTINGS.trashDays
     const trashFloor = importedTrashFloor((mode === 'replace' ? settings.trashDays : undefined) ?? localDays, now)
     const itemsToPut: Item[] = []
-    // Оставшиеся локальные записи, которым из копии пришёл только более свежий распознанный текст.
+    // Оставшиеся локальные записи, которым из копии пришёл только более свежий распознанный текст
+    // или более поздняя отметка распознавания зрением (ocrVisionAt).
     const ocrOnly: Item[] = []
     // Слияние сменило категорию: локальное положение стоит в зоне прежней категории, а перевести ноду
     // в другую зону может только смена категории со снятием положения (Р8).
@@ -851,6 +881,12 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
       if (loc) {
         item = withNewerOcr(item, loc)
         if ((loc.categoryId ?? null) !== item.categoryId) recategorized.push(item.id)
+        // Решение «авто не брать» — здешнее (отмена здесь или прежний импорт): версия из копии его не снимает.
+        if (loc.ocrAutoSkipAt !== undefined) item = { ...item, ocrAutoSkipAt: loc.ocrAutoSkipAt }
+      } else if (needsVision(item)) {
+        // Новая здесь запись из копии: автораспознавание её не отправляет, хотя createdAt может быть позже
+        // aiAutoOcrSince (копия с другого устройства). Распознать — кнопкой.
+        item = { ...item, ocrAutoSkipAt: now }
       }
       itemsToPut.push(item)
       if (item.fileId) fileOwner.set(item.fileId, { item, imported: true })

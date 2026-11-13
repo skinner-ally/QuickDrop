@@ -15,7 +15,7 @@ export type ItemType = (typeof ITEM_TYPES)[number]
 export const ITEM_STATUSES = ['inbox', 'library', 'archive'] as const
 export type ItemStatus = (typeof ITEM_STATUSES)[number]
 
-export const ITEM_SOURCES = ['manual', 'paste', 'drop', 'import', 'demo', 'extension'] as const
+export const ITEM_SOURCES = ['manual', 'paste', 'drop', 'import', 'demo', 'extension', 'share'] as const
 export type ItemSource = (typeof ITEM_SOURCES)[number]
 
 /** Метаданные страницы, извлечённые по ссылке. */
@@ -88,11 +88,28 @@ export interface Item {
 
   /**
    * Текст, извлечённый из вложения (PDF с текстовым слоем, распознанная картинка). Участвует в поиске.
-   * Не входит в ItemPatch: пишет только repo.setOcrText, updatedAt при этом не меняется.
+   * Не входит в ItemPatch: пишут только repo.setOcrText и repo.setVisionText, updatedAt при этом не меняется.
    */
   ocrText?: string
   /** Когда текст извлекался в последний раз, в т.ч. безрезультатно (ocrAt есть, ocrText нет). */
   ocrAt?: number
+  /**
+   * Когда вложение в последний раз пробовали распознать моделью со зрением (успешно, без текста или с
+   * неустранимой ошибкой). Поля нет — не пробовали. Пишут только repo.setVisionText и repo.markVisionTried;
+   * updatedAt не меняется.
+   */
+  ocrVisionAt?: number
+  /**
+   * Текст убрал пользователь («Очистить» или правка до пустого). Отличает такую запись от скана: PDF со
+   * слоем без текста иначе выглядел бы как скан и ушёл бы в ИИ. Пишут только repo.clearOcrText (ставит),
+   * setOcrText и setVisionText (снимают). updatedAt не меняется.
+   */
+  ocrClearedAt?: number
+  /**
+   * Автораспознавание эту запись не берёт: пользователь отменил распознавание или запись пришла импортом.
+   * Ручная кнопка «Распознать» работает. Пишет только repo.markVisionAutoSkip; updatedAt не меняется.
+   */
+  ocrAutoSkipAt?: number
   /** С какого момента запись в корзине. Поля нет — запись не в корзине. status, prevStatus и links не меняются. */
   deletedAt?: number
 }
@@ -194,8 +211,16 @@ export interface Settings {
   /** Папка экспорта в Markdown (только Tauri). Пусто — не выбрана. */
   mdExportDir: string
 
-  /** Распознавать текст на новых картинках и сканах автоматически (нужен включённый ИИ). */
+  /**
+   * Распознавать текст на новых картинках и сканах автоматически (нужен включённый ИИ):
+   * изображение отправляется на aiBaseUrl.
+   */
   aiAutoOcr: boolean
+  /**
+   * Когда включили автораспознавание (мс). Автоматически распознаются только записи, созданные
+   * не раньше этого момента.
+   */
+  aiAutoOcrSince: number
   /** Модель со зрением для распознавания. Пусто — использовать aiModel. */
   aiVisionModel: string
 
@@ -236,6 +261,7 @@ export const DEFAULT_SETTINGS: Settings = {
   backupLastAt: 0,
   mdExportDir: '',
   aiAutoOcr: false,
+  aiAutoOcrSince: 0,
   aiVisionModel: '',
   closeToTray: false,
   captureWindow: true,
