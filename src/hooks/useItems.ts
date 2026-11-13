@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/db'
 import { getFile, getPositions } from '@/db/repo'
 import { addDays, startOfDay } from '@/lib/dates'
+import { isCaptureWindow } from '@/lib/platform'
 import { isSearchIndexReady, prepareSearchIndexAsync } from '@/search'
 import { useUi } from '@/store/ui'
 import type { Category, GraphPoint, Item, ItemFilter, SavedSearch } from '@/types'
@@ -98,7 +99,8 @@ function subscribeItems(): void {
       failed = false
       retryDelay = ITEMS_RETRY_MIN_MS
       emit()
-      schedulePrepareIndex()
+      // Мини-окну поиск не нужен: индекс всех записей во втором WebView только занял бы память и процессор.
+      if (!isCaptureWindow()) schedulePrepareIndex()
     },
     error: (err: unknown) => {
       console.error('QuickDrop: не удалось прочитать записи', err)

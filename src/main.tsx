@@ -6,10 +6,17 @@ import { applyInitialHash } from './components/layout/AppShell'
 import './pwa'
 import { initDesktop } from './lib/desktop'
 import { drainPdfBackfill } from './lib/ocr'
+import { isTauri } from './lib/platform'
 import { startTrashCleanup } from './lib/trashCleanup'
 
 applyInitialHash()
 void initDesktop()
+// Приём записей от расширения браузера: нужен только оболочке, в веб-сборку отдельным чанком.
+if (isTauri()) {
+  void import('./lib/extInbox')
+    .then((m) => m.startExtInbox())
+    .catch((e: unknown) => console.warn('QuickDrop: приём от расширения не запущен', e))
+}
 startTrashCleanup()
 // Текст из PDF, добавленных до появления извлечения или пришедших из копии: не на старте, чтобы
 // не мешать первому экрану; порциями с паузами, пока не пройдены все.

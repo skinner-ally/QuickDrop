@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
-import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { createCommitter, type CommitDeps, type Committer } from './commitInput'
 
 export function Section({
   id,
@@ -74,6 +74,7 @@ export function CommitInput({
   type = 'text',
   placeholder,
   trailing,
+  inlineCommitError = false,
 }: {
   id?: string
   value: string
@@ -82,30 +83,26 @@ export function CommitInput({
   type?: string
   placeholder?: string
   trailing?: ReactNode
+  /**
+   * Отказ onCommit показывать под полем (как ошибку проверки), а не всплывающим сообщением. Для полей, где
+   * отказ — частый и ожидаемый исход (порт занят, сочетание занято): сообщение не исчезает, пока поле не исправят.
+   */
+  inlineCommitError?: boolean
 }) {
   const [draft, setDraft] = useState(value)
   const [error, setError] = useState<string | null>(null)
+  const deps = useRef<CommitDeps | null>(null)
+  deps.current = { onCommit, validate, inlineCommitError, setError, saved, toastError: (m) => toast.error(m) }
+  const committer = useRef<Committer | null>(null)
+  committer.current ??= createCommitter(() => deps.current!)
   useEffect(() => {
     setDraft(value)
     setError(null)
+    committer.current?.reset()
   }, [value])
 
-  const commit = async () => {
-    const v = draft.trim()
-    if (v === value) {
-      setError(null)
-      return
-    }
-    const err = validate?.(v) ?? null
-    setError(err)
-    if (err) return
-    try {
-      await onCommit(v)
-      saved()
-    } catch (e) {
-      toast.error(describeError(e))
-    }
-  }
+  /** force — Enter: осознанный повтор отвергнутого значения (порт или сочетание освободили). */
+  const commit = (force = false) => committer.current!.commit(draft, value, force)
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -118,13 +115,17 @@ export function CommitInput({
           aria-invalid={error ? true : undefined}
           autoComplete="off"
           spellCheck={false}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            committer.current?.reset()
+          }}
           onBlur={() => void commit()}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void commit()
+            if (e.key === 'Enter') void commit(true)
             if (e.key === 'Escape') {
               setDraft(value)
               setError(null)
+              committer.current?.reset()
             }
           }}
         />

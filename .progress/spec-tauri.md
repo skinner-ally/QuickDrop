@@ -2,6 +2,7 @@
 
 Автор: архитектор `spec-tauri`, 2026-11-11. Основание: `.progress/plan-combined.md` (этапы 2, 7, 8).
 Часть 1 исполняется на этапе 2 агентом `tauri-backup`. Часть 2 — проработка этапа 7 и приёмки этапа 8.
+Часть 2 сверена с кодом перед этапом 7 (2026-11-13, `spec-stage7`); исполнение этапа 7 — п. 2.14.
 
 ## 0. Исходное состояние (проверено)
 
@@ -9,7 +10,7 @@
 |---|---|
 | `tauri` в `Cargo.lock` | 2.12.5 (runtime-wry 2.12.3, wry 0.57.2, tao 0.37.2, tray-icon 0.25.1 — уже в lock как необязательная) |
 | Плагины в проекте | `tauri-plugin-opener` 2.7.3, `tauri-plugin-global-shortcut` 2.4.1, `tauri-plugin-single-instance` 2.5.5 (уже подключён, поднимает `main`) |
-| Последние 2.x на crates.io | `tauri-plugin-dialog` 2.8.4 (тянет `tauri-plugin-fs` 2.7.1), `tauri-plugin-autostart` 2.7.0, `tauri-plugin-deep-link` 2.6.3; все требуют `tauri ^2.12`, rust 1.90 (локально rustc 1.99.1) |
+| Последние 2.x на crates.io | `tauri-plugin-dialog` 2.8.4 (тянет `tauri-plugin-fs` 2.7.1), `tauri-plugin-autostart` 2.7.0, `tauri-plugin-deep-link` 2.6.3; все требуют `tauri ^2.12`, rust 1.90 (локально rustc 1.99.1). (уточнено после ревью этапа 7) Плагин автозапуска в проекте не используется — п. 2.4 |
 | npm | `@tauri-apps/api` 2.12.4, `@tauri-apps/plugin-dialog` 2.8.4, `@tauri-apps/plugin-autostart` 2.7.0, `@tauri-apps/plugin-deep-link` 2.6.3 |
 | Внимание | `cargo search` показывает `3.0.0-alpha.*` — это Tauri 3. В `Cargo.toml` писать `"2"`, не `"*"` и не альфу |
 | Сборка сейчас | `quickdrop.exe` 5,24 МБ; NSIS 2,35 МБ; MSI 3,00 МБ (база для сравнения на этапе 8) |
@@ -584,20 +585,26 @@ Rust (`#[cfg(test)] mod tests` в `backup.rs`; временный каталог
 
 # Часть 2. Быстрый захват (этап 7) и приёмка Windows (этап 8)
 
+> (уточнено перед этапом 7) Часть 2 сверена с кодом после этапов 1–6 (2026-11-13, `spec-stage7`). Исправленные места
+> помечены «(уточнено перед этапом 7)». Точные контракты, порядок работ и пакеты — в п. 2.14; **при расхождении
+> пп. 2.1–2.12 с п. 2.14 действует п. 2.14.** Решения основной сессии (пользователь не отвечал, взяты безопасные
+> умолчания): крестик главного окна по умолчанию закрывает приложение (`closeToTray: false`), приём от расширения
+> и автозапуск по умолчанию выключены, канал расширения — только локальный HTTP, `quickdrop://` не делается.
+
 ## 2.1. Сводка решений
 
 | Вопрос | Решение | Почему |
 |---|---|---|
-| Мини-окно | Второе `WebviewWindow` с меткой `capture`, отдельная точка входа `capture.html` + `src/capture-main.tsx` | Не тянет оболочку, списки, граф, фон; не запускает побочные действия главного окна (сочетания, автобэкап, засев) |
-| Когда создаётся | Скрытым, по команде `prepare_capture_window` из `initDesktop()` главного окна — после того как главное окно открыло БД | Показ мгновенный; обновление схемы Dexie всегда делает главное окно |
+| Мини-окно | Второе `WebviewWindow` с меткой `capture`, отдельная точка входа `capture.html` + `src/capture-main.tsx`. (уточнено перед этапом 7) Включается настройкой `captureWindow` (по умолчанию включено); выключено — сочетание, как сейчас, поднимает главное окно | Не тянет оболочку, списки, граф, фон; не запускает побочные действия главного окна (сочетания, автобэкап, засев) |
+| Когда создаётся | (уточнено перед этапом 7) Скрытым, командой `set_shell_options` из `initDesktop()` главного окна (после чтения настроек, то есть после открытия БД) и только при `captureWindow: true`; отдельной команды `prepare_capture_window` нет | Показ мгновенный; обновление схемы Dexie всегда делает главное окно; при выключенной настройке второй процесс WebView2 не создаётся |
 | Общие данные | Тот же origin и тот же каталог данных WebView2 → та же IndexedDB и `localStorage`; запись делает само мини-окно через `createAndEnrich` | Dexie 4 рассылает изменения между окнами одного origin — список в главном окне обновляется сам |
-| Глобальное сочетание | Регистрация остаётся в JS главного окна; обработчик: главное окно в фокусе → прежний диалог, иначе `toggle_capture_window` | Минимум изменений; сохраняется готовая обработка занятого сочетания |
+| Глобальное сочетание | Регистрация остаётся в JS главного окна; обработчик: главное окно в фокусе или `captureWindow` выключен → прежний диалог, иначе `toggle_capture_window` | Минимум изменений; сохраняется готовая обработка занятого сочетания |
 | Закрытие мини-окна | `Esc`, сохранение, потеря фокуса (в JS, с задержкой 150 мс и паузой на время системного диалога выбора файла) | Потерю фокуса в Rust нельзя отличить от открытия диалога файла |
-| Трей | Меню «Открыть QuickDrop», «Быстрая запись», «Выход»; левый клик — открыть главное окно | — |
-| Крестик главного окна | По умолчанию — в трей (`closeToTray: true`), при первом закрытии — разовый вопрос «Свернуть в трей / Выйти» | Иначе глобальное сочетание и приём из расширения перестают работать |
-| Автозапуск | `tauri-plugin-autostart`, аргумент `--autostart` → главное окно стартует скрытым; состояние читается из системы, в `Settings` не хранится | Реестр можно изменить мимо приложения |
+| Трей | Меню «Открыть QuickDrop», «Быстрая запись», «Выход»; левый клик — открыть главное окно. Значок есть всегда | — |
+| Крестик главного окна | (уточнено перед этапом 7) Настройка «Сворачивать в трей при закрытии» (`closeToTray`), **по умолчанию выключена**: крестик закрывает приложение, как сейчас. Разового вопроса при первом закрытии нет | Решение основной сессии: безопасное умолчание — поведение не меняется без ведома пользователя |
+| Автозапуск | (уточнено после ревью этапа 7) Крейт `auto-launch = "0.6"` напрямую (режим Windows `CurrentUser`, только HKCU), без `tauri-plugin-autostart`; аргумент `--autostart` → главное окно стартует скрытым; состояние читается из системы, в `Settings` не хранится. (уточнено перед этапом 7) По умолчанию выключен; управляется командами Rust `get_autostart` / `set_autostart`, npm-пакет не нужен | Реестр можно изменить мимо приложения |
 | Один экземпляр | Уже подключён; доработка: показать скрытое в трей окно; запуск с `--autostart` окно не поднимает | — |
-| Канал расширения | Локальный HTTP на `127.0.0.1` с токеном; `quickdrop://` не делаем | См. 2.6 |
+| Канал расширения | Локальный HTTP на `127.0.0.1` с токеном; `quickdrop://` не делаем. (уточнено перед этапом 7) По умолчанию выключен; пока выключен, порт не слушается | См. 2.6 |
 
 ## 2.2. Мини-окно
 
@@ -606,32 +613,43 @@ Rust (`#[cfg(test)] mod tests` в `backup.rs`; временный каталог
 ```json
 {
   "label": "capture", "create": false, "url": "capture.html", "title": "QuickDrop — быстрая запись",
-  "width": 560, "height": 340, "resizable": false, "maximizable": false, "minimizable": false,
+  "width": 640, "height": 440, "resizable": false, "maximizable": false, "minimizable": false,
   "decorations": false, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true,
-  "visible": false, "focus": true, "center": true, "dragDropEnabled": false
+  "visible": false, "focus": false, "center": true, "dragDropEnabled": false
 }
 ```
+
+(уточнено после ревью этапа 7) `"focus": false`: окно создаётся заранее, пока пользователь работает в главном,
+а WebView2 с `focus: true` при создании забирает ввод даже у скрытого окна. Фокус ставит `show_capture`.
+
+(уточнено перед этапом 7) Размер 640×440 вместо 560×340: нынешняя форма `QuickCapture` (ряд типов, заголовок,
+категория и теги, строка о дубле ссылки, вопрос о файлах) в 340 px не помещается; форма внутри окна прокручивается.
 
 `shadow: false` — прямоугольное окно без системной рамки Windows 11; рамку рисует CSS (деревянная в
 пиксельных сценах, 1 px `--border` в «Классике»). `transparent` не включать (известные артефакты WebView2).
 `data_directory` и `incognito` не задавать — иначе у окна будет своя IndexedDB.
 
-Rust, новый `src-tauri/src/shell.rs`:
-
-```rust
-#[tauri::command] pub async fn prepare_capture_window(app: AppHandle) -> Result<(), String>;   // идемпотентна; WebviewWindowBuilder::from_config
-#[tauri::command] pub async fn toggle_capture_window(app: AppHandle) -> Result<bool, String>;  // true — окно показано
-#[tauri::command] pub async fn show_main_window(app: AppHandle) -> Result<(), String>;         // unminimize + show + set_focus
-#[tauri::command] pub fn set_close_to_tray(state: State<'_, ShellState>, enabled: bool, hint_shown: bool);
-#[tauri::command] pub async fn hide_main_window(app: AppHandle) -> Result<(), String>;
-#[tauri::command] pub fn quit_app(app: AppHandle);                                             // app.exit(0)
-pub struct ShellState { close_to_tray: AtomicBool, tray_hint_shown: AtomicBool }
-```
+Rust, новый `src-tauri/src/shell.rs` — (уточнено перед этапом 7) состав команд изменён, точные сигнатуры в п. 2.14.3:
+`set_shell_options` (флаги `close_to_tray` и `capture_window`; создаёт или уничтожает мини-окно),
+`toggle_capture_window`, `show_main_window`, `open_in_main`, `quit_app`, `get_autostart`, `set_autostart`.
+Команд `prepare_capture_window`, `set_close_to_tray(enabled, hint_shown)` и `hide_main_window` нет.
 
 `toggle_capture_window`: окна нет → создать; видимо и в фокусе → `hide()`, `Ok(false)`; иначе поставить на
 монитор под курсором (`app.cursor_position()`, `app.monitor_from_point(x, y)`, запасной — `primary_monitor()`):
 по горизонтали по центру, верх на 22 % высоты монитора; `show()`, `set_focus()`,
 `emit_to("capture", "capture-shown", ())`. `CloseRequested` окна `capture` (Alt+F4) → `prevent_close()` + `hide()`.
+
+(уточнено после ревью этапа 7) «В фокусе» — по флагу `ShellState::capture_focused`, который ведут события
+`WindowEvent::Focused` мини-окна (сброс при скрытии, `CloseRequested`, `Destroyed` и `destroy()`), а не по
+`win.is_focused()`: в Windows фокус уходит в дочернее окно WebView2, и геттер (состояние tao) даёт `false`, пока
+курсор стоит в поле, — повторное нажатие не прятало бы окно. События же Tauri синтезирует из GotFocus/LostFocus
+самого WebView2 (на них работает и `onFocusChanged` в JS). Проверить вживую при приёмке: фокус в поле, второе
+нажатие прячет окно, третье показывает его с сохранённым текстом.
+
+(уточнено после ревью этапа 7) Скрытие по потере фокуса не срабатывает, пока зажата основная кнопка мыши
+(команда `capture_pointer_down`: Windows — `GetAsyncKeyState` с учётом `SM_SWAPBUTTON`, крейт `windows-sys`;
+другие ОС — `false`): нажатие на файл в Проводнике отнимает у окна фокус раньше, чем файл донесён до окна.
+Пока файл над окном (`dragenter`…`drop`/уход курсора), скрытие на паузе (`suspend`/`resume`).
 
 Права — новый `src-tauri/capabilities/capture.json`: `"windows": ["capture"]`, `permissions`:
 `core:default`, `core:window:allow-hide`, `core:window:allow-start-dragging`. Без `global-shortcut` и `opener`.
@@ -642,43 +660,51 @@ pub struct ShellState { close_to_tray: AtomicBool, tray_hint_shown: AtomicBool }
 |---|---|
 | `capture.html` (корень) | как `index.html`, без PWA-метатегов; `<script src="/theme-init.js">`, `<script type="module" src="/src/capture-main.tsx">` |
 | `src/capture-main.tsx` | `createRoot` → `<CaptureWindowApp />`; не импортирует `./pwa`, не вызывает `initDesktop`, `applyInitialHash` |
-| `src/components/capture/CaptureForm.tsx` | форма, вынесенная из `QuickCapture.tsx` без оболочки `Dialog`: `CaptureForm({ variant: 'dialog' \| 'window', onSaved(items: Item[]), onCancel() })`; `QuickCapture()` остаётся с прежним контрактом и использует её |
+| `src/components/capture/CaptureForm.tsx` | (уточнено перед этапом 7) форма, вынесенная из `QuickCapture.tsx` (сейчас это внутренняя функция `CaptureForm({ snapshotRef })`, жёстко связанная с `useUi`: `closeCapture`, `captureDraft`, `openItemInSection`, toast «Открыть»). Новые пропсы — п. 2.14.5; `QuickCapture()` остаётся с прежним контрактом и использует её |
 | `src/components/capture/CaptureWindowApp.tsx` | `ErrorBoundary` → `ThemeProvider` → `CaptureForm variant="window"` + `Toaster`; шапка с `data-tauri-drag-region` |
 | `src/lib/captureWindow.ts` (+ тест) | см. ниже |
-| `vite.config.ts` | `build.rolldownOptions.input = isTauriBuild ? { main: 'index.html', capture: 'capture.html' } : undefined` (Vite 8: `rollupOptions` — устаревший синоним). В веб-сборку и в precache PWA `capture.html` не попадает; в dev Vite отдаёт `/capture.html` сам |
+| `vite.config.ts` | `build.rolldownOptions.input = isTauriBuild ? { main: 'index.html', capture: 'capture.html' } : undefined` (Vite 8.3: `rolldownOptions` есть, `rollupOptions` — устаревший синоним; проверено по `node_modules/vite`). В веб-сборку и в precache PWA `capture.html` не попадает; в dev Vite отдаёт `/capture.html` сам |
 
 ```ts
 // src/lib/captureWindow.ts
 export const CAPTURE_WINDOW_LABEL = 'capture'
 export const CAPTURE_BLUR_DELAY_MS = 150
-export function isCaptureWindow(): boolean                       // location.pathname оканчивается на '/capture.html'
 export function hideCaptureWindow(): Promise<void>               // getCurrentWindow().hide()
-/** Чистая логика скрытия по потере фокуса (тестируется с fake timers). */
-export function createBlurHider(hide: () => void, delayMs?: number): {
+/** Чистая логика скрытия по потере фокуса (тестируется с fake timers).
+ *  (уточнено после ревью этапа 7) isPointerDown: пока true — скрытие откладывается ещё на delayMs. */
+export function createBlurHider(hide: () => void, delayMs?: number, isPointerDown?: () => Promise<boolean>): {
   onFocusChange(focused: boolean): void   // false → hide через delayMs, если фокус не вернулся и нет паузы
   suspend(): void                         // перед открытием системного диалога файла
   resume(): void                          // после change/cancel поля файла
   dispose(): void
 }
-/** Подписки окна: 'capture-shown' (сфокусировать поле ввода), onFocusChanged → blurHider, Esc. Возвращает отписку. */
+/** Подписки окна: 'capture-shown', onFocusChanged → blurHider. Возвращает отписку. */
 export function initCaptureWindow(handlers: { onShown(): void; blur: ReturnType<typeof createBlurHider> }): Promise<() => void>
 ```
 
-Сценарий: сохранение → `createAndEnrich` (статус `inbox`) → форма очищается → `hideCaptureWindow()`; ошибка →
-окно остаётся, `toast.error(describeError(e))`. `Esc` и потеря фокуса скрывают окно, набранный текст остаётся
-до следующего показа (окно не уничтожается). Загрузка заголовка ссылки доделывается в скрытом окне и приходит
+(уточнено перед этапом 7) `isCaptureWindow()` живёт в `src/lib/platform.ts` (нужна и `db/db.ts`, см. п. 2.14.2).
+Жизненный цикл формы повторяет диалог: показ окна (`capture-shown`) монтирует форму, скрытие размонтирует.
+Поэтому действуют готовые правила `QuickCapture`: набранный текст при `Esc` и потере фокуса уходит в черновик
+`sessionStorage` (у мини-окна он свой) и восстанавливается при следующем показе с пометкой «Черновик
+восстановлен»; при прикреплённых файлах или идущем сохранении окно не скрывается (показывается готовый вопрос
+«Прикреплённые файлы не сохранятся. Закрыть?»); подписка на все записи (поиск дубля ссылки) в скрытом окне не висит.
+
+Сценарий: сохранение → `createAndEnrich` (статус `inbox`) → черновик очищается → окно скрывается; ошибка →
+окно остаётся, `toast.error(describeError(e))`. Загрузка заголовка ссылки доделывается в скрытом окне и приходит
 в главное через БД (`isLinkMetaLoading` в главном окне для такой записи `false` — это уже предусмотренное
 поведение «pending из другой вкладки»). Тема, сцена и шрифт — те же `theme-init.js` и `ThemeProvider`
 (общие `localStorage` и таблица `meta`).
 
-Изменение обработчика сочетания в `desktop.ts` (`registerShortcut`):
+Изменение обработчика сочетания в `desktop.ts` (`registerShortcut`) — (уточнено перед этапом 7) с учётом настройки:
 
 ```ts
-if (document.hasFocus()) useUi.getState().openCapture()
-else void invoke('toggle_capture_window').catch(() => raiseWindow().finally(() => useUi.getState().openCapture()))
+const mini = (await getSettings()).captureWindow && !document.hasFocus()
+if (mini) await invoke('toggle_capture_window')        // отказ команды → прежнее поведение
+else raiseWindow().finally(() => useUi.getState().openCapture())
 ```
 
-Текст подсказки в `ShortcutsSection`: «Открывает окно быстрой записи поверх любого приложения».
+(уточнено перед этапом 7) Поле «Глобальное сочетание» переезжает из `ShortcutsSection` в новую секцию «Быстрый
+захват» (п. 2.14.6); в `ShortcutsSection` остаётся строка-указатель.
 
 ## 2.3. Трей и закрытие главного окна
 
@@ -700,38 +726,56 @@ TrayIconBuilder::with_id("main")
     .build(app)?;
 ```
 
-`CloseRequested` окна `main` (в `on_window_event`):
-- `close_to_tray == false` → ничего (обычный выход);
-- `true` и `tray_hint_shown == false` → `prevent_close()`, выставить `tray_hint_shown = true`, отправить в
-  `main` событие `tray-hint`; окно не скрывать. JS показывает диалог: «QuickDrop останется работать в трее,
-  чтобы действовали быстрая запись по сочетанию клавиш и расширение браузера» — кнопки «Свернуть в трей»
-  (`hide_main_window`) и «Выйти» (`quit_app`); ставит `localStorage['qd-tray-hint'] = '1'`;
-- `true` и подсказка показана → `prevent_close()` + `hide()`.
-Если JS не отвечает, второе нажатие крестика скрывает окно — закрытие не зависит от веб-слоя.
+(уточнено перед этапом 7) `CloseRequested` окна `main` (в `on_window_event`):
+- `close_to_tray == false` (умолчание) → закрытию не мешать;
+- `close_to_tray == true` → `api.prevent_close()` + `hide()`.
+Разового вопроса «Свернуть в трей / Выйти», события `tray-hint` и ключа `localStorage['qd-tray-hint']` нет:
+настройку включает сам пользователь, пояснение — в подсказке переключателя.
 
-Значения флагов Rust получает от JS: `initDesktop()` вызывает
-`set_close_to_tray({ enabled: settings.closeToTray, hintShown: localStorage['qd-tray-hint'] === '1' })`;
-до этого вызова оба флага `false` (если веб-слой не загрузился, крестик закрывает приложение).
-При смене настройки интерфейс вызывает `setCloseToTray(on)`.
+(уточнено перед этапом 7) **Выход при закрытии главного окна.** Tauri завершает процесс, только когда закрыты
+все окна, а скрытое мини-окно — тоже окно: без доработки крестик закрыл бы главное окно и оставил бы процесс
+висеть в трее. Поэтому на `WindowEvent::Destroyed` окна `main` вызывается `app.exit(0)`.
+
+Значения флагов Rust получает от JS: `initDesktop()` вызывает `set_shell_options({ closeToTray, captureWindow })`;
+до этого вызова оба флага `false` (если веб-слой не загрузился, крестик закрывает приложение, мини-окна нет).
+При смене настроек секция «Быстрый захват» вызывает `applyShellOptions(...)`.
+
+(уточнено перед этапом 7) Пункт трея «Быстрая запись»: при `capture_window == true` показывает мини-окно прямо
+из Rust; иначе поднимает главное окно и шлёт ему событие `open-capture`. Создавать и показывать окна из
+обработчика меню или значка напрямую нельзя — в Windows `WebviewWindowBuilder::build` в синхронном обработчике
+виснет (примечание в исходниках tauri 2.12.5); работу выносить в `tauri::async_runtime::spawn`.
 
 ## 2.4. Автозапуск
 
-Rust (в секции зависимостей для настольных платформ): `tauri-plugin-autostart = "2"`;
-`.plugin(tauri_plugin_autostart::Builder::new().args(["--autostart"]).build())`.
-Права в `default.json`: `autostart:allow-enable`, `autostart:allow-disable`, `autostart:allow-is-enabled`.
-npm: `@tauri-apps/plugin-autostart`.
+(уточнено после ревью этапа 7) Rust (в секции зависимостей для настольных платформ): `auto-launch = "0.6"`
+напрямую, **без `tauri-plugin-autostart`**: плагин не даёт выбрать режим Windows, а его режим (Dynamic) из
+процесса, запущенного от имени администратора, пишет в HKLM — общую для компьютера запись, которую обычный
+процесс потом не снимет. `shell::Autostart(auto_launch::AutoLaunch)` собирается в `shell::init`: имя =
+`package_info().name` (как было у плагина — прежние записи HKCU подхватываются), аргумент `--autostart`;
+Windows — `WindowsEnableMode::CurrentUser` и путь к exe **в кавычках** (`quoted_exe_path`); macOS — LaunchAgent,
+канонический путь exe; Linux — AppImage или exe. `set_autostart(false)`: после `disable()` перепроверка
+`is_enabled()`; запись осталась (HKLM от прежних версий) → `Err` с подсказкой, а не тихий `Ok`.
+
+(уточнено перед этапом 7) Управление — своими командами Rust, а не JS-API. Следствия: npm-пакет
+`@tauri-apps/plugin-autostart` и права `autostart:*` в capabilities **не нужны**, `package.json` на этапе 7 не
+меняется.
 
 - `setup`: `std::env::args().any(|a| a == "--autostart")` → главное окно создаётся с `.visible(false)`.
-- `desktop.ts`: `getAutostart(): Promise<boolean>`, `setAutostart(on: boolean): Promise<{ ok: boolean; error?: string }>`.
-- `initDesktop()`: если `isEnabled()` → повторный `enable()` (обновляет путь к exe после переустановки).
-- Переключатель в настройках выключен в dev-сборке (`import.meta.env.DEV`): иначе в реестр попадёт `target/debug`.
+- Команды: `get_autostart() -> { enabled, available, reason? }`, `set_autostart(enabled) -> Result<(), String>`.
+  В отладочной сборке (`cfg!(debug_assertions)`) `available: false`, `set_autostart` возвращает ошибку: иначе в
+  реестр попадёт `target/debug`. Проверка в Rust, а не по `import.meta.env.DEV`.
+- `desktop.ts`: `getAutostart(): Promise<AutostartState>`, `setAutostart(on: boolean): Promise<{ ok: boolean; error?: string }>`.
+- `setup` (Rust, не JS): если автозапуск включён и сборка не отладочная → повторный `enable()` (обновляет путь
+  к exe после переустановки).
 - Windows: значение в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Отключение через «Диспетчер
-  задач → Автозагрузка» плагин не видит (`isEnabled()` остаётся `true`) — упомянуть в инструкции.
+  задач → Автозагрузка» может быть не видно (`is_enabled()` остаётся `true`) — упомянуть в инструкции.
 
 ## 2.5. Один экземпляр
 
 Плагин остаётся первым в цепочке. Обработчик: аргументы содержат `--autostart` → ничего; иначе
 `unminimize()`, `show()`, `set_focus()` окна `main` (в т.ч. скрытого в трей).
+(уточнено перед этапом 7) Сейчас обработчик написан прямо в `lib.rs` (`tauri_plugin_single_instance::init(|app, _args, _cwd| …)`,
+плагин 2.5.5); на этапе 7 он сводится к вызову `shell::on_second_instance(app, &args)`.
 
 ## 2.6. Канал для расширения Chrome
 
@@ -744,7 +788,7 @@ npm: `@tauri-apps/plugin-autostart`.
 | Приложение не запущено | Запустится | Ошибка «QuickDrop не запущен» |
 | Установка | Запись схемы в реестр установщиком; в dev — регистрация при запуске | Ничего |
 | Защита | Ссылку может подсунуть любая страница (после подтверждения — запись во «Входящие»); токен в адресе виден в командной строке процесса | Токен в заголовке + проверка `Origin` и `Host` |
-| Минусы | — | Порт может быть занят (настраивается); приложение должно работать (трей + автозапуск) |
+| Минусы | — | Порт может быть занят (настраивается); приложение должно работать (трей + автозапуск); (уточнено после ревью этапа 7) подмена при свободном порту: пока QuickDrop не слушает, порт может занять чужой процесс и получить токен (п. 2.14.4, «Принятый риск») |
 
 **Рекомендация: HTTP на `127.0.0.1` с токеном.** Главный сценарий — выделенный текст — в адрес не помещается,
 а без ответа расширение не может честно сообщить результат. Трей и автозапуск того же этапа закрывают
@@ -752,7 +796,9 @@ npm: `@tauri-apps/plugin-autostart`.
 
 ### Протокол (версия 1)
 
-Сервер: `tiny_http = "0.12"`, отдельный поток, привязка строго `("127.0.0.1", port)`; порт по умолчанию `47821`.
+(уточнено после ревью этапа 7) Сервер: свой минимальный HTTP на `std::net::TcpListener` (без зависимостей;
+`tiny_http` убран — не ограничивал время чтения), поток приёма и поток на соединение, привязка строго
+`("127.0.0.1", port)`; порт по умолчанию `47821`. Пределы — п. 2.14.4.
 
 ```
 POST http://127.0.0.1:{port}/v1/capture
@@ -761,38 +807,43 @@ Content-Type: application/json
 
 { "v": 1, "kind": "page" | "link" | "selection",
   "url": "https://…",        // page: адрес страницы; link: адрес ссылки; selection: адрес страницы-источника
-  "title": "…",              // page: заголовок страницы; link: текст ссылки; selection: заголовок страницы
+  "title": "…",              // page и selection: заголовок страницы; link: не передаётся
   "text": "…" }              // только selection: выделенный текст
 
 GET http://127.0.0.1:{port}/v1/ping      (тот же Authorization) → { "ok": true, "app": "quickdrop", "version": "0.1.0" }
 ```
 
-Проверки в Rust, по порядку (ответ всегда JSON `{ "ok": false, "error": "…" }`):
+(уточнено перед этапом 7) У `link` заголовка нет: Chrome в `contextMenus` текст ссылки не отдаёт (`linkText` есть
+только в Firefox); заголовок страницы QuickDrop подтянет сам, если включено `autoFetchLinkTitle`.
+
+Проверки в Rust, по порядку (ответ всегда JSON `{ "ok": false, "error": "…" }`) —
+(уточнено перед этапом 7) таблица приведена к п. 2.14.4:
 
 | Проверка | Код |
 |---|---|
-| `Host` ровно `127.0.0.1:{port}` или `localhost:{port}` (защита от DNS rebinding) | 403 |
-| `Origin` присутствует и начинается с `chrome-extension://` | 403 |
+| `Host` ровно `127.0.0.1:{port}` (защита от DNS rebinding; `localhost` не принимается — расширение ходит только на `127.0.0.1`) | 403 |
+| `Origin`: если есть — ровно `chrome-extension://` + 32 буквы `a`–`p`; для `POST` и `OPTIONS` обязателен; у `GET /v1/ping` может отсутствовать (Chrome не всегда ставит его на GET) | 403 |
 | `OPTIONS` (preflight) с верным `Origin` → 204 + `Access-Control-Allow-Origin: {origin}`, `-Allow-Methods: POST, GET`, `-Allow-Headers: authorization, content-type`, `-Allow-Private-Network: true`, `-Max-Age: 600` | 204 |
 | Путь и метод не из списка | 404 / 405 |
 | `Authorization: Bearer` совпадает с токеном (сравнение за постоянное время) | 401 |
+| (уточнено после ревью этапа 7) Частота: не больше 30 запросов **с верным токеном** за 10 с (запрос без верного токена получает 401 раньше и в счёт не идёт — иначе чужая страница забивала бы окно частоты расширению) | 429 |
 | `Content-Type` начинается с `application/json` | 415 |
 | `Content-Length` обязателен и ≤ 1 048 576 | 411 / 413 |
-| Тело — JSON-объект | 400 |
+| Тело — JSON-объект с `"v": 1` | 400 |
 
-Успешные ответы несут `Access-Control-Allow-Origin: {origin}`. Сервер стартует только с токеном длиной ≥ 32.
+Успешные ответы несут `Access-Control-Allow-Origin: {origin}`. Сервер стартует только с токеном из 43 символов
+base64url (32 случайных байта).
 
-Дальше: Rust присваивает `requestId` (`AtomicU64`), шлёт в `main` событие `ext-capture`
-`{ requestId, message }` и ждёт до 5 с вызова `ext_capture_done`:
+(уточнено перед этапом 7) Дальше — не «событие с данными и ожидание 5 с», а очередь с подтверждением (п. 2.14.4):
+Rust кладёт сообщение в слот ожидания, шлёт в `main` событие-будильник `ext-capture`, главное окно само забирает
+сообщение командой `ext_take_pending` (в т.ч. при запуске — если подписка появилась позже события) и
+подтверждает итог командой `ext_capture_done`. Команды: `ext_server_apply(enabled, port, token)`,
+`ext_server_status()`, `ext_take_pending()`, `ext_capture_done(request_id, ok, duplicate, error)`;
+`start_ext_server` / `stop_ext_server` не делаются.
 
-```rust
-#[tauri::command] pub async fn start_ext_server(app: AppHandle, port: u16, token: String) -> Result<u16, String>; // «Порт {port} занят другой программой»; повторный вызов перезапускает
-#[tauri::command] pub fn stop_ext_server(app: AppHandle);
-#[tauri::command] pub fn ext_capture_done(app: AppHandle, request_id: u64, ok: bool, id: Option<String>, duplicate: bool, error: Option<String>);
-```
-
-Ответы: `200 { "ok": true, "id": "…", "duplicate": false }`; ошибка сохранения → `422` с текстом; главное окно
-не ответило за 5 с → `504 { "error": "QuickDrop не ответил" }`.
+Ответы: `200 { "ok": true, "duplicate": false }` (идентификатор записи наружу не отдаётся — канал только
+принимает); ошибка разбора или сохранения → `422` с текстом; главное окно не забрало сообщение за 5 с →
+`504`, запись не создана; забрало, но не подтвердило за 10 с → `504` «QuickDrop не подтвердил сохранение».
 
 JS, новый чистый `src/lib/extensionCapture.ts` (+ тест):
 
@@ -804,10 +855,10 @@ export function extensionMessageToInput(msg: ExtensionMessage): NewItemInput
 ```
 
 Соответствие: `page` и `link` → `{ type: 'link', url, title, status: 'inbox', source: 'extension' }`;
-`selection` → `{ type: detectInput(text).type, language, content: text + (url ? '\n\nИсточник: ' + url : ''),
-status: 'inbox', source: 'extension' }`. Обработчик события в `desktop.ts`: `parseExtensionMessage` → для
-ссылок поиск дубля функцией этапа 2 (нашёлся → `ext_capture_done({ ok: true, id, duplicate: true })`, запись
-не создаётся) → `createAndEnrich` → `ext_capture_done`. Главное окно при этом не поднимается.
+`selection` → запись по `detectInput(text)` со `status: 'inbox', source: 'extension'` (подробно — п. 2.14.4).
+(уточнено перед этапом 7) Обработчик живёт не в `desktop.ts`, а в новом `src/lib/extInbox.ts`: `parseExtensionMessage`
+→ для ссылок `repo.findDuplicateLink(url)` (есть с этапа 2; нашёлся → `ext_capture_done({ ok: true, duplicate: true })`,
+запись не создаётся) → `createAndEnrich` → `ext_capture_done`. Главное окно при этом не поднимается.
 
 Добавление в общие типы (делает основная сессия перед этапом 7): `ItemSource` += `'extension'`
 (`types.ts`, белый список `ITEM_SOURCES` в `exportImport.ts`).
@@ -826,6 +877,10 @@ extension/
   README.md         установка: chrome://extensions → «Режим разработчика» → «Загрузить распакованное»
 ```
 
+(уточнено перед этапом 7) Итоговый состав каталога — в п. 2.14.7: общий модуль `shared.js`, один файл стилей
+`ui.css` вместо `popup.css`, service worker — ES-модуль (`"type": "module"` в манифесте), значки делает
+`scripts/gen-extension-icons.mjs`.
+
 ```json
 {
   "manifest_version": 3,
@@ -833,7 +888,7 @@ extension/
   "version": "0.1.0",
   "description": "Сохраняет страницу, ссылку или выделенный текст во «Входящие» QuickDrop.",
   "minimum_chrome_version": "116",
-  "permissions": ["contextMenus", "activeTab", "scripting", "storage"],
+  "permissions": ["contextMenus", "activeTab", "storage"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "Сохранить в QuickDrop" },
@@ -847,14 +902,21 @@ extension/
 - Контекстное меню (создаётся в `runtime.onInstalled`): `qd-page` (`contexts: ['page']`, «Сохранить страницу
   в QuickDrop»), `qd-link` (`['link']`, «Сохранить ссылку в QuickDrop»), `qd-selection` (`['selection']`,
   «Сохранить выделенное в QuickDrop»).
-- Выделенный текст: `chrome.scripting.executeScript({ target: { tabId }, func: () => getSelection().toString() })`
-  (сохраняет переносы строк); при отказе (служебные страницы, просмотр PDF) — `info.selectionText`.
-- Всплывающее окно: заголовок и адрес активной вкладки, кнопки «Сохранить страницу» и, при наличии
-  выделения, «Сохранить выделенное»; строка состояния («Сохранено», «Уже сохранено», текст ошибки,
-  «QuickDrop не запущен», «Укажите токен в настройках расширения»); после успеха закрывается через 800 мс.
+- (уточнено перед этапом 7) Права — минимальные по решению основной сессии: `activeTab`, `contextMenus`, `storage`
+  и `host_permissions` только `http://127.0.0.1/*`; права `scripting` нет. Выделенный текст берётся из
+  `info.selectionText` контекстного меню. Цена: Chrome отдаёт его одной строкой (переносы строк заменяются
+  пробелами). Вернуть переносы можно только правом `scripting` — вопрос вынесен в открытые (п. 2.14.10).
+- Всплывающее окно: заголовок и адрес активной вкладки, кнопка «Сохранить страницу», ссылка «Настройки»;
+  строка состояния («Сохранено», «Уже сохранено», текст ошибки, «QuickDrop не запущен или приём выключен»,
+  «Укажите токен в настройках расширения»); после успеха закрывается через 800 мс. Кнопки «Сохранить
+  выделенное» во всплывающем окне нет (без `scripting` выделение из него не прочитать) — выделение сохраняется
+  из контекстного меню.
 - Из service worker результат показывается значком: `action.setBadgeText` «OK» или «!» на 2 с, текст ошибки —
   в `action.setTitle`.
-- Отправка: `fetch` с `AbortSignal.timeout(8000)`; сетевой отказ → «QuickDrop не запущен».
+- Отправка: `fetch` с `AbortSignal.timeout(20000)` (сервер отвечает не позже чем через 15 с); сетевой отказ →
+  «QuickDrop не запущен или приём выключен».
+- Значки `extension/icons/icon-{16,32,48,128}.png` — свои, из `public/icon.svg`, скриптом
+  `scripts/gen-extension-icons.mjs` (sharp уже есть в devDependencies).
 - Настройки расширения: порт, токен, кнопка «Проверить соединение» (`/v1/ping`).
 - Без сборки: обычные JS-файлы, без зависимостей.
 
@@ -863,12 +925,19 @@ extension/
 - Сервер слушает только `127.0.0.1`; выключен по умолчанию (`extEnabled: false`).
 - Токен: 32 случайных байта (`crypto.getRandomValues`) в base64url, создаётся приложением при первом
   включении, хранится в `Settings.extToken`, входит в `PRIVATE_SETTINGS`, в журнал и события не пишется.
-  Кнопка «Создать новый» перезапускает сервер.
+  Кнопка «Создать новый» перезапускает сервер. (уточнено перед этапом 7) В интерфейсе кнопка называется
+  «Сменить» и спрашивает подтверждение; рядом — «Показать» и «Скопировать» (п. 2.14.6).
 - Никаких исходящих запросов ни из сервера, ни из расширения (кроме `http://127.0.0.1:{port}`);
   в расширении нет удалённого кода, постоянных content scripts и права `tabs`.
 - Rust проверяет транспорт (адрес, origin, токен, размер), JS — содержимое (`parseExtensionMessage`);
   адрес проходит обычную проверку `createItem` (только http/https/ftp).
-- Обработка запросов последовательная (один поток) — естественный предел частоты.
+- (уточнено после ревью этапа 7) Соединения обслуживаются параллельно (поток на соединение), не больше
+  `MAX_CONN = 8` одновременно; следующие ждут в очереди ядра, а не сбрасываются. Плюс явный предел 30 запросов
+  с верным токеном за 10 с (ответ 429). Главное окно разбирает список ожидающих сообщений.
+- (уточнено перед этапом 7) Канал только принимает: чтения записей, поиска и списков через него нет; ответ
+  содержит лишь `ok`, `duplicate` и текст ошибки. Токен и порт живут в `Settings` (IndexedDB) и в памяти процесса
+  Rust; на диск вне IndexedDB, в журнал, в события и в резервную копию не попадают (`PRIVATE_SETTINGS` уже
+  содержит `extEnabled`, `extPort`, `extToken`; «Удалить все данные» стирает `extEnabled` и `extToken`).
 - Команды записи на диск (часть 1) работают только с подтверждёнными папками — мини-окно и возможная
   ошибка в разметке Markdown не расширяют доступ к файловой системе.
 
@@ -876,41 +945,50 @@ extension/
 
 | Ключ | Тип | По умолчанию | Копия |
 |---|---|---|---|
-| `closeToTray` | `boolean` | `true` | можно экспортировать |
+| `closeToTray` | `boolean` | `false` (уточнено перед этапом 7; в коде сейчас `true` — меняет пакет `contracts`) | можно экспортировать |
+| `captureWindow` | `boolean` | `true` (уточнено перед этапом 7: новый ключ) | можно экспортировать |
 | `extEnabled` | `boolean` | `false` | `PRIVATE_SETTINGS` |
 | `extPort` | `number` | `47821` | `PRIVATE_SETTINGS` |
 | `extToken` | `string` | `''` | `PRIVATE_SETTINGS` |
 
-Автозапуск в `Settings` не хранится (п. 2.4). Добавления в `desktop.ts` на этапе 7:
+(уточнено перед этапом 7) `closeToTray`, `extEnabled`, `extPort`, `extToken` уже есть в `src/types.ts`,
+`settingsSchema.ts` (`extPort` 1024–65535), `PRIVATE_SETTINGS` и `CLEARED_SETTINGS` (`db/seed.ts`) с этапа 2.
 
-```ts
-export function toggleCaptureWindow(): Promise<void>
-export function showMainWindow(): Promise<void>
-export function setCloseToTray(on: boolean): Promise<void>
-export function getAutostart(): Promise<boolean>
-export function setAutostart(on: boolean): Promise<{ ok: boolean; error?: string }>
-export function generateExtensionToken(): string
-export function applyExtensionServer(s: Pick<Settings, 'extEnabled' | 'extPort' | 'extToken'>): Promise<{ ok: boolean; port?: number; error?: string }>
-```
+Автозапуск в `Settings` не хранится (п. 2.4). Добавления в `desktop.ts` на этапе 7 —
+(уточнено перед этапом 7) полный список с сигнатурами в п. 2.14.2: `applyShellOptions`, `toggleCaptureWindow`,
+`showMainWindow`, `quitApp`, `getAutostart`, `setAutostart`, `generateExtensionToken`, `isExtensionToken`,
+`applyExtensionServer`, `getExtServerStatus`.
 
-`initDesktop()` дополнительно: `set_close_to_tray`, `prepare_capture_window`, `applyExtensionServer(settings)`,
-обновление пути автозапуска, подписки `ext-capture` и `tray-hint`.
+`initDesktop()` дополнительно: `applyShellOptions(settings)`, `applyExtensionServer(settings)` при включённом
+приёме, подписки окна `open-capture` и `open-item`. Подписку `ext-capture` ставит `startExtInbox()`
+(`src/lib/extInbox.ts`), её вызывает `main.tsx`. Путь автозапуска обновляет Rust.
 
 ## 2.10. Зависимости этапа 7
 
 | Где | Что | Версия |
 |---|---|---|
 | Cargo | `tauri` — добавить feature `tray-icon` | 2.12.5 |
-| Cargo (настольные платформы) | `tauri-plugin-autostart = "2"` | 2.7.0 |
-| Cargo | `tiny_http = "0.12"` | 0.12.0 |
-| npm | `@tauri-apps/plugin-autostart` | ^2.7.0 |
-| Не нужны | `tauri-plugin-deep-link`, `@tauri-apps/plugin-deep-link`, `@tauri-apps/plugin-dialog`, `tauri-plugin-fs` (приходит транзитивно с dialog, не регистрируется) | — |
+| Cargo (настольные платформы) | (уточнено после ревью этапа 7) `auto-launch = "0.6"` напрямую (вместо `tauri-plugin-autostart`, п. 2.4) | 0.6.0 |
+| Cargo (Windows) | (уточнено после ревью этапа 7) `windows-sys = "0.61"`, features `Win32_UI_Input_KeyboardAndMouse`, `Win32_UI_WindowsAndMessaging` — команда `capture_pointer_down` (п. 2.2); версия уже была в `Cargo.lock` | 0.61.2 |
+| Cargo | (уточнено после ревью этапа 7) HTTP-сервер — свой на `std::net`, без зависимостей (`tiny_http` убран) | — |
+| npm | (уточнено перед этапом 7) ничего: автозапуск идёт через команды Rust, `package.json` и `package-lock.json` не меняются | — |
+| Не нужны | `tauri-plugin-deep-link`, `@tauri-apps/plugin-deep-link`, `@tauri-apps/plugin-dialog`, `@tauri-apps/plugin-autostart`, `tauri-plugin-autostart`, `tauri-plugin-fs` (приходит транзитивно с dialog, не регистрируется) | — |
+
+(уточнено перед этапом 7) Проверено локально (`~/.cargo/registry`, `Cargo.lock`): `tauri` 2.12.5 с feature
+`tray-icon` (крейт `tray-icon` 0.25.1, `muda` 0.20.0 уже скачаны), `tauri-plugin-single-instance` 2.5.5 подключён.
+(уточнено после ревью этапа 7) Плагин автозапуска и HTTP-крейт в итоге не используются; `auto-launch` 0.6.0 и
+`windows-sys` 0.61.2 есть в `Cargo.lock`.
 
 ## 2.11. Владение файлами на этапе 7 (без пересечений)
 
+(уточнено перед этапом 7) Таблица ниже — первоначальный набросок; **действует разбивка п. 2.14.9** (один файл —
+один пакет, волны 0–2). Отличия: `lib.rs` — у пакета сведения, `Cargo.toml` / `tauri.conf.json` / capabilities —
+только у `deps`, `desktop.ts` — у `contracts`, приём записей — отдельный `src/lib/extInbox.ts`, секция настроек
+называется `QuickCaptureSection.tsx`, диалога `tray-hint` нет.
+
 | Исполнитель | Файлы |
 |---|---|
-| основная сессия (до запуска) | `package.json` (`@tauri-apps/plugin-autostart`). (уточнено при сверке) Правки `src/types.ts` (настройки п. 2.9, `ItemSource`) и `src/lib/exportImport.ts` (`PRIVATE_SETTINGS`, `ITEM_SOURCES`) уже сделаны на этапе 2 (`.progress/spec-stage2.md` §1.1, §2.5) — только убедиться, что они на месте |
+| основная сессия (до запуска) | `package.json` (npm-пакет автозапуска — не понадобился, см. п. 2.4). (уточнено при сверке) Правки `src/types.ts` (настройки п. 2.9, `ItemSource`) и `src/lib/exportImport.ts` (`PRIVATE_SETTINGS`, `ITEM_SOURCES`) уже сделаны на этапе 2 (`.progress/spec-stage2.md` §1.1, §2.5) — только убедиться, что они на месте |
 | `tauri-shell` | `src-tauri/**` (новые `src/shell.rs`, `src/ext_server.rs`, `capabilities/capture.json`; `lib.rs`, `Cargo.toml`, `tauri.conf.json`, `capabilities/default.json`), `src/lib/desktop.ts`, `src/lib/extensionCapture.ts` (+ тест) |
 | `capture-window` | `capture.html`, `src/capture-main.tsx`, `src/components/capture/**`, `src/lib/captureWindow.ts` (+ тест), `vite.config.ts` |
 | `chrome-extension` | `extension/**` |
@@ -924,6 +1002,12 @@ export function applyExtensionServer(s: Pick<Settings, 'extEnabled' | 'extPort' 
 трей, «Выход» завершает процесс; второй запуск exe поднимает окно; после перезагрузки Windows приложение
 стартует скрытым; расширение сохраняет страницу, ссылку и выделение из 20 тыс. символов кириллицы с
 переносами; неверный токен → 401 и понятный текст; запрос со страницы сайта (`fetch` из консоли) → 403.
+
+(уточнено перед этапом 7) Поправки к критериям: крестик сворачивает в трей **при включённой настройке**, при
+выключенной (умолчание) — завершает процесс целиком (в диспетчере задач `quickdrop.exe` нет); автозапуск и приём
+от расширения проверяются после включения в настройках; при выключенном приёме порт не слушается
+(`Test-NetConnection 127.0.0.1 -Port 47821` — отказ); выделение из расширения приходит без переносов строк
+(нет права `scripting`); запись от расширения сохраняется и при главном окне, свёрнутом в трей.
 
 ## 2.12. Риски
 
@@ -945,6 +1029,37 @@ export function applyExtensionServer(s: Pick<Settings, 'extEnabled' | 'extPort' 
   `Access-Control-Allow-Private-Network: true`; перепроверить на актуальном Chrome при реализации.
 - Порядок фокуса: `set_focus()` из обработчика глобального сочетания Windows разрешает; при показе из трея
   окно может открыться без фокуса ввода — проверить, при необходимости повторить `set_focus()` после `show()`.
+
+(уточнено перед этапом 7) Добавлено при сверке:
+- **Процесс не завершается, пока существует скрытое мини-окно** — см. п. 2.3 (`Destroyed` окна `main` → `app.exit(0)`).
+  Проверить вживую при выключенном `closeToTray`.
+- **События Tauri и глобальный `listen`.** Слушатель JS, поставленный глобальным `listen()` из
+  `@tauri-apps/api/event` (цель `Any`), получает и события, адресованные другому окну (`emit_to("main", …)`):
+  так устроен `match_any_or_filter` в tauri 2.12.5. Новые подписки этапа 7 ставить через
+  `getCurrentWebviewWindow().listen(...)`, а события слать `emit_to(<метка>, …)`.
+- **Скрытое главное окно.** Приём от расширения и обработчик сочетания работают в JS главного окна; при окне,
+  скрытом в трей, WebView2 продолжает исполнять JS, но таймеры замедляет. Приём построен на событиях, а не
+  на таймерах; проверить вживую после 10+ минут в трее.
+- **`settleStaleLinkMeta` во втором окне.** `db.on('ready')` срабатывает в каждом окне, открывшем БД: мини-окно
+  перевело бы `pending` заголовка, который в эту минуту грузит главное окно, в итог (на экране мигнёт «не
+  удалось»). Поэтому в мини-окне починка не запускается (п. 2.14.2).
+- **Изменения между окнами** доходят через `BroadcastChannel` Dexie; оба окна живут в одном процессе браузера
+  WebView2 (общий каталог данных), но вживую это не проверялось.
+- **Автозапуск и диспетчер задач.** Что `is_enabled()` показывает после отключения записи в «Диспетчер задач →
+  Автозагрузка», зависит от версии крейта `auto-launch` — проверить на этапе 8.
+- (уточнено после ревью этапа 7) **Пределы приёма** (сервер свой, на `std::net`; `tiny_http` убран — у него не
+  было сроков чтения): не больше `MAX_CONN = 8` соединений в обработке; следующие **ждут в очереди ядра** (поток
+  приёма не вызывает `accept`, пока нет места), а не сбрасываются. Строка запроса и заголовки — не больше 8 КБ
+  (иначе 431) и не дольше `HEAD_TIMEOUT = 1 с` на всё целиком; не-HTTP байты (TLS ClientHello, двоичный мусор,
+  первый байт не заглавная буква) — соединение закрывается сразу, без ответа. Тело и запись ответа — отдельно
+  по `IO_TIMEOUT = 5 с`; тело читается только после шагов 1–9, огромный `Content-Length` получает 413 без
+  чтения; после ответа остаток запроса выбрасывается не больше 2 МБ / 1 с. Страница в браузере **может** держать
+  соединения (обращение к `https://127.0.0.1:{порт}` шлёт ClientHello, `<link rel=preconnect>` молчит), но
+  ClientHello закрывается сразу, а молчащее соединение держит место не дольше 1 с — честный запрос расширения
+  ждёт в очереди не дольше ~1–2 с (у расширения запас 20 с). Локальная программа, непрерывно открывающая
+  соединения, может замедлить приём; ресурсы при этом не копятся. Принято.
+- **Расширение в установщик не входит**: каталог `extension/` лежит в исходниках. Вложить его в сборку
+  (`bundle.resources`) можно на этапе 8 — открытый вопрос п. 2.14.10.
 
 CSP:
 - `app.security.csp` общий для всех окон; мини-окну и серверу расширения изменений не нужно (сервер живёт в
@@ -976,3 +1091,686 @@ CSP:
 8. Мини-окно, трей, автозапуск, один экземпляр, расширение — по критериям п. 2.11.
 9. Удаление: процесс завершается, данные остаются (без флажка) либо удаляются (с флажком).
 10. `scripts/check-version.mjs`: версия поднята в трёх файлах; `extension/manifest.json` версионируется отдельно.
+
+## 2.14. Исполнение этапа 7
+
+Автор: архитектор `spec-stage7`, 2026-11-13. Раздел написан по нынешнему коду (после этапов 1–6) и действует
+поверх пп. 2.1–2.12. Сигнатуры из `CLAUDE.md` не меняются — только добавления.
+
+### 2.14.1. Что проверено и что нет
+
+| Что | Итог |
+|---|---|
+| `tauri` 2.12.5, feature `tray-icon` | В реестре cargo есть. `tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}`: `with_id`, `icon`, `tooltip`, `menu`, `show_menu_on_left_click`, `on_menu_event(Fn(&AppHandle, MenuEvent))`, `on_tray_icon_event(Fn(&TrayIcon, TrayIconEvent))`, `build(app)`; `TrayIconEvent::Click { button, button_state, .. }` и `DoubleClick` (только Windows) |
+| Окна | `WebviewWindowBuilder::from_config(app, &WindowConfig)`, `.visible(bool)`, `.build()`; в конфиге окна есть `create`, `visible`, `focus`, `decorations`, `shadow`, `alwaysOnTop`, `skipTaskbar`, `resizable`, `maximizable`, `minimizable`, `dragDropEnabled`. `AppHandle::{cursor_position, monitor_from_point, primary_monitor, default_window_icon, exit}`; `Monitor::{position, size, work_area, scale_factor}`; у окна `is_visible`, `is_focused`, `show`, `hide`, `set_focus`, `set_position`, `outer_size`, `unminimize`, `destroy` |
+| Создание окна в Windows | `build()` виснет в синхронной команде и в обработчиках событий → команды, создающие окно, только `async fn`; из обработчиков трея — через `tauri::async_runtime::spawn` |
+| События | `Emitter::emit_to("<метка>", событие, данные)` → цель `AnyLabel`; слушатель JS, поставленный `getCurrentWebviewWindow().listen`, получает только события своего окна; глобальный `listen()` (цель `Any`) получает **все** события, включая адресованные другому окну |
+| Права | `core:default`, `core:window:allow-hide`, `core:window:allow-start-dragging` существуют. Команды приложения (`invoke_handler`) доступны всем окнам: манифест команд в `build.rs` не задан |
+| `tauri-plugin-single-instance` 2.5.5 | `init(FnMut(&AppHandle, Vec<String>, String))`, подключён |
+| Автозапуск, HTTP-сервер | На момент сверки плагина автозапуска и HTTP-крейта локально не было. (уточнено после ревью этапа 7) Итог: автозапуск — `auto-launch` 0.6 напрямую (п. 2.4), сервер — свой на `std::net` (п. 2.14.4); плагин и HTTP-крейт не используются |
+| Vite 8.3.7 | `build.rolldownOptions.input` есть |
+| Не проверено вживую | Всё поведение окон, трея, фокуса, автозапуска, `BroadcastChannel` между окнами, заголовок `Origin` у запросов расширения — проверяется основной сессией в окне Tauri и в Chrome после сведения |
+
+### 2.14.2. Основа веб-слоя (пакет `contracts`)
+
+**Настройки** (`src/types.ts`):
+
+| Ключ | Тип | Умолчание | В копии |
+|---|---|---|---|
+| `closeToTray` | `boolean` | `false` (сейчас в коде `true` — исправить) | переносится |
+| `captureWindow` | `boolean` | `true` (новый ключ: глобальное сочетание открывает мини-окно) | переносится |
+| `extEnabled` | `boolean` | `false` | нет (`PRIVATE_SETTINGS`) |
+| `extPort` | `number` | `47821`, допустимо 1024–65535 | нет |
+| `extToken` | `string` | `''` | нет |
+
+`exportImport.ts`, `settingsSchema.ts`, `db/seed.ts` править не нужно: `ext*` уже приватные и стираются
+«Удалить все данные», булевы ключи проверяются по типу. Тест `exportImport.test.ts` перечисляет переносимые
+ключи (`PORTABLE`) — добавить `captureWindow`. Автозапуск в `Settings` не хранится.
+
+**`src/lib/platform.ts`** — добавить:
+
+```ts
+/** Страница мини-окна быстрой записи (capture.html). */
+export const isCaptureWindow = (): boolean =>
+  typeof location !== 'undefined' && /\/capture\.html$/.test(location.pathname)
+```
+
+**`src/db/db.ts`**: `this.on('ready', …settleStaleLinkMeta)` ставить, только если `!isCaptureWindow()` — мини-окно
+не должно завершать `pending` заголовка, который сейчас грузит главное окно. Больше ничего в схеме не меняется.
+
+**`src/index.css`**: добавить `@source not "../extension";` — классы из файлов расширения не должны попадать в CSS
+приложения.
+
+**`src/lib/shellUi.ts`** (новый, чистый, с тестом) — строки и проверки для настроек и обмена:
+
+```ts
+export interface ExtServerStatus { running: boolean; port: number | null; error?: string }
+export interface AutostartState { enabled: boolean; available: boolean; reason?: string }
+export const EXT_PORT_MIN = 1024
+export const EXT_PORT_MAX = 65535
+export function isExtensionToken(v: unknown): v is string        // /^[A-Za-z0-9_-]{43}$/
+export function tokenFromBytes(bytes: Uint8Array): string        // base64url без '=', 32 байта → 43 символа
+export function validateExtPort(v: string): string | null        // null либо «Число от 1024 до 65535»
+export function maskToken(token: string): string                 // точки + последние 4 символа; пусто → «не создан»
+export function extStatusText(enabled: boolean, status?: ExtServerStatus): { text: string; error: boolean }
+//   выключено → «Выключено»; running → «Принимает записи на 127.0.0.1:{port}»; иначе текст ошибки
+export const QUICK_CAPTURE_DESKTOP_HINT =
+  'Мини-окно, значок в трее, автозапуск и приём записей от расширения браузера работают в приложении для Windows.'
+export const EXTENSION_INSTALL_STEPS: readonly string[]          // 5 шагов, текст — п. 2.14.6
+```
+
+**`src/lib/desktop.ts`** — добавления (обёртки готовы сразу; пока команд Rust нет, они возвращают отказ, а не
+бросают, и поведение остаётся прежним):
+
+```ts
+export type { ExtServerStatus, AutostartState } from '@/lib/shellUi'
+/** 32 байта crypto.getRandomValues → base64url. */
+export function generateExtensionToken(): string
+/** set_shell_options: флаги трея и мини-окна. Не бросает; false — вне Tauri или отказ команды. */
+export function applyShellOptions(s: Pick<Settings, 'closeToTray' | 'captureWindow'>): Promise<boolean>
+/** toggle_capture_window; true — мини-окно показано. Бросает Error при отказе. */
+export function toggleCaptureWindow(): Promise<boolean>
+/** show_main_window. Не бросает. */
+export function showMainWindow(): Promise<void>
+/** open_in_main: показать главное окно и открыть в нём запись (вызывает мини-окно). Не бросает. */
+export function openInMain(id: string): Promise<void>
+/** quit_app. */
+export function quitApp(): Promise<void>
+/** Вне Tauri и при ошибке — { enabled: false, available: false, reason }. Не бросает. */
+export function getAutostart(): Promise<AutostartState>
+export function setAutostart(on: boolean): Promise<{ ok: boolean; error?: string }>
+/** ext_server_apply. Вне Tauri, без годного токена при enabled, при отказе — { running: false, port: null, error }. Не бросает. */
+export function applyExtensionServer(
+  s: Pick<Settings, 'extEnabled' | 'extPort' | 'extToken'>,
+): Promise<ExtServerStatus>
+export function getExtServerStatus(): Promise<ExtServerStatus>
+```
+
+Имена аргументов `invoke` — camelCase (`{ closeToTray, captureWindow }`, `{ enabled, port, token }`, `{ id }`,
+`{ enabled }`): Tauri сам переводит их в snake_case параметров Rust.
+
+Обработчик глобального сочетания (`registerShortcut`):
+
+```ts
+if (e.state !== 'Pressed') return
+let mini = false
+try { mini = (await getSettings()).captureWindow && !document.hasFocus() } catch { /* как раньше */ }
+if (mini) { try { await toggleCaptureWindow(); return } catch (err) { console.warn(…) } }
+raiseWindow().catch(…).finally(() => useUi.getState().openCapture())      // прежнее поведение
+```
+
+`initDesktop()` — дополнения (существующее не ломать: скачивания, сверка папок, автокопии, сочетание и toast
+о занятом сочетании остаются):
+
+1. подписки окна через `getCurrentWebviewWindow().listen` (не глобальный `listen`):
+   `open-capture` → `useUi.getState().openCapture()`; `open-item` (`{ id: string }`) → `repo.getItem(id)` →
+   `openItemInSection(item)` (импорт `./actions` динамический — `actions.ts` сам импортирует `desktop.ts`);
+2. настройки читаются один раз; `void applyShellOptions(settings)`;
+3. `settings.extEnabled` → `applyExtensionServer(settings)`; не запустился → `toast.error('Приём от расширения
+   не запущен', { description: status.error, action: «Настройки» })`;
+4. регистрация сочетания — как сейчас.
+
+`initDesktop()` вызывается только главным окном. Тесты `desktop.test.ts`: новые обёртки (аргументы `invoke`,
+поведение вне Tauri, отказ команды, негодный токен не уходит в Rust).
+
+### 2.14.3. Rust: оболочка — `src-tauri/src/shell.rs` (пакет `rust-shell`)
+
+Модуль самодостаточен: не ссылается на `crate::…` (до сведения он собирается отдельной проверочной целью,
+п. 2.14.9).
+
+```rust
+pub const MAIN_LABEL: &str = "main";
+pub const CAPTURE_LABEL: &str = "capture";
+pub const AUTOSTART_ARG: &str = "--autostart";
+pub const EVENT_CAPTURE_SHOWN: &str = "capture-shown";   // → окно capture, без данных
+pub const EVENT_OPEN_CAPTURE: &str = "open-capture";     // → окно main, без данных
+pub const EVENT_OPEN_ITEM: &str = "open-item";           // → окно main, { "id": "…" }
+
+#[derive(Default)]
+pub struct ShellState { close_to_tray: AtomicBool, capture_window: AtomicBool }   // оба false до вызова JS
+
+/// Вызывается из setup: manage(ShellState), значок в трее, обновление пути автозапуска.
+pub fn init(app: &tauri::App) -> tauri::Result<()>;
+/// Запуск с --autostart: главное окно создаётся скрытым.
+pub fn started_hidden() -> bool;
+pub fn has_autostart_arg<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> bool;      // чистая, с тестом
+/// Второй запуск exe: с --autostart — ничего, иначе показать главное окно.
+pub fn on_second_instance(app: &tauri::AppHandle, args: &[String]);
+/// Общий обработчик событий окон (подключается в lib.rs через Builder::on_window_event).
+pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent);
+/// Левый верхний угол мини-окна в физических пикселях: по центру рабочей области монитора, верх на 22 % её
+/// высоты; окно целиком в пределах рабочей области. Чистая, с тестом (в т.ч. монитор с отрицательными координатами).
+pub fn capture_position(area_pos: (i32, i32), area_size: (u32, u32), win_size: (u32, u32)) -> (i32, i32);
+
+#[derive(serde::Serialize)] #[serde(rename_all = "camelCase")]
+pub struct AutostartState { enabled: bool, available: bool, reason: Option<String> }
+
+#[tauri::command] pub async fn set_shell_options(app: tauri::AppHandle, close_to_tray: bool, capture_window: bool) -> Result<(), String>;
+#[tauri::command] pub async fn toggle_capture_window(app: tauri::AppHandle) -> Result<bool, String>;   // true — показано
+#[tauri::command] pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String>;
+#[tauri::command] pub async fn open_in_main(app: tauri::AppHandle, id: String) -> Result<(), String>;
+#[tauri::command] pub fn quit_app(app: tauri::AppHandle);                                               // app.exit(0)
+#[tauri::command] pub fn get_autostart(app: tauri::AppHandle) -> AutostartState;
+#[tauri::command] pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String>;
+```
+
+Поведение:
+
+- **`set_shell_options`**: записывает оба флага. `capture_window == true` и окна `capture` нет → создаёт его
+  скрытым (`from_config` по записи `capture` из `tauri.conf.json`, `.visible(false)`); `false` и окно есть →
+  `destroy()` (освобождает процесс WebView2). Идемпотентна.
+- **`toggle_capture_window`**: окна нет → создать; видимо и в фокусе (уточнено после ревью этапа 7: флаг
+  `capture_focused` по событиям `Focused`, не `is_focused()`, п. 2.2) → `hide()`, `Ok(false)`; иначе —
+  монитор под курсором (`cursor_position` → `monitor_from_point`, запасной `primary_monitor`), `set_position`
+  по `capture_position` (рабочая область `work_area`), `show()`, `set_focus()`, `emit_to("capture",
+  "capture-shown", ())`, `Ok(true)`. Работает и при `capture_window == false` (вызов из JS уже учёл настройку).
+- **`show_main_window`** / внутренняя `show_main`: `unminimize()`, `show()`, `set_focus()` окна `main`.
+- **`open_in_main`**: `id` — непустая строка до 128 символов без управляющих символов (id записей из чужой
+  копии бывают не UUID), иначе `Err`; `show_main`, затем
+  `emit_to("main", "open-item", { id })`.
+- **`on_window_event`**: окно `main` — `CloseRequested` при `close_to_tray` → `api.prevent_close()` + `hide()`;
+  `Destroyed` → `app_handle().exit(0)` (иначе процесс держит скрытое мини-окно). Окно `capture` —
+  `CloseRequested` (Alt+F4) → `prevent_close()` + `hide()`.
+- **Трей** (`TrayIconBuilder::with_id("main")`, значок `default_window_icon()`, подсказка «QuickDrop», меню не
+  по левому клику): «Открыть QuickDrop» → `show_main`; «Быстрая запись» → при `capture_window` показать
+  мини-окно (та же логика, что `toggle_capture_window`, но без скрытия видимого), иначе `show_main` +
+  `emit_to("main", "open-capture", ())`; разделитель; «Выход» → `exit(0)`. Левый клик (`Click` с
+  `MouseButton::Left` и `MouseButtonState::Up`) и `DoubleClick` → `show_main`. Работа с окнами из обработчиков —
+  через `tauri::async_runtime::spawn`.
+- **Автозапуск** (уточнено после ревью этапа 7: `auto-launch` 0.6 напрямую, `shell::Autostart`, п. 2.4):
+  `get_autostart` — `enabled` из `is_enabled()` (ошибка → `false` и `reason`); в отладочной сборке
+  `available: false`, `reason: "В отладочной сборке автозапуск не настраивается"`. `set_autostart` — `enable()` /
+  `disable()` (после `disable()` перепроверка: запись осталась в HKLM → `Err` с подсказкой); в отладочной сборке
+  `Err` с тем же текстом; прочие ошибки — `Err("Не удалось изменить автозапуск: …")`. В `init`: сборка не
+  отладочная и автозапуск включён → повторный `enable()`.
+- (уточнено после ревью этапа 7) **Фокус мини-окна** — флаг `ShellState::capture_focused` по событиям
+  `WindowEvent::Focused` (п. 2.2); `toggle_capture_window` прячет окно при `should_hide_capture(visible, focused)`.
+  Команда `capture_pointer_down() -> bool` (п. 2.2) зарегистрирована в `invoke_handler`.
+- macOS не ломать: всё, что есть только в Windows (`DoubleClick`, `skip_taskbar`), — без ошибок сборки на
+  других платформах; код оболочки рассчитан на `cfg(desktop)`, как нынешние плагины.
+
+Тексты ошибок — по-русски (`Result<_, String>`), как в `backup.rs`.
+
+### 2.14.4. Канал расширения
+
+**Путь записи:**
+
+```
+расширение ──POST /v1/capture──▶ поток HTTP в Rust (ext_server.rs)
+   проверки транспорта (Host, Origin, токен, частота, тип, размер, JSON с "v": 1)
+   └─ сообщение кладётся в слот ожидания {requestId, message, taken: false}
+   └─ emit_to("main", "ext-capture", requestId)            — только «будильник», данных в событии нет
+главное окно (src/lib/extInbox.ts)
+   ext_take_pending() → [{ requestId, message }]            — слот помечается taken
+   parseExtensionMessage → (ссылка) repo.findDuplicateLink → createAndEnrich({ …, source: 'extension' })
+   ext_capture_done({ requestId, ok, duplicate, error })
+поток HTTP ──200 / 422 / 504──▶ расширение
+```
+
+Почему «забрать», а не данные в событии: событие, пришедшее до того, как главное окно поставило подписку
+(запуск, перезагрузка страницы), теряется. `startExtInbox()` сначала ставит подписку, затем один раз забирает
+накопленное — порядок запуска не важен. Событие без данных не раскрывает содержимое другим слушателям.
+
+**Сроки.** Сообщение не забрано за 5 с → слот очищается, ответ `504` «QuickDrop не отвечает, запись не
+сохранена» (запись гарантированно не создана). Забрано, но не подтверждено ещё за 10 с → `504` «QuickDrop не
+подтвердил сохранение. Проверьте «Входящие»». Опоздавший `ext_capture_done` с неизвестным `requestId`
+игнорируется. Расширение ждёт ответа 20 с.
+
+**Когда канал недоступен.** Приём выключен, приложение не запущено или главное окно ещё не дошло до
+`initDesktop()` — порт не слушается, расширение получает сетевой отказ и показывает «QuickDrop не запущен или
+приём выключен». Сервер запускает только JS главного окна (`applyExtensionServer`): токен и порт лежат в
+IndexedDB, Rust их не хранит. Окно в трее — приём работает (страница главного окна жива).
+
+**`src-tauri/src/ext_server.rs`** (пакет `rust-ext`; модуль самодостаточен, без `crate::…`):
+
+```rust
+pub const EVENT_EXT_CAPTURE: &str = "ext-capture";
+pub const MAX_BODY: usize = 1_048_576;
+pub const TAKE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DONE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const RATE_MAX: usize = 30;
+pub const RATE_WINDOW: Duration = Duration::from_secs(10);
+// (уточнено после ревью этапа 7) пределы своего сервера:
+pub const MAX_CONN: usize = 8;                                   // соединений в обработке; остальные ждут в очереди ядра
+pub const MAX_HEAD: usize = 8 * 1024;                            // строка запроса + заголовки, иначе 431
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(1);       // на заголовки целиком
+pub const IO_TIMEOUT: Duration = Duration::from_secs(5);         // на тело и отдельно на запись ответа
+
+#[derive(Clone, Serialize)] #[serde(rename_all = "camelCase")]
+pub struct ExtStatus { pub running: bool, pub port: Option<u16> }
+#[derive(Clone, Serialize)] #[serde(rename_all = "camelCase")]
+pub struct ExtPending { pub request_id: u64, pub message: serde_json::Value }
+pub struct ExtOutcome { pub ok: bool, pub duplicate: bool, pub error: Option<String> }
+
+#[derive(Default)]
+pub struct ExtServer { /* состояние сервера, слот ожидания, счётчик запросов */ }
+impl ExtServer {
+    /// enabled == false → остановить. Тот же порт и токен при работающем сервере → ничего не делать.
+    /// notify вызывается из потока HTTP, когда в слоте появилось сообщение.
+    pub fn apply(&self, enabled: bool, port: u16, token: &str, version: &str,
+                 notify: impl Fn(u64) + Send + Sync + 'static) -> Result<ExtStatus, String>;
+    pub fn status(&self) -> ExtStatus;
+    pub fn take_pending(&self) -> Vec<ExtPending>;
+    pub fn complete(&self, request_id: u64, outcome: ExtOutcome);
+    pub fn stop(&self);
+}
+
+// чистые, с тестами
+pub fn is_valid_token(s: &str) -> bool;                      // ровно 43 символа [A-Za-z0-9_-]
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool;                    // сравнение за постоянное время
+pub fn is_extension_origin(s: &str) -> bool;                 // "chrome-extension://" + 32 символа a–p
+pub fn host_matches(host: Option<&str>, port: u16) -> bool;  // ровно "127.0.0.1:{port}"
+
+#[tauri::command] pub fn ext_server_apply(window: tauri::WebviewWindow, state: tauri::State<'_, ExtServer>,
+    enabled: bool, port: u16, token: String) -> Result<ExtStatus, String>;
+#[tauri::command] pub fn ext_server_status(state: tauri::State<'_, ExtServer>) -> ExtStatus;
+#[tauri::command] pub fn ext_take_pending(window: tauri::WebviewWindow, state: tauri::State<'_, ExtServer>) -> Result<Vec<ExtPending>, String>;
+#[tauri::command] pub fn ext_capture_done(window: tauri::WebviewWindow, state: tauri::State<'_, ExtServer>,
+    request_id: u64, ok: bool, duplicate: bool, error: Option<String>) -> Result<(), String>;
+```
+
+- `ext_server_apply`, `ext_take_pending`, `ext_capture_done` принимаются только от окна с меткой `main`
+  (иначе `Err("Недоступно из этого окна")`). `ext_server_apply` передаёт в `apply` замыкание
+  `move |id| { let _ = app.emit_to("main", EVENT_EXT_CAPTURE, id); }` и версию `app.package_info().version`.
+- Привязка строго `SocketAddr::from(([127, 0, 0, 1], port))` — не `localhost`, не `0.0.0.0`. Порт вне
+  1024–65535 → `Err("Порт должен быть от 1024 до 65535")`; занят → `Err("Порт {port} занят другой программой")`;
+  прочее → `Err("Не удалось открыть порт {port}: …")`; негодный токен → `Err("Токен расширения не создан")`.
+- (уточнено после ревью этапа 7) Сервер свой, на `std::net::TcpListener`. Поток приёма `qd-ext-http`:
+  ждёт свободное место в `MAX_CONN` (сигнал от завершившегося соединения), затем блокирующий `accept`; без
+  опроса по таймеру — в трее поток не просыпается без запросов. Ошибка `accept` (нехватка дескрипторов) —
+  пауза 200 мс и продолжение. На каждое соединение — поток `qd-ext-conn`; одно соединение = один запрос
+  (`Connection: close`). Остановка: флаг, сигнал места и **подключение к себе**, которое снимает блокирующий
+  `accept` (флаг проверяется сразу после `accept`, будящее соединение до проверок не доходит); затем ожидание
+  потока до 1 с. Смена токена на том же порту — подмена настроек на месте, без перезапуска. Смена порта —
+  сначала открыть новый порт, затем остановить старый сервер: новый порт не открылся → `Err`, прежний сервер
+  продолжает работать. Остановка при ожидающем сообщении отвечает `503` и очищает слот. Пределы — п. 2.12
+  («Пределы приёма»).
+- Токен в журнал, в тексты ошибок и в события не попадает. Сравнение — `ct_eq`.
+
+**HTTP (версия 1).** Все ответы — `Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff`, `Vary: Origin`; при проверенном `Origin` — `Access-Control-Allow-Origin: {origin}`
+(не `*`, без `Allow-Credentials`). Тело ошибки — `{ "ok": false, "error": "…" }`.
+
+| № | Проверка | Отказ |
+|---|---|---|
+| 1 | `Host` ровно `127.0.0.1:{port}` | 403 «Недопустимый адрес» |
+| 2 | `Origin`: если есть — `is_extension_origin`; для `POST` и `OPTIONS` обязателен | 403 «Запрос не от расширения» |
+| 3 | `OPTIONS` → 204 + `Access-Control-Allow-Methods: POST, GET`, `-Allow-Headers: authorization, content-type`, `-Allow-Private-Network: true`, `-Max-Age: 600` | — |
+| 4 | Маршрут: `GET /v1/ping`, `POST /v1/capture` | 404 / 405 |
+| 5 | `Authorization: Bearer {token}` | 401 «Неверный токен» |
+| 6 | (уточнено после ревью этапа 7) Частота: не больше 30 запросов **с верным токеном** за 10 с (запрос без верного токена получает 401 на шаге 5 и в счёт не идёт: чужая страница не может забить окно частоты расширению) | 429 + `Retry-After: 10` |
+| 7 | `GET /v1/ping` → `200 { "ok": true, "app": "quickdrop", "version": "…" }` | — |
+| 8 | `Content-Type` начинается с `application/json` | 415 |
+| 9 | `Content-Length` есть / не больше `MAX_BODY` | 411 / 413 «Слишком большой запрос» |
+| 10 | Тело — UTF-8, JSON-объект, `"v": 1` | 400 |
+| 11 | Передача главному окну, ожидание | 200 `{ "ok": true, "duplicate": bool }` / 422 / 503 / 504 |
+
+Канал только принимает: ни один маршрут не возвращает записи, теги, категории или настройки; `ping` и
+`duplicate` доступны только с токеном. Страница сайта не пройдёт: без CORS она не может поставить заголовок
+`Authorization`, а preflight с её `Origin` получит 403; подмена DNS упирается в проверку `Host`.
+
+(уточнено после ревью этапа 7) **Принятый риск — подмена сервера при свободном порту.** Расширение не
+удостоверяется, кто отвечает на порту: токен уходит открытым `Authorization: Bearer` при каждом `ping` и `send`,
+ответ узнаётся только по `app: "quickdrop"`. Пока порт свободен (приложение не запущено, приём выключен,
+QuickDrop получил «Порт занят»), любой локальный процесс, в том числе другой учётной записи, может занять
+`127.0.0.1:{port}` и получить токен и отправляемое содержимое (адрес, заголовок, выделенный текст), а с токеном
+потом слать записи во «Входящие» в пределах частоты. Пока QuickDrop слушает, перехватить порт нельзя (вторая
+привязка — `WSAEACCES`). Подходит однопользовательскому компьютеру (целевой сценарий); на общем компьютере —
+выбрать нестандартный порт и не пользоваться расширением, когда QuickDrop закрыт. Оговорка — в подсказке токена
+(`QuickCaptureSection.tsx`), в `extension/README.md` и на странице настроек расширения. Полное решение — версия
+протокола 2 без секрета в проводе (HMAC-подпись запроса с `ts` и `nonce`, ответ `ping` с доказательством знания
+токена, кэш `nonce` против повтора) — отдельной задачей, не на этапе 7.
+
+Тесты `ext_server.rs` (`#[cfg(test)]`, сервер на свободном порту, запросы через `std::net::TcpStream`, вместо
+главного окна — поток, вызывающий `take_pending` и `complete`): каждая строка таблицы; успешная запись и дубль;
+422; сообщение не забрано → 504 и пустой слот; забрано без подтверждения → 504; повторный `apply` с теми же
+параметрами не перезапускает; смена токена — старый токен 401; после `stop` порт свободен; тело ровно
+`MAX_BODY` принимается, на байт больше — 413. Сроки в тестах — укороченные (поля состояния или
+`cfg(test)`-константы), чтобы набор шёл секунды. (уточнено после ревью этапа 7) Плюс пределы своего сервера:
+8 TLS-подобных и 8 молчащих соединений не мешают `ping` дольше ~`HEAD_TIMEOUT`; не-HTTP байты закрываются
+сразу; 20 молчащих — в обработке не больше `MAX_CONN`, `ping` ждёт не больше двух сроков заголовков;
+последовательные запросы быстрее 20 мс (нет опроса `accept`); `stop` быстрее 200 мс и порт сразу свободен,
+в том числе когда все места заняты; заголовки, разрезанные на `\r\n\r` + `\n`; 431, 400, `Expect: 100-continue`.
+Тесты модулей выполняются в составе библиотеки (`cargo test --lib`); отдельных проверочных целей в
+`src-tauri/tests` нет.
+
+**Содержимое — `src/lib/extensionCapture.ts`** (чистый, с тестом; пакет `ext-inbox`):
+
+```ts
+export const EXT_URL_MAX = 2048
+export const EXT_TITLE_MAX = 300
+export const EXT_TEXT_MAX = 500_000
+export type ExtensionKind = 'page' | 'link' | 'selection'
+export interface ExtensionMessage { v: 1; kind: ExtensionKind; url?: string; title?: string; text?: string }
+/** Бросает Error с русским текстом. Лишние поля отбрасываются. */
+export function parseExtensionMessage(raw: unknown): ExtensionMessage
+export function extensionMessageToInput(msg: ExtensionMessage): NewItemInput
+```
+
+- `raw` — обычный объект, `v === 1`, `kind` из списка; иначе «Неизвестный формат сообщения расширения».
+- `url`: строка, после `trim` не длиннее `EXT_URL_MAX`, разбирается `new URL`, протокол только `http:` /
+  `https:`. Для `page` и `link` обязателен («Не указан адрес страницы», «Адрес не поддерживается» — например
+  `chrome://`, `file://`). Для `selection` негодный или отсутствующий адрес просто отбрасывается.
+- `title`: необязательная строка; управляющие символы убираются, пробельные схлопываются, обрезка до
+  `EXT_TITLE_MAX`; не строка → отбрасывается.
+- `text` (только `selection`): строка, непустая после `trim` («Выделенный текст пуст»), не длиннее
+  `EXT_TEXT_MAX` («Выделенный текст слишком длинный»); `\r\n` → `\n`, символ NUL убирается.
+- Отображение: `page`, `link` → `{ type: 'link', url, title, status: 'inbox', source: 'extension' }`.
+  `selection` → по `detectInput(text)`: `link` → запись-ссылка с `det.url`; `code` →
+  `{ type: 'code', content: det.stripped ?? text, language, title }` (адрес источника в код не дописывается,
+  заголовок — название страницы); иначе `{ type: 'text', content: text + (url ? '\n\nИсточник: ' + url : '') }`
+  без заголовка. Везде `status: 'inbox'`, `source: 'extension'`.
+
+**Приём — `src/lib/extInbox.ts`** (с тестом; пакет `ext-inbox`):
+
+```ts
+export interface ExtResult { ok: boolean; duplicate: boolean; error?: string }
+export interface ExtInboxDeps {
+  findDuplicateLink(url: string): Promise<Item | undefined>     // repo.findDuplicateLink
+  createAndEnrich(input: NewItemInput): Promise<Item>           // lib/actions
+  onSaved?(item: Item): void
+}
+/** Разбор, проверка дубля ссылки, создание записи. Не бросает: ошибка → { ok: false, error }. */
+export function handleExtCapture(message: unknown, deps?: Partial<ExtInboxDeps>): Promise<ExtResult>
+/** ext_take_pending → handleExtCapture → ext_capture_done, строго по одному. Возвращает число обработанных. Не бросает. */
+export function drainExtInbox(): Promise<number>
+/** Подписка getCurrentWebviewWindow().listen('ext-capture') и первый drain. Идемпотентна. Вне Tauri и в мини-окне — ничего. */
+export function startExtInbox(): Promise<void>
+```
+
+Дубль ссылки (в т.ч. ссылка из выделения) → `{ ok: true, duplicate: true }`, запись не создаётся. Ошибка →
+`describeError(e, 'Не удалось сохранить')`. Запись в БД — только через `createAndEnrich` → `repo.createItem`.
+После успешного сохранения, если страница главного окна видима (`document.visibilityState === 'visible'`), —
+`toast.success('Сохранено из браузера', { description: displayTitle(item), action: «Открыть» → select })`.
+Вызовы `drain`, пришедшие во время работы, не теряются и не идут параллельно (флаг «повторить»).
+Подключение — в `main.tsx` (пакет `wire`): `if (isTauri()) void import('./lib/extInbox').then((m) => m.startExtInbox())`.
+
+### 2.14.5. Мини-окно (пакет `ui-capture`)
+
+**Как мини-окно создаёт запись.** У окна своя загрузка приложения — отдельная страница `capture.html` с точкой
+входа `src/capture-main.tsx` (не маршрут и не параметр `index.html`): оболочка, списки, граф, фон, `pwa.ts`,
+`initDesktop()`, `applyInitialHash()`, очистка корзины и разбор PDF задним числом в ней не загружаются. Origin и
+каталог данных WebView2 у окон общие → та же IndexedDB `quickdrop`, те же `localStorage` (тема, сцена, шрифт) и
+таблица `meta`. Запись создаёт само мини-окно: `createAndEnrich(input)` → `repo.createItem`. Главное окно
+узнаёт о записи без событий Tauri: `liveQuery` Dexie получает изменения другого окна (`BroadcastChannel`),
+списки, счётчики и поисковый индекс обновляются сами. Заголовок ссылки догружает мини-окно уже скрытым
+(`fetch_link_meta` доступна всем окнам).
+
+**Файлы:**
+
+| Файл | Содержимое |
+|---|---|
+| `capture.html` | как `index.html` без метатегов PWA и `apple-*`; `<html lang="ru">`, `<title>QuickDrop — быстрая запись</title>`, `<script src="/theme-init.js">`, `<div id="root">`, `<script type="module" src="/src/capture-main.tsx">`. Inline-скриптов нет |
+| `src/capture-main.tsx` | `import './index.css'`, `import './styles/capture-window.css'`, `createRoot(...).render(<StrictMode><CaptureWindowApp /></StrictMode>)` |
+| `src/styles/capture-window.css` | обычный CSS (без директив Tailwind): `html, body, #root` на всю высоту, без прокрутки страницы, фон окна — токен сцены |
+| `src/components/capture/CaptureForm.tsx` | форма, перенесённая из `QuickCapture.tsx` вместе с `FileRow`, черновиком, `acceptFiles` и прочими внутренними функциями |
+| `src/components/capture/QuickCapture.tsx` | остаётся `QuickCapture()` с прежним контрактом: `Dialog` + `CaptureForm variant="dialog"` + `notifySaved` |
+| `src/components/capture/CaptureWindowApp.tsx` | корень мини-окна |
+| `src/lib/captureWindow.ts` (+ тест) | п. 2.2: `CAPTURE_WINDOW_LABEL`, `CAPTURE_BLUR_DELAY_MS`, `hideCaptureWindow`, `createBlurHider`, `initCaptureWindow`; (уточнено после ревью этапа 7) `capturePointerDown` (команда `capture_pointer_down`) |
+| `vite.config.ts` | `build: { rolldownOptions: { input: isTauriBuild ? { main: 'index.html', capture: 'capture.html' } : undefined } }`; остальное не трогать |
+
+**Пропсы формы** (перенос механический: поведение диалога не меняется ни в чём):
+
+```ts
+export interface CaptureFormProps {
+  variant: 'dialog' | 'window'
+  /** Диалог: useUi.captureDraft. Окно: null. */
+  draft: CaptureDraft | null
+  /** Форма кладёт сюда «можно ли закрыть» (как сейчас): false — идёт сохранение или показан вопрос о файлах. */
+  snapshotRef: { current: (() => boolean) | null }
+  /** Диалог: closeCapture. Окно: размонтировать форму и скрыть окно. */
+  onClose(): void
+  /** Диалог: notifySaved (toast с «Открыть»). Окно: ничего — окно скрывается. */
+  onSaved(ids: string[], toLibrary: boolean): void
+  /** «Открыть» у дубля ссылки. Диалог: openItemInSection. Окно: openInMain(item.id). */
+  onOpenItem(item: Item): void
+  /** Окно: системный диалог выбора файла открыт/закрыт — пауза скрытия по потере фокуса. */
+  onFilePicker?(open: boolean): void
+}
+```
+
+Вместо прямых `useUi((s) => s.closeCapture)`, `useUi((s) => s.captureDraft)`, `useUi.getState().captureDraft`,
+`openItemInSection` и `notifySaved` форма пользуется пропсами. `onFilePicker(true)` — перед
+`fileInputRef.current?.click()`; `onFilePicker(false)` — на `change` и `cancel` поля файла. `variant="window"`:
+форма занимает всю высоту окна и прокручивается внутри, поле текста растягивается; кнопка «Отмена» видна и на
+широком экране (в диалоге она только на телефоне).
+
+**`CaptureWindowApp`:** `ErrorBoundary` (как в `App.tsx`, `StorageErrorFallback`) → `ThemeProvider` →
+`TooltipProvider` → рамка окна + `Toaster`. Состояние `open`:
+
+- `capture-shown` → `open = true` (форма монтируется, поле текста получает фокус; черновик восстанавливается
+  штатно); окно уже открыто — только вернуть фокус в поле текста;
+- запрос закрытия (`Esc`, потеря фокуса через `createBlurHider`, кнопка закрытия в шапке): если
+  `snapshotRef.current?.() === false` — остаться; иначе `open = false` и `hideCaptureWindow()`;
+- `onClose` формы (сохранено, «Отмена», «Открыть» у дубля) → то же без опроса;
+- `Esc` обрабатывается на `window` в фазе всплытия и только если событие не обработал открытый выпадающий
+  список (категория, теги, язык): первый `Esc` закрывает список, второй — окно;
+- вне Tauri (страница открыта в браузере на `/capture.html` — так её проверяют в dev) форма открыта сразу,
+  скрытие ничего не делает.
+
+Оформление — в обоих стилях (`docs/DESIGN.md`): в пиксельных сценах рамка `px-panel` (дерево + бумага), в
+«Классике» — `bg-popover` с рамкой 1 px `--border`; шапка — значок `sprout` (в «Классике» скрыт, как в
+`QuickCapture`), «Быстрая запись», кнопка закрытия (`Icon name="x"`); шапка — область перетаскивания
+(`data-tauri-drag-region`, кнопка закрытия из неё исключена). Новых токенов и правок `pixel.css` не нужно.
+`ConfirmHost`, `useHotkeys`, `AppShell` в мини-окно не подключаются.
+
+Тест `captureWindow.test.ts`: `createBlurHider` с поддельными таймерами — скрытие через задержку; фокус вернулся
+до срока — не скрывать; `suspend` / `resume`; потеря фокуса во время паузы после `resume` и возврата фокуса не
+скрывает; `dispose`.
+
+### 2.14.6. Настройки: секция «Быстрый захват» (пакет `ui-settings`)
+
+Новый `src/views/settings/QuickCaptureSection.tsx`: `QuickCaptureSection({ settings }: { settings: Settings })`,
+`Section id="quick-capture" title="Быстрый захват"`, описание: «Мини-окно по глобальному сочетанию, значок в
+трее, запуск вместе с системой и приём записей от расширения браузера». В `SettingsView.tsx` — сразу после
+`ShortcutsSection`. Образец устройства — `BackupSection` и `AiSection` (`Row`, `Field`, `CommitInput`, `Switch`,
+ошибки через `describeError`).
+
+**Вне Tauri** секция показывает только абзац `QUICK_CAPTURE_DESKTOP_HINT`.
+
+**В Tauri:**
+
+| Элемент | Поведение |
+|---|---|
+| Переключатель «Мини-окно быстрой записи» (`captureWindow`) | `setSetting` → `applyShellOptions({ ...settings, captureWindow })`. Подсказка: «Глобальное сочетание открывает маленькое окно поверх других программ. Выключено — поднимается главное окно QuickDrop» |
+| Поле «Глобальное сочетание» | переносится из `ShortcutsSection` без изменений поведения (`applyGlobalShortcut`, `globalShortcutFailure`, тексты ошибок). В `ShortcutsSection` на его месте строка: в Tauri — «Глобальное сочетание настраивается в разделе «Быстрый захват»», вне Tauri — нынешний текст про настольную версию |
+| Переключатель «Сворачивать в трей при закрытии» (`closeToTray`) | `setSetting` → `applyShellOptions`. Подсказка: «Крестик прячет окно в трей, QuickDrop продолжает работать: действуют сочетание и приём от расширения. Выйти — через значок в трее» |
+| Переключатель «Запускать вместе с системой» | состояние — `getAutostart()` при показе секции (в `Settings` не хранится); `setAutostart(on)`, при отказе — `toast.error` и прежнее положение. `available === false` → выключен, рядом `reason`. Подсказка: «QuickDrop стартует свёрнутым в трей» |
+| Заголовок блока «Расширение для Chrome» | — |
+| Переключатель «Принимать записи от расширения» (`extEnabled`) | включение: токен — нынешний, если `isExtensionToken`, иначе `generateExtensionToken()`; `applyExtensionServer({ extEnabled: true, extPort, extToken })`; запустился → `setSettings({ extToken, extEnabled: true })`; не запустился → `toast.error(status.error)`, настройка не включается (созданный токен сохраняется). Выключение: `setSetting('extEnabled', false)` → `applyExtensionServer` с `extEnabled: false`. Подсказка: «QuickDrop слушает только этот компьютер (127.0.0.1) и только пока приём включён. Работает, пока приложение запущено» |
+| Строка состояния | `extStatusText(settings.extEnabled, status)`; `status` — `getExtServerStatus()` при показе и после каждого применения; ошибка — цветом `text-destructive`, `role="status"` |
+| Поле «Порт» | `CommitInput`, `validateExtPort`; при включённом приёме сначала `applyExtensionServer` с новым портом: отказ → ошибка под полем, в настройках и у работающего сервера остаётся старый порт (Rust не останавливает прежний сервер, пока не открыл новый порт); успех → `setSetting('extPort', n)` |
+| Поле «Токен» | только чтение, по умолчанию `maskToken`; кнопки: «Показать» / «Скрыть» (значки `eye` / `eye-off`), «Скопировать» (`copyText(token, 'Токен скопирован')` из `lib/actions`), «Сменить» — `confirmDialog({ title: 'Сменить токен?', description: 'Расширение перестанет сохранять записи, пока в его настройках не указан новый токен.', confirmLabel: 'Сменить' })` → новый токен → при включённом приёме `applyExtensionServer` → `setSetting('extToken', …)`. Токена ещё нет — «не создан», кнопки «Показать» и «Скопировать» выключены. Подсказка: «Токен хранится только на этом компьютере и не попадает в резервную копию» |
+| Установка расширения | нумерованный список `EXTENSION_INSTALL_STEPS` |
+
+Тексты шагов установки: 1) «Откройте в Chrome страницу chrome://extensions и включите «Режим разработчика»»;
+2) «Нажмите «Загрузить распакованное расширение» и выберите папку extension из комплекта QuickDrop»;
+3) «Откройте настройки расширения: значок QuickDrop → «Настройки»»; 4) «Вставьте туда порт и токен из этого
+раздела и нажмите «Сохранить»»; 5) «Нажмите «Проверить соединение» — должно появиться «Соединение есть»».
+
+Оформление — существующими примитивами секций настроек, верно в пиксельных сценах и в «Классике»; `brand` не
+использовать (здесь нет главного действия). Проверка в браузере — с подставленным `window.__TAURI_INTERNALS__`,
+как секция копий на этапе 4 (команды Rust при этом недоступны: обёртки возвращают отказ, секция должна
+показать его текстом, а не упасть).
+
+### 2.14.7. Расширение Chrome (пакет `extension`)
+
+```
+extension/
+  manifest.json
+  background.js      service worker (ES-модуль): контекстное меню, команда, значок-результат
+  shared.js          общий модуль: настройки, отправка, тексты ошибок
+  popup.html  popup.js
+  options.html  options.js
+  ui.css             общий стиль всплывающего окна и страницы настроек
+  icons/icon-16.png  icon-32.png  icon-48.png  icon-128.png
+  README.md
+scripts/gen-extension-icons.mjs    public/icon.svg → четыре PNG (sharp), запуск: node scripts/gen-extension-icons.mjs
+```
+
+`manifest.json` — как в п. 2.7 с поправками: `"permissions": ["activeTab", "contextMenus", "storage"]`,
+`"host_permissions": ["http://127.0.0.1/*"]`, `"background": { "service_worker": "background.js", "type": "module" }`,
+`"minimum_chrome_version": "116"`, `"version": "0.1.0"` (версия расширения ведётся отдельно от приложения).
+Нет: `scripting`, `tabs`, `<all_urls>`, постоянных content scripts, удалённого кода, inline-скриптов, сборки и
+зависимостей.
+
+`shared.js`:
+
+```js
+export const DEFAULT_PORT = 47821
+export async function loadConfig()                 // { port, token } из chrome.storage.local (не sync)
+export async function saveConfig({ port, token })
+export function portError(value)                   // null или текст: целое 1024–65535
+export function tokenError(value)                  // null или текст: 43 символа A–Z a–z 0–9 _ -
+export async function send(kind, { url, title, text })   // → { ok: true, duplicate } | { ok: false, error }
+export async function ping()                       // → { ok: true, version } | { ok: false, error }
+```
+
+- Адрес — всегда `http://127.0.0.1:${port}`; заголовки `Authorization: Bearer ${token}` и
+  `Content-Type: application/json`; `signal: AbortSignal.timeout(20000)`; других сетевых запросов нет.
+- До отправки: токена нет → «Укажите токен в настройках расширения»; адрес страницы не http/https → «Эту
+  страницу сохранить нельзя»; адрес длиннее 2048, текст длиннее 500 000 символов или тело больше 1 МиБ →
+  «Слишком большой текст».
+- Ответы: сетевой отказ → «QuickDrop не запущен или приём выключен»; истёк срок → «QuickDrop не ответил»;
+  401 → «Неверный токен. Скопируйте его заново из настроек QuickDrop»; 403 → «QuickDrop отклонил запрос»;
+  413 → «Слишком большой текст»; 429 → «Слишком часто. Повторите через несколько секунд»; прочее — поле
+  `error` ответа либо «Ошибка {код}».
+
+`background.js`: в `runtime.onInstalled` — `contextMenus.removeAll()` и три пункта: `qd-page` (`['page']`,
+«Сохранить страницу в QuickDrop»), `qd-link` (`['link']`, «Сохранить ссылку в QuickDrop»), `qd-selection`
+(`['selection']`, «Сохранить выделенное в QuickDrop»). `contextMenus.onClicked`: страница → `send('page',
+{ url: tab.url, title: tab.title })`; ссылка → `send('link', { url: info.linkUrl })`; выделение →
+`send('selection', { url: info.pageUrl, title: tab?.title, text: info.selectionText })`. Команда `save-page`
+(`Alt+Shift+Q`) → как пункт страницы. Итог — значком: «OK» (сохранено или уже было) или «!» на 2 с, текст —
+в `action.setTitle` («Сохранено в QuickDrop», «Уже сохранено», текст ошибки).
+
+Всплывающее окно: заголовок и адрес активной вкладки (`tabs.query({ active: true, currentWindow: true })`,
+данные вкладки даёт `activeTab`), кнопка «Сохранить страницу», строка состояния (`role="status"`), ссылка
+«Настройки» (`runtime.openOptionsPage()`); после успеха закрывается через 800 мс. Страница настроек: порт,
+токен (поле-пароль с «Показать»), «Сохранить», «Проверить соединение» → «Соединение есть: QuickDrop {версия}»
+или текст ошибки.
+
+Вид: расширение живёт вне приложения, поэтому один стиль — палитра «Классики» (тёплая бумажная нейтраль,
+акцент — терракота `#D2622E` только на главной кнопке), системный шрифт, светлая и тёмная тема по
+`prefers-color-scheme`, без эмодзи, градиентов и капса. Все тексты — по-русски.
+
+`README.md`: что умеет; установка (те же пять шагов); какие права и зачем; ограничения (QuickDrop должен быть
+запущен, приём включён; выделение сохраняется без переносов строк; служебные страницы браузера не
+сохраняются); как обновить (кнопка обновления на `chrome://extensions`); как пересоздать значки.
+
+Проверка пакета: `node --check` для каждого `.js`, `manifest.json` разбирается как JSON, значки существуют и
+имеют нужный размер. В Chrome расширение проверяет основная сессия.
+
+### 2.14.8. Зависимости, конфигурация, сведение
+
+**Пакет `deps`** — единственный, кто меняет `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `capabilities/*`,
+`build.rs`, `package.json`, `package-lock.json` и запускает `cargo fetch` / `npm install`:
+
+- `src-tauri/Cargo.toml`: `tauri = { version = "2", features = ["tray-icon"] }`. (уточнено после ревью этапа 7)
+  Итог: HTTP-крейта нет (сервер свой); в секции настольных платформ (рядом с `global-shortcut` и
+  `single-instance`) — `auto-launch = "0.6"` вместо плагина автозапуска; в `[target.'cfg(windows)'.dependencies]` —
+  `windows-sys = "0.61"` (п. 2.10). Версии Tauri — только `2.x`, не альфа Tauri 3.
+- `src-tauri/tauri.conf.json`: второй элемент `app.windows` — запись `capture` из п. 2.2 (640×440,
+  `create: false`). CSP и остальное не трогать.
+- `src-tauri/capabilities/capture.json`: `{ "identifier": "capture", "description": "Права мини-окна быстрой
+  записи", "windows": ["capture"], "permissions": ["core:default", "core:window:allow-hide",
+  "core:window:allow-start-dragging"] }`. `default.json` не меняется (главное окно показывает и прячет Rust).
+- `package.json` / `package-lock.json`: изменений нет (npm-пакет автозапуска не нужен).
+- Проверка: `cargo check`, `cargo test` (60 тестов этапа 4 проходят и с feature `tray-icon`), `npm run typecheck`.
+  Если тестовый exe в Windows перестал запускаться из-за манифеста common-controls (код `0xc0000139`) —
+  обход в `src-tauri/build.rs`, с записью в отчёт.
+- **Сверка API по скачанным исходникам** с записью в `.progress/agents/stage7-deps.md` точных сигнатур.
+  Расхождения с п. 2.14 — в отчёт: пакеты `rust-shell` и `rust-ext` читают его первым делом. (уточнено после
+  ревью этапа 7) Плагин автозапуска и HTTP-крейт, которые здесь сверялись, из проекта убраны (пп. 2.4, 2.14.4).
+
+**Пакет `wire`** (волна 2) — `src-tauri/src/lib.rs` и `src/main.tsx`:
+
+```rust
+mod backup;
+mod ext_server;
+mod shell;
+// #[cfg(desktop)]: single-instance первым — |app, args, _cwd| shell::on_second_instance(app, &args);
+//                  global-shortcut (уточнено после ревью этапа 7: плагина автозапуска нет, автозапуск — в shell::init)
+// setup: … approved-dirs, own-backups (как сейчас); app.manage(ext_server::ExtServer::default());
+//        shell::init(app)?; create_main_window(app, shell::started_hidden())?   // скрытый старт: .visible(false)
+// .on_window_event(|window, event| shell::on_window_event(window, event))
+// invoke_handler: нынешние 9 команд + shell::{set_shell_options, toggle_capture_window, capture_pointer_down,
+//   show_main_window, open_in_main, quit_app, get_autostart, set_autostart}
+//   + ext_server::{ext_server_apply, ext_server_status, ext_take_pending, ext_capture_done}
+```
+
+`main.tsx`: после `void initDesktop()` — `if (isTauri()) void import('./lib/extInbox').then((m) => m.startExtInbox())`
+(с `catch` и `console.warn`). Проверка сведения: `cargo check`, `cargo test`, `npm run typecheck`, `npm test`,
+`npm run build` (веб: `capture.html` в `dist` нет) и сборка веб-слоя как для Tauri (`TAURI_ENV_PLATFORM=windows`
+в окружении → в `dist` есть `index.html` и `capture.html`, `sw.js` нет). Модуль волны 1 не собирается в составе
+библиотеки — чужой файл не править, вернуть ошибку с точным текстом компилятора.
+
+### 2.14.9. Пакеты (один файл — ровно один пакет)
+
+| Волна | Пакет | Модель | Файлы |
+|---|---|---|---|
+| 0, по очереди | `deps` | opus | `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/capture.json`, `src-tauri/build.rs` (только при необходимости) |
+| 0, по очереди | `contracts` | opus | `src/types.ts`, `src/lib/platform.ts`, `src/db/db.ts`, `src/index.css`, `src/lib/shellUi.ts`, `src/lib/shellUi.test.ts`, `src/lib/desktop.ts`, `src/lib/desktop.test.ts`, `src/lib/exportImport.test.ts`, `src/lib/settingsSchema.test.ts`, `src/db/seed.test.ts` |
+| 1 | `rust-shell` | opus | `src-tauri/src/shell.rs`, `src-tauri/tests/shell_module.rs` |
+| 1 | `rust-ext` | opus | `src-tauri/src/ext_server.rs`, `src-tauri/tests/ext_server_module.rs` |
+| 1 | `ext-inbox` | opus | `src/lib/extensionCapture.ts`, `src/lib/extensionCapture.test.ts`, `src/lib/extInbox.ts`, `src/lib/extInbox.test.ts` |
+| 1 | `ui-capture` | sonnet | `capture.html`, `src/capture-main.tsx`, `src/styles/capture-window.css`, `src/components/capture/CaptureForm.tsx`, `src/components/capture/QuickCapture.tsx`, `src/components/capture/CaptureWindowApp.tsx`, `src/lib/captureWindow.ts`, `src/lib/captureWindow.test.ts`, `vite.config.ts` |
+| 1 | `ui-settings` | sonnet | `src/views/settings/QuickCaptureSection.tsx`, `src/views/SettingsView.tsx`, `src/views/settings/ShortcutsSection.tsx` |
+| 1 | `extension` | sonnet | `extension/manifest.json`, `extension/background.js`, `extension/shared.js`, `extension/popup.html`, `extension/popup.js`, `extension/options.html`, `extension/options.js`, `extension/ui.css`, `extension/icons/icon-16.png`, `extension/icons/icon-32.png`, `extension/icons/icon-48.png`, `extension/icons/icon-128.png`, `extension/README.md`, `scripts/gen-extension-icons.mjs` |
+| 2 | `wire` | opus | `src-tauri/src/lib.rs`, `src/main.tsx` |
+
+Каждый пакет ведёт `.progress/agents/stage7-<пакет>.md`.
+
+**Как модули Rust проверяются до сведения.** `lib.rs` принадлежит пакету `wire`, а неподключённый модуль
+компилятор не видит. Поэтому каждый пакет Rust волны 1 кладёт рядом проверочную цель — файл в `src-tauri/tests/`
+из двух строк:
+
+```rust
+#![allow(dead_code)]
+#[path = "../src/shell.rs"] mod shell;      // у rust-ext — "../src/ext_server.rs" mod ext_server
+```
+
+и проверяет только её: `cargo check --manifest-path src-tauri/Cargo.toml --test shell_module`, затем
+`cargo test … --test shell_module` (тесты `#[cfg(test)]` внутри модуля в такой цели выполняются). Отсюда
+требование: модули не ссылаются на `crate::…`. Пакеты идут параллельно — общий `cargo test` в волне 1 не
+запускать (чужой модуль может быть недописан). После сведения проверочные цели дублируют тесты модулей;
+основная сессия удаляет `src-tauri/tests/` при коммите этапа (или оставляет — цена только во времени сборки).
+(уточнено после ревью этапа 7) Удалены: тесты модулей идут в составе библиотеки (`cargo test --lib`).
+
+**Проверки по волнам.** Волна 0: после `deps` — `cargo check`, `cargo test`, `npm run typecheck`; после
+`contracts` — `npm run typecheck`, `npm test` (приложение ведёт себя как раньше: команд Rust ещё нет, обёртки
+возвращают отказ, сочетание поднимает главное окно). Волна 1: Rust — своя проверочная цель; веб —
+`npm run typecheck` и свои тесты (ошибки в чужих файлах параллельных пакетов — не повод их править; повторить
+проверку); `ui-capture` и `ui-settings` — ещё и просмотр в браузере в пиксельной сцене и в «Классике».
+Волна 2: полный набор из п. 2.14.8.
+
+**Зависимости между пакетами волны 1** — только через контракты этого раздела: имена команд и событий
+(пп. 2.14.3, 2.14.4), `desktop.ts` и `shellUi.ts` (п. 2.14.2), протокол HTTP (п. 2.14.4), пропсы формы
+(п. 2.14.5). Файлы пакетов не пересекаются.
+
+### 2.14.10. Открытые вопросы (умолчания приняты, работу не блокируют)
+
+1. **Переносы строк в выделении.** Без права `scripting` Chrome отдаёт выделение одной строкой. Добавить
+   `scripting` (тогда и кнопка «Сохранить выделенное» во всплывающем окне)? Умолчание — нет (минимальные права).
+2. **Расширение в установщике.** Вложить каталог `extension/` в сборку (`bundle.resources`) и добавить в
+   настройки кнопку «Показать папку расширения»? Умолчание — нет: папка берётся из исходников; вернуться на этапе 8.
+3. **`captureWindow` по умолчанию включён** — глобальное сочетание из чужого приложения открывает мини-окно, а
+   не главное. Это и есть цель этапа; выключается в настройках.
+4. **Поле «Глобальное сочетание» переезжает** из «Горячих клавиш» в «Быстрый захват».
+5. **Toast «Сохранено из браузера»** в главном окне, когда оно на экране. Убрать, если мешает.
+6. **Автозапуск при выключенном трее**: после входа в систему QuickDrop стартует скрытым, но закрытие окна
+   крестиком завершает его до следующего входа. Подсказки в секции это объясняют; связывать настройки не стали.
+7. **Привязка к идентификатору расширения** не делается: у распакованного расширения он зависит от пути к
+   папке. Защита — токен, `Origin` вида `chrome-extension://…` и `Host`.
+8. **Сеть для `deps`**: нужно было скачать HTTP-крейт и плагин автозапуска. (уточнено после ревью этапа 7)
+   Снято: оба из проекта убраны, новых зависимостей из сети не нужно.
+
+### 2.14.11. Что проверить основной сессии после сведения
+
+Сверх критериев п. 2.11: крестик при выключенном `closeToTray` завершает процесс (мини-окно создано и скрыто);
+запись из мини-окна появляется в открытом главном окне без перезагрузки; заголовок ссылки, сохранённой из
+мини-окна, догружается; `Esc` при открытом списке категорий закрывает список, а не окно; выбор файла скрепкой не
+прячет окно; расширение сохраняет при главном окне в трее; при выключенном приёме порт закрыт; смена порта и
+токена применяется без перезапуска; `fetch` к `http://127.0.0.1:47821/v1/capture` из консоли обычного сайта —
+отказ; экспорт копии не содержит `extToken`, `extPort`, `extEnabled`; в «Классике» и в пиксельной сцене секция
+настроек и мини-окно выглядят верно; веб-версия (`npm run dev` в браузере) показывает в секции только пояснение.

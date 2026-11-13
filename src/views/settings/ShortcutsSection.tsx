@@ -1,10 +1,6 @@
 import type { ReactNode } from 'react'
-import { toast } from 'sonner'
-import { setSetting } from '@/db/settings'
-import { applyGlobalShortcut, globalShortcutFailure } from '@/lib/desktop'
 import { isTauri, modKey } from '@/lib/platform'
-import type { Settings } from '@/types'
-import { CommitInput, Field, Section } from './Section'
+import { Section } from './Section'
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
@@ -31,7 +27,7 @@ function Keys({ keys }: { keys: string[][] }) {
   )
 }
 
-export function ShortcutsSection({ settings }: { settings: Settings }) {
+export function ShortcutsSection() {
   const mod = modKey()
   const rows: Array<{ keys: string[][]; label: string }> = [
     { keys: [[mod, 'Shift', 'Space'], ['Alt', 'N'], ['N']], label: 'Быстрая запись (N, кроме полей ввода)' },
@@ -78,42 +74,11 @@ export function ShortcutsSection({ settings }: { settings: Settings }) {
         ))}
       </ul>
 
-      {isTauri() ? (
-        <Field
-          label="Глобальное сочетание"
-          htmlFor="global-shortcut"
-          hint={
-            // Сочетание из настроек не зарегистрировалось при запуске — поле не должно выглядеть рабочим.
-            globalShortcutFailure() === settings.globalShortcut ? (
-              <span className="text-destructive">
-                Сочетание {settings.globalShortcut} не назначено: скорее всего, его заняла другая программа. Укажите
-                другое.
-              </span>
-            ) : (
-              'Поднимает окно и открывает добавление из любого приложения. Формат: CommandOrControl+Shift+Space.'
-            )
-          }
-        >
-          <CommitInput
-            id="global-shortcut"
-            value={settings.globalShortcut}
-            validate={(v) => (v ? null : 'Укажите сочетание клавиш')}
-            onCommit={async (v) => {
-              const res = await applyGlobalShortcut(v)
-              if (res.ok) {
-                await setSetting('globalShortcut', v)
-                toast.success('Глобальное сочетание применено')
-              } else {
-                toast.error(res.error ?? 'Сочетание занято другой программой')
-              }
-            }}
-          />
-        </Field>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          Глобальная клавиша, работающая из любого приложения, доступна в настольной версии.
-        </p>
-      )}
+      <p className="text-xs text-muted-foreground">
+        {isTauri()
+          ? 'Глобальное сочетание настраивается в разделе «Быстрый захват»'
+          : 'Глобальная клавиша, работающая из любого приложения, доступна в настольной версии.'}
+      </p>
     </Section>
   )
 }

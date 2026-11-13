@@ -121,6 +121,19 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, './src') },
   },
+  // Сборка для Tauri: вторая страница — мини-окно быстрой записи. В веб-сборку и precache PWA capture.html не попадает.
+  ...(isTauriBuild
+    ? {
+        build: {
+          rolldownOptions: {
+            input: {
+              main: path.resolve(import.meta.dirname, 'index.html'),
+              capture: path.resolve(import.meta.dirname, 'capture.html'),
+            },
+          },
+        },
+      }
+    : {}),
   // Tauri: фиксированный порт и не затирать вывод cargo
   clearScreen: false,
   server: { port: 5173, strictPort: true, watch: { ignored: ['**/src-tauri/**'] } },

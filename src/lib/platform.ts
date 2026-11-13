@@ -2,7 +2,11 @@
 export const isTauri = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-export const isMac = (): boolean =>
+/** Страница мини-окна быстрой записи (capture.html), а не главное окно. */
+export const isCaptureWindow = (): boolean =>
+  typeof location !== 'undefined' && /\/capture\.html$/.test(location.pathname)
+
+export const isMac =(): boolean =>
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
 
 /** Подпись модификатора для подсказок горячих клавиш. */

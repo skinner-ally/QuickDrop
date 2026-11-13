@@ -1524,6 +1524,7 @@ describe('новые настройки', () => {
     'ambient',
     'trashDays',
     'closeToTray',
+    'captureWindow',
   ]
 
   it('каждая настройка либо переносится копией, либо приватная', () => {
@@ -1540,7 +1541,8 @@ describe('новые настройки', () => {
       font: 'pixel',
       ambient: false,
       trashDays: 7,
-      closeToTray: false,
+      closeToTray: true,
+      captureWindow: false,
     }
     await db.meta.bulkPut([
       ...Object.entries(portable).map(([key, value]) => ({ key, value })),
@@ -1598,7 +1600,8 @@ describe('новые настройки', () => {
       font: 'soft',
       ambient: false,
       trashDays: 14,
-      closeToTray: false,
+      closeToTray: true,
+      captureWindow: false,
     }
     await importBackup(
       backupBlob({
@@ -1638,6 +1641,7 @@ describe('новые настройки', () => {
           backupEvery: 'hourly',
           backupKeep: 0,
           closeToTray: 1,
+          captureWindow: 'yes',
           globalShortcut: 'x'.repeat(5000),
           theme: 'neon',
         },

@@ -106,6 +106,21 @@ describe('общий источник записей', () => {
     release(unsub)
   })
 
+  it('в мини-окне индекс поиска заранее не строится', async () => {
+    resetSearchIndex()
+    vi.stubGlobal('location', { pathname: '/capture.html' })
+    try {
+      await createItem({ type: 'text', content: 'заметка' })
+      const unsub = subscribeAllItems(() => {})
+      await until(() => getItemsWithTrashSnapshot()?.length === 1)
+      await pause(50)
+      expect(isSearchIndexReady()).toBe(false)
+      release(unsub)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('теги и счётчики считаются один раз на снимок', () => {
     const base: Omit<Item, 'id' | 'tags' | 'status' | 'favorite'> = {
       type: 'text', title: '', content: '', categoryId: null, links: [], source: 'manual',

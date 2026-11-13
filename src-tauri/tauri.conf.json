@@ -21,6 +21,25 @@
         "minHeight": 520,
         "center": true,
         "dragDropEnabled": false
+      },
+      {
+        "label": "capture",
+        "create": false,
+        "url": "capture.html",
+        "title": "QuickDrop — быстрая запись",
+        "width": 640,
+        "height": 440,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

@@ -107,7 +107,8 @@ describe('mergeSettings', () => {
       { key: 'backupEvery', value: 'weekly' },
       { key: 'backupKeep', value: 3 },
       { key: 'extPort', value: 50000 },
-      { key: 'closeToTray', value: false },
+      { key: 'closeToTray', value: true },
+      { key: 'captureWindow', value: false },
     ])
     expect(merged).toEqual({
       ...DEFAULT_SETTINGS,
@@ -118,7 +119,8 @@ describe('mergeSettings', () => {
       backupEvery: 'weekly',
       backupKeep: 3,
       extPort: 50000,
-      closeToTray: false,
+      closeToTray: true,
+      captureWindow: false,
     })
   })
 })

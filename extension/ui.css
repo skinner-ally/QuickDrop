@@ -1,0 +1,228 @@
+/* Общий стиль всплывающего окна и страницы настроек. Палитра «Классики» QuickDrop. */
+:root {
+  color-scheme: light dark;
+  --bg: oklch(0.985 0.003 85);
+  --surface: oklch(0.97 0.004 85);
+  --fg: oklch(0.21 0.008 60);
+  --muted-fg: oklch(0.5 0.01 60);
+  --border: oklch(0.88 0.006 85);
+  --brand: #d2622e;
+  --brand-fg: #fff;
+  --ring: oklch(0.66 0.15 45);
+  --ok: oklch(0.45 0.1 150);
+  --warn: oklch(0.5 0.12 70);
+  --error: oklch(0.5 0.17 27);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.175 0.005 60);
+    --surface: oklch(0.215 0.005 60);
+    --fg: oklch(0.95 0.004 85);
+    --muted-fg: oklch(0.69 0.008 70);
+    --border: oklch(1 0 0 / 14%);
+    --ring: oklch(0.7 0.15 48);
+    --ok: oklch(0.78 0.12 150);
+    --warn: oklch(0.8 0.12 80);
+    --error: oklch(0.75 0.14 27);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--fg);
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.popup {
+  width: 320px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.options {
+  max-width: 440px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.options h1 {
+  font-size: 15px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page {
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.page-title {
+  font-weight: 500;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.page-url {
+  margin-top: 2px;
+  color: var(--muted-fg);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted-fg);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Терракота — только на главной кнопке. */
+.btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-fg);
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: var(--brand);
+  filter: brightness(0.94);
+}
+
+.status {
+  min-height: 18px;
+  color: var(--muted-fg);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.warn {
+  color: var(--warn);
+}
+
+.status.error {
+  color: var(--error);
+}
+
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 12px;
+}
+
+.hint {
+  color: var(--muted-fg);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.field label {
+  font-weight: 500;
+}
+
+input {
+  font: inherit;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+#token {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row .btn {
+  flex: none;
+}
+
+.field-error {
+  min-height: 0;
+  color: var(--error);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .btn {
+    transition: border-color 120ms, filter 120ms;
+  }
+}

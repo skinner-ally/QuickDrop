@@ -205,7 +205,8 @@ describe('seedDemoData', () => {
       // после первой новой записи и вытеснила бы рабочие копии.
       backupLastAt: 1_700_000_000_000,
       mdExportDir: 'D:\Vault',
-      closeToTray: false,
+      closeToTray: true,
+      captureWindow: false,
       extPort: 50123,
       globalShortcut: 'Alt+Q',
     } satisfies Partial<Settings>

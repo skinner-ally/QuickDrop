@@ -6,6 +6,7 @@ import { BackupSection } from './settings/BackupSection'
 import { CategoriesSection } from './settings/CategoriesSection'
 import { DataSection } from './settings/DataSection'
 import { LinksSection } from './settings/LinksSection'
+import { QuickCaptureSection } from './settings/QuickCaptureSection'
 import { ShortcutsSection } from './settings/ShortcutsSection'
 import { TagsSection } from './settings/TagsSection'
 
@@ -22,7 +23,8 @@ export function SettingsView() {
             <TagsSection />
             <LinksSection settings={settings} />
             <AiSection settings={settings} />
-            <ShortcutsSection settings={settings} />
+            <ShortcutsSection />
+            <QuickCaptureSection settings={settings} />
             <DataSection />
             <BackupSection settings={settings} />
             <AboutSection />

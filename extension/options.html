@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Настройки QuickDrop</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="options">
+    <h1>Настройки QuickDrop</h1>
+    <p class="hint">
+      Приём от расширения включается в самом QuickDrop, в разделе «Быстрый захват» настроек. Порт и токен
+      берутся оттуда же.
+    </p>
+    <p class="hint">
+      Расширение не может проверить, кто отвечает на порту: пока QuickDrop закрыт или приём выключен, порт
+      может занять другая программа и получить токен и отправляемое. На компьютере с несколькими
+      пользователями выберите нестандартный порт и не пользуйтесь расширением, когда QuickDrop закрыт.
+    </p>
+    <form id="form" novalidate>
+      <div class="field">
+        <label for="port">Порт</label>
+        <input id="port" name="port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" />
+        <p id="port-error" class="field-error" role="alert"></p>
+      </div>
+      <div class="field">
+        <label for="token">Токен</label>
+        <div class="row">
+          <input id="token" name="token" type="password" autocomplete="off" spellcheck="false" />
+          <button id="toggle" class="btn" type="button" aria-pressed="false">Показать</button>
+        </div>
+        <p id="token-error" class="field-error" role="alert"></p>
+      </div>
+      <div class="actions">
+        <button id="save" class="btn btn-primary" type="submit">Сохранить</button>
+        <button id="check" class="btn" type="button">Проверить соединение</button>
+      </div>
+    </form>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
 import { settleLinkMeta } from '@/lib/normalize'
+import { isCaptureWindow } from '@/lib/platform'
 import type { Category, Item, MetaRecord, NodePosition, SavedSearch, StoredFile } from '@/types'
 
 /**
@@ -63,7 +64,9 @@ export class QuickDropDB extends Dexie {
       positions: 'id',
       searches: 'id, order',
     })
-    this.on('ready', (vip) => settleStaleLinkMeta(vip))
+    // Мини-окно открывает ту же базу, пока главное окно, возможно, ещё ждёт заголовок ссылки:
+    // его 'pending' не прерванный, а живой — завершать его может только главное окно.
+    if (!isCaptureWindow()) this.on('ready', (vip) => settleStaleLinkMeta(vip))
   }
 }
 

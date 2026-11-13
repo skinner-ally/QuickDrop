@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QuickDrop</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="popup">
+    <header class="head">
+      <img src="icons/icon-32.png" width="20" height="20" alt="" />
+      <h1>QuickDrop</h1>
+    </header>
+    <section class="page" aria-label="Текущая страница">
+      <p id="page-title" class="page-title">Страница</p>
+      <p id="page-url" class="page-url"></p>
+    </section>
+    <button id="save" class="btn btn-primary" type="button">Сохранить страницу</button>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <footer class="foot">
+      <a href="#" id="open-options">Настройки</a>
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

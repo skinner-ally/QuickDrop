@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 percent-encoding = "2"
@@ -27,6 +27,12 @@ url = "2"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+# Автозапуск — напрямую, без tauri-plugin-autostart: нужен режим Windows CurrentUser (только HKCU).
+auto-launch = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+# Состояние кнопки мыши для мини-окна (shell::capture_pointer_down); версия уже есть в Cargo.lock.
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 codegen-units = 1

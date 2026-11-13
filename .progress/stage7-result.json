@@ -1,0 +1,522 @@
+{
+ "plan": {
+  "summary": "Часть 2 .progress/spec-tauri.md сверена с кодом после этапов 1–6 и с решениями основной сессии; дописан п. 2.14 «Исполнение этапа 7» (2.14.1–2.14.11: что проверено, контракты веб-слоя, Rust-оболочка, канал расширения, мини-окно, секция настроек, расширение, зависимости и сведение, пакеты, открытые вопросы, приёмка). При расхождении пп. 2.1–2.12 с п. 2.14 действует п. 2.14. Код не менялся, git не трогался, ничего не устанавливалось; отчёт — .progress/agents/spec-stage7.md.\n\nГлавные находки сверки:\n1) В src/types.ts closeToTray по умолчанию true — по решению основной сессии должно быть false (меняет contracts).\n2) Скрытое мини-окно — тоже окно: без доработки крестик главного окна оставил бы процесс висеть. На Destroyed окна main нужен app.exit(0).\n3) Глобальный listen() из @tauri-apps/api/event получает и события, адресованные другому окну (match_any_or_filter в tauri 2.12.5). Новые подписки — только getCurrentWebviewWindow().listen, события — emit_to(метка).\n4) WebviewWindowBuilder::build в Windows виснет в синхронных командах и обработчиках трея — команды с окнами только async, из трея через async_runtime::spawn.\n5) db.on('ready') → settleStaleLinkMeta сработал бы и в мини-окне, сбивая pending главного окна — в мини-окне отключается (isCaptureWindow в platform.ts).\n6) Форма CaptureForm сейчас внутренняя функция QuickCapture.tsx, жёстко связанная с useUi — выносится в отдельный файл с пропсами; мини-окно повторяет жизненный цикл диалога (монтируется на показ, размонтируется на скрытие), поэтому черновик, вопрос о файлах и проверка дубля работают готовым кодом.\n7) tauri-plugin-autostart и tiny_http локально НЕ скачаны (нет ни в Cargo.lock, ни в ~/.cargo/registry) — их API в спецификации записан по памяти, пакет deps обязан сверить по исходникам после cargo fetch (нужна сеть). tray-icon 0.25.1, muda, single-instance 2.5.5 локально есть и проверены.\n\nКлючевые решения п. 2.14: автозапуск — своими командами Rust поверх плагина (npm-пакет и права autostart:* не нужны, package.json не меняется); новая настройка captureWindow (умолчание true), мини-окно создаётся/уничтожается командой set_shell_options; канал расширения — очередь с подтверждением (Rust кладёт сообщение в слот, шлёт событие-будильник без данных, главное окно забирает ext_take_pending и подтверждает ext_capture_done; не забрано за 5 с → 504 и запись гарантированно не создана; не подтверждено ещё за 10 с → 504); сервер запускает только JS главного окна, токен и порт Rust держит лишь в памяти; канал только принимает (ответ: ok, duplicate, текст ошибки); lib.rs и main.tsx сводит пакет волны 2, а модули Rust волны 1 проверяются до сведения отдельными проверочными целями src-tauri/tests/*_module.rs (#[path]-подключение модуля), поэтому модули не должны ссылаться на crate::.\n\nНе проверено вживую (нечем на этапе проработки): поведение окон, трея, фокуса, автозапуска, BroadcastChannel Dexie между двумя окнами Tauri, наличие заголовка Origin у запросов расширения, работа приёма при окне, долго скрытом в трее.",
+  "changed": [
+   "п. 2.1 (сводка): крестик главного окна — настройка closeToTray, по умолчанию ВЫКЛЮЧЕНА, разового вопроса при первом закрытии нет; автозапуск и приём от расширения по умолчанию выключены; добавлена настройка captureWindow; мини-окно создаётся командой set_shell_options вместо prepare_capture_window",
+   "п. 2.2: размер мини-окна 640×440 (нынешняя форма не помещается в 340 px); состав команд shell.rs заменён (set_shell_options, toggle_capture_window, show_main_window, open_in_main, quit_app, get_autostart, set_autostart); CaptureForm описана по нынешнему коду (внутренняя функция с snapshotRef и useUi) и получает пропсы; isCaptureWindow переехала в platform.ts; форма монтируется на показ окна и размонтируется на скрытие; обработчик сочетания учитывает captureWindow; поле «Глобальное сочетание» переезжает в новую секцию",
+   "п. 2.3: убраны событие tray-hint, флаг hint_shown и ключ localStorage qd-tray-hint; добавлено: Destroyed окна main → app.exit(0) (иначе процесс держит скрытое мини-окно); пункт трея «Быстрая запись» зависит от флага capture_window; работа с окнами из обработчиков трея — через async_runtime::spawn",
+   "п. 2.4: автозапуск управляется командами Rust поверх tauri_plugin_autostart::ManagerExt; npm-пакет @tauri-apps/plugin-autostart и права autostart:* не нужны; запрет в отладочной сборке проверяет Rust (cfg!(debug_assertions)), повторный enable() делает Rust в setup",
+   "п. 2.5: обработчик второго экземпляра сводится к shell::on_second_instance",
+   "п. 2.6: Host принимается только 127.0.0.1:{port}; Origin строго chrome-extension:// + 32 буквы, обязателен для POST и OPTIONS, у GET /v1/ping может отсутствовать; добавлен предел частоты 30 запросов за 10 с (429); вместо события с данными и ожидания 5 с — очередь с подтверждением (ext_take_pending / ext_capture_done), сроки 5 с + 10 с; команды ext_server_apply / ext_server_status вместо start/stop_ext_server; id записи в ответе не отдаётся; у kind=link нет заголовка (Chrome не даёт текст ссылки); обработчик приёма — в src/lib/extInbox.ts, дубль ищет repo.findDuplicateLink",
+   "п. 2.7: из манифеста убрано право scripting (минимальные права по решению основной сессии) — выделение берётся из info.selectionText без переносов строк, кнопки «Сохранить выделенное» во всплывающем окне нет; срок ожидания fetch 20 с; значки делает scripts/gen-extension-icons.mjs; состав каталога (shared.js, ui.css, service worker — ES-модуль) — ссылкой на п. 2.14.7",
+   "п. 2.8: явный предел частоты; канал только принимает; токен и порт — только IndexedDB и память процесса, не попадают в журнал, события и резервную копию; кнопка называется «Сменить»",
+   "п. 2.9: closeToTray по умолчанию false (в коде сейчас true), новый ключ captureWindow (true); отмечено, что ext*-ключи уже есть в types.ts, settingsSchema, PRIVATE_SETTINGS и CLEARED_SETTINGS; список добавлений desktop.ts заменён ссылкой на п. 2.14.2",
+   "п. 2.10: npm-зависимостей нет; зафиксировано, что tauri-plugin-autostart и tiny_http локально отсутствуют, а tray-icon, muda и single-instance есть",
+   "п. 2.11: таблица владения помечена как набросок, действует разбивка п. 2.14.9; поправлены критерии готовности (трей — при включённой настройке, порт закрыт при выключенном приёме, выделение без переносов)",
+   "п. 2.12: добавлены риски — процесс и скрытое мини-окно, глобальный listen и чужие события, скрытое главное окно и замедление таймеров, settleStaleLinkMeta во втором окне, BroadcastChannel между окнами, автозапуск и диспетчер задач, tiny_http без таймаутов чтения, расширение не входит в установщик",
+   "новый п. 2.14 «Исполнение этапа 7» (2.14.1–2.14.11): проверенный API, контракты contracts (types, platform, db, shellUi, desktop, initDesktop), shell.rs, ext_server.rs с таблицей проверок HTTP и тестами, extensionCapture.ts и extInbox.ts, мини-окно и пропсы CaptureForm, секция настроек «Быстрый захват» с текстами, расширение, зависимости и сведение lib.rs/main.tsx, пакеты, открытые вопросы, список приёмки",
+   "шапка файла и вводная врезка части 2: отметка о сверке и правило «при расхождении действует п. 2.14»"
+  ],
+  "openQuestions": [
+   "Переносы строк в выделении: без права scripting (минимальные права по решению основной сессии) Chrome отдаёт выделенный текст одной строкой, и во всплывающем окне нет кнопки «Сохранить выделенное». Добавить scripting? Умолчание — нет.",
+   "Расширение в установщике: каталог extension/ лежит только в исходниках. Вложить его в сборку (bundle.resources) и добавить в настройки кнопку «Показать папку расширения»? Умолчание — нет, вернуться на этапе 8 (на этапе 7 это невозможно без нарушения порядка волн: tauri.conf.json меняет только deps, а каталог появляется в волне 1).",
+   "Новая настройка captureWindow по умолчанию включена: глобальное сочетание из чужого приложения открывает мини-окно, а не главное. Это цель этапа, но формально меняет нынешнее поведение сочетания — подтвердить умолчание.",
+   "Поле «Глобальное сочетание» переезжает из секции «Горячие клавиши» в новую секцию «Быстрый захват» (в старой остаётся строка-указатель). Согласны?",
+   "Toast «Сохранено из браузера» в главном окне, когда оно на экране, при записи от расширения — оставить или убрать?",
+   "Автозапуск при выключенном «Сворачивать в трей»: QuickDrop стартует скрытым, но закрытие окна крестиком завершает его до следующего входа в систему (сочетание и приём перестают работать). Настройки не связаны, это объясняют подсказки. Достаточно ли?",
+   "Привязка сервера к идентификатору расширения не делается (у распакованного расширения он зависит от пути к папке); защита — токен 256 бит, Origin вида chrome-extension://… и Host. Достаточно ли?",
+   "Пакету deps нужен доступ в сеть: tiny_http и tauri-plugin-autostart с зависимостями локально не скачаны; их API в спецификации записан по памяти и должен быть сверен deps по исходникам до запуска rust-shell и rust-ext.",
+   "Проверка модулей Rust до сведения сделана временными проверочными целями src-tauri/tests/shell_module.rs и ext_server_module.rs (подключают модуль через #[path]), потому что lib.rs принадлежит пакету wire, а «один файл — один пакет» запрещает заглушки с передачей владения. После сведения они дублируют тесты модулей — удалить их основной сессии при коммите этапа или оставить?",
+   "GET /v1/ping принимается и без заголовка Origin (Chrome не всегда ставит его на GET; защита — токен и Host). Проверить на живом Chrome, приходит ли Origin на POST от service worker расширения с host_permissions — на этом построена проверка № 2 таблицы HTTP."
+  ]
+ },
+ "packages": [
+  {
+   "key": "deps",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src-tauri/Cargo.toml",
+    "src-tauri/Cargo.lock",
+    "src-tauri/tauri.conf.json",
+    "src-tauri/capabilities/capture.json",
+    "src-tauri/build.rs",
+    ".progress/agents/stage7-deps.md"
+   ]
+  },
+  {
+   "key": "contracts",
+   "wave": 0,
+   "model": "opus",
+   "files": [
+    "src/types.ts",
+    "src/lib/platform.ts",
+    "src/db/db.ts",
+    "src/index.css",
+    "src/lib/shellUi.ts",
+    "src/lib/shellUi.test.ts",
+    "src/lib/desktop.ts",
+    "src/lib/desktop.test.ts",
+    "src/lib/exportImport.test.ts",
+    "src/lib/settingsSchema.test.ts",
+    "src/db/seed.test.ts",
+    ".progress/agents/stage7-contracts.md"
+   ]
+  },
+  {
+   "key": "rust-shell",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src-tauri/src/shell.rs",
+    "src-tauri/tests/shell_module.rs",
+    ".progress/agents/stage7-rust-shell.md"
+   ]
+  },
+  {
+   "key": "rust-ext",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src-tauri/src/ext_server.rs",
+    "src-tauri/tests/ext_server_module.rs",
+    ".progress/agents/stage7-rust-ext.md"
+   ]
+  },
+  {
+   "key": "ext-inbox",
+   "wave": 1,
+   "model": "opus",
+   "files": [
+    "src/lib/extensionCapture.ts",
+    "src/lib/extensionCapture.test.ts",
+    "src/lib/extInbox.ts",
+    "src/lib/extInbox.test.ts",
+    ".progress/agents/stage7-ext-inbox.md"
+   ]
+  },
+  {
+   "key": "ui-capture",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "capture.html",
+    "src/capture-main.tsx",
+    "src/styles/capture-window.css",
+    "src/components/capture/CaptureForm.tsx",
+    "src/components/capture/QuickCapture.tsx",
+    "src/components/capture/CaptureWindowApp.tsx",
+    "src/lib/captureWindow.ts",
+    "src/lib/captureWindow.test.ts",
+    "vite.config.ts",
+    ".progress/agents/stage7-ui-capture.md"
+   ]
+  },
+  {
+   "key": "ui-settings",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "src/views/settings/QuickCaptureSection.tsx",
+    "src/views/SettingsView.tsx",
+    "src/views/settings/ShortcutsSection.tsx",
+    ".progress/agents/stage7-ui-settings.md"
+   ]
+  },
+  {
+   "key": "extension",
+   "wave": 1,
+   "model": "sonnet",
+   "files": [
+    "extension/manifest.json",
+    "extension/background.js",
+    "extension/shared.js",
+    "extension/popup.html",
+    "extension/popup.js",
+    "extension/options.html",
+    "extension/options.js",
+    "extension/ui.css",
+    "extension/icons/icon-16.png",
+    "extension/icons/icon-32.png",
+    "extension/icons/icon-48.png",
+    "extension/icons/icon-128.png",
+    "extension/README.md",
+    "scripts/gen-extension-icons.mjs",
+    ".progress/agents/stage7-extension.md"
+   ]
+  },
+  {
+   "key": "wire",
+   "wave": 2,
+   "model": "opus",
+   "files": [
+    "src-tauri/src/lib.rs",
+    "src/main.tsx",
+    ".progress/agents/stage7-wire.md"
+   ]
+  }
+ ],
+ "results": [
+  {
+   "key": "deps",
+   "status": "готово",
+   "summary": "Пакет deps выполнен. В Cargo.toml: у tauri включена feature \"tray-icon\", в [dependencies] добавлен tiny_http = \"0.12\", в секцию настольных платформ после single-instance — tauri-plugin-autostart = \"2\". cargo fetch поставил в Cargo.lock tauri-plugin-autostart 2.7.0, tiny_http 0.12.0 и их зависимости; это только добавления, версии прежних пакетов не менялись (tauri 2.12.5, tray-icon 0.25.1 и muda 0.20.0 уже были в lock). В tauri.conf.json вторым элементом app.windows добавлено окно capture ровно по п. 2.2 (640×440, create false, url capture.html, без рамки и тени, alwaysOnTop, skipTaskbar, visible false, dragDropEnabled false). CSP и главное окно не тронуты. Создан capabilities/capture.json с правами core:default, core:window:allow-hide и core:window:allow-start-dragging. build.rs не менялся: тестовый exe с tray-icon запускается. Проверки: cargo check прошёл, tauri-build принял окно и capture.json. cargo test: 60 passed, 1 ignored. npm run typecheck прошёл. Точные сигнатуры tauri_plugin_autostart (Builder::new/arg/args/app_name/build, init, ManagerExt::autolaunch, AutoLaunchManager::enable/disable/is_enabled) и tiny_http (Server::http/recv_timeout/unblock, Request::method/url/headers/body_length/as_reader/respond, Response::from_string/with_status_code/with_header, Header::from_bytes) сверены по исходникам в ~/.cargo/registry и записаны в .progress/agents/stage7-deps.md вместе с особенностями для rust-shell и rust-ext.",
+   "deviations": [
+    "В capabilities/capture.json добавлена строка \"$schema\": \"../gen/schemas/desktop-schema.json\" — как в default.json. В п. 2.14.8 её нет, на права она не влияет.",
+    "Существенных расхождений API с п. 2.14 нет. Есть уточнения. Методы автозапуска синхронные и возвращают Result<_, tauri_plugin_autostart::Error> (Display), а не String. ManagerExt::autolaunch() внутри вызывает state::<AutoLaunchManager>() и паникует, если плагин не зарегистрирован: в shell.rs лучше брать app.try_state::<tauri_plugin_autostart::AutoLaunchManager>(). Header::from_bytes возвращает Result<Header, ()> и принимает только ASCII. Request::body_length() возвращает Option<usize> (None при chunked)."
+   ],
+   "notVerified": [
+    "Поведение трея, окна capture, автозапуска и HTTP-сервера в живом окне Tauri не проверялось: окно не запускалось, npm run build и tauri build не выполнялись.",
+    "Не проверено вживую, запускается ли автозапуск в Windows, если путь к exe содержит пробелы. auto-launch 0.6.0 пишет в Run значение без кавычек: format!(\"{} {}\", exe_path, args).",
+    "Сборка для macOS не проверялась: cargo check шёл только на Windows."
+   ],
+   "forMainSession": [
+    "rust-shell: auto-launch по умолчанию работает в режиме WindowsEnableMode::Dynamic и плагин его не меняет. Если QuickDrop запущен от администратора, enable() сначала пишет в HKLM, то есть автозапуск включится для всех пользователей. disable() чистит и HKLM, и HKCU. is_enabled() вернёт false, если автозапуск выключен в Диспетчере задач (StartupApproved). Имя записи в Run — «QuickDrop» (productName).",
+    "rust-ext: «порт занят» распознавать через e.downcast_ref::<std::io::Error>() с kind AddrInUse. Порт из зарезервированного диапазона Windows (Hyper-V/WSL) даёт PermissionDenied. Тело читать через as_reader().take(MAX_BODY+1), потому что body_length может быть None. with_header(Content-Type) заменяет text/plain из from_string. Таймаутов сокета в tiny_http нет, пул потоков не ограничен: риск из п. 2.12 подтверждён.",
+    "Каталог src-tauri/gen (в .gitignore) tauri-build пересоздал сам: capabilities.json теперь содержит capture.",
+    "Плагин автозапуска регистрирует JS-команды plugin:autostart|*, но прав autostart:* в capabilities нет, поэтому из веб-слоя они недоступны. Так и задумано.",
+    "Для проверки статуса прочитан git diff src-tauri/Cargo.lock (только чтение, ничего не менялось)."
+   ]
+  },
+  {
+   "key": "contracts",
+   "status": "готово",
+   "summary": "Пакет contracts (волна 0) готов. types.ts: closeToTray по умолчанию false, новый captureWindow = true. platform.ts: isCaptureWindow(). db.ts: settleStaleLinkMeta ставится только вне мини-окна. index.css: @source not \"../extension\". Новый чистый src/lib/shellUi.ts с тестом (типы ExtServerStatus/AutostartState, EXT_PORT_MIN/MAX, isExtensionToken, tokenFromBytes, validateExtPort, maskToken, extStatusText, QUICK_CAPTURE_DESKTOP_HINT, EXTENSION_INSTALL_STEPS с текстами п. 2.14.6). desktop.ts: обёртки generateExtensionToken, applyShellOptions, toggleCaptureWindow, showMainWindow, openInMain, quitApp, getAutostart, setAutostart, applyExtensionServer, getExtServerStatus (аргументы invoke в camelCase; «не бросающие» при отказе возвращают отказ); обработчик сочетания: captureWindow && !document.hasFocus() → toggle_capture_window, отказ или иначе → прежние raiseWindow + openCapture; initDesktop: подписки open-capture/open-item через getCurrentWebviewWindow().listen (repo и actions импортируются динамически), applyShellOptions(settings), при extEnabled — applyExtensionServer с toast «Приём от расширения не запущен» и кнопкой «Настройки»; скачивания, сверка папок, автокопии, регистрация сочетания и toast о занятом сочетании сохранены. Тесты: desktop.test.ts (обёртки вне Tauri, отказ команды, негодный токен/порт не уходят в Rust, initDesktop, ветки сочетания, open-item), exportImport.test.ts (PORTABLE += captureWindow), settingsSchema.test.ts и seed.test.ts (closeToTray: true как неумолчательное значение, + captureWindow). npm run typecheck — чисто; npm test — 78 файлов, 2302 теста, все прошли.",
+   "deviations": [
+    "applyExtensionServer при extEnabled: false передаёт в ext_server_apply token: '' (секрет без нужды не уходит) и порт по умолчанию 47821, если сохранённый негоден (u16 в Rust иначе не разберётся). Спецификация не уточняет, что слать при выключении.",
+    "applyExtensionServer при extEnabled: true и негодном порте возвращает отказ «Порт должен быть от 1024 до 65535» без вызова Rust (в спецификации явно только про токен).",
+    "quitApp: вне Tauri ничего не делает, отказ команды → Error (в спецификации поведение не помечено). toggleCaptureWindow вне Tauri бросает DESKTOP_ONLY_MESSAGE (по спецификации «бросает при отказе»).",
+    "extStatusText(true, undefined) → { text: 'Проверяем…', error: false } — случай «состояние ещё не получено» в спецификации не описан; не запущен без текста ошибки → «Приём не запущен».",
+    "maskToken для строки короче 8 символов возвращает только точки (не раскрывает хвост негодного значения).",
+    "Добавлен экспорт EXT_TOKEN_LENGTH = 43 в shellUi.ts (только добавление).",
+    "openInMain с пустым id не вызывает Rust."
+   ],
+   "notVerified": [
+    "Поведение в окне Tauri: глобальное сочетание (ветка мини-окна и откат на прежний диалог), подписки open-capture/open-item через getCurrentWebviewWindow().listen, toast о незапущенном приёме — проверено только юнит-тестами с моками; команд Rust ещё нет.",
+    "Директива @source not \"../extension\" в index.css при отсутствующем каталоге extension/ — npm run build и dev-сервер по условиям пакета не запускались.",
+    "Приложение в браузере не открывалось (по условиям пакета)."
+   ],
+   "forMainSession": [
+    "Контракт для rust-ext: при выключении JS вызывает ext_server_apply { enabled: false, port: <годный или 47821>, token: '' } — ExtServer::apply должен останавливать сервер, не проверяя токен (проверка токена только при enabled == true).",
+    "До появления команд Rust (волна 0) при captureWindow = true и главном окне не в фокусе каждое нажатие сочетания сначала пробует toggle_capture_window, получает отказ (console.warn) и открывает прежний диалог — поведение для пользователя прежнее.",
+    "ui-capture может импортировать openInMain из desktop.ts: модуль тянет sonner, db/settings и store/ui статически; repo и actions — только динамически внутри initDesktop.",
+    "Ключ в localStorage/IndexedDB у пользователей, уже сохранивших closeToTray = true на этапе 2, сохранится (смена умолчания на них не влияет) — на этапе 2 настройка в UI не выводилась, так что вероятно таких нет."
+   ]
+  },
+  {
+   "key": "rust-shell",
+   "status": "готово",
+   "summary": "Готов модуль src-tauri\\src\\shell.rs. Он целиком выполняет контракт п. 2.14.3:\n- константы меток и событий, ShellState (оба флага false до вызова из JS), init (manage, трей, повторный enable автозапуска только в выпускной сборке), started_hidden, has_autostart_arg, on_second_instance, on_window_event, чистая capture_position, AutostartState в camelCase;\n- асинхронные команды set_shell_options (создаёт скрытое окно capture через from_config или вызывает destroy), toggle_capture_window (монитор под курсором, запасной — основной монитор; work_area, set_position, show, set_focus, emit_to capture-shown), show_main_window, open_in_main (проверка id и emit_to main open-item {id});\n- синхронные команды quit_app, get_autostart и set_autostart (в отладочной сборке недоступен: available false и Err).\n\nТрей: «Открыть QuickDrop», «Быстрая запись», разделитель, «Выход». Левый клик (Up) и двойной клик левой кнопкой открывают главное окно. Все действия с окнами из обработчиков идут через tauri::async_runtime::spawn.\n\non_window_event: CloseRequested окна main при close_to_tray — prevent_close и hide; Destroyed окна main — exit(0); CloseRequested окна capture — prevent_close и hide.\n\nМодуль не ссылается на crate:: и не трогает lib.rs. Проверочная цель src-tauri\\tests\\shell_module.rs состоит из двух строк. Результаты: cargo check --test shell_module проходит без предупреждений, cargo test --test shell_module — 9 из 9. Тесты покрывают capture_position (отрицательные координаты, окно больше области, крайние значения), has_autostart_arg, проверку id, отображение и сериализацию AutostartState, пересчёт размера под масштаб монитора и умолчания ShellState. Временной вставкой compile_error! проверено, что cfg(desktop) в проверочной цели включён; вставка убрана.",
+   "deviations": [
+    "В ShellState сверх контракта два приватных поля: exiting: AtomicBool — чтобы quit_app, «Выход» в трее и Destroyed окна main не запрашивали exit дважды; window_lock: Mutex<()> — чтобы одновременные set_shell_options и toggle_capture_window не создали окно capture дважды. Публичный API не меняется.",
+    "Автозапуск читается через app.try_state::<tauri_plugin_autostart::AutoLaunchManager>(), а не через ManagerExt::autolaunch(), которая паникует без плагина (рекомендация отчёта deps). Если плагин не зарегистрирован: get_autostart возвращает available false и reason «Автозапуск недоступен», set_autostart возвращает Err с тем же текстом.",
+    "get_autostart при ошибке чтения из системы возвращает enabled false, available true и reason «Не удалось прочитать состояние автозапуска: …».",
+    "Перед расчётом позиции размер мини-окна пересчитывается с масштаба текущего монитора на масштаб целевого (функция scale_size). В спецификации этого нет; без пересчёта при переходе со 100 % на 150 % окно встало бы не по центру.",
+    "Двойной клик по значку трея открывает главное окно только для левой кнопки (DoubleClick { button: Left })."
+   ],
+   "notVerified": [
+    "Вживую не проверено ничего: окно Tauri не запускалось. Не проверены: трей и его меню, левый и двойной клик, показ и скрытие мини-окна, позиция на нескольких мониторах и при разном масштабе, set_focus при показе из трея, prevent_close и hide, выход по Destroyed главного окна при скрытом мини-окне, второй экземпляр, автозапуск в реестре.",
+    "Сборка модуля в составе библиотеки (после wire), общий cargo test и сборка под macOS не запускались. Код под macOS проверен только чтением исходников tauri 2.12.5: DoubleClick и show_menu_on_left_click есть на всех платформах.",
+    "Не проверено, что повторный exit(0) из Destroyed во время выхода безвреден, если выход запущен не командами этого модуля (например, системой). Повтор отсекает только флаг exiting, а его ставят пути выхода внутри модуля."
+   ],
+   "forMainSession": [
+    "wire: в setup вызвать shell::init(app)? до create_main_window(app, shell::started_hidden()). Подключить .on_window_event(|w, e| shell::on_window_event(w, e)), в single-instance передать |app, args, _cwd| shell::on_second_instance(app, &args), плагин автозапуска — tauri_plugin_autostart::Builder::new().args([shell::AUTOSTART_ARG]).build(). Зарегистрировать 7 команд shell::{set_shell_options, toggle_capture_window, show_main_window, open_in_main, quit_app, get_autostart, set_autostart}.",
+    "ui-capture: если окно capture создаётся прямо в toggle_capture_window или из трея (до set_shell_options, либо при captureWindow false и прямом вызове), событие capture-shown может прийти раньше, чем JS-страница успеет подписаться. При старте страница должна сама проверить getCurrentWindow().isVisible() и при видимом окне смонтировать форму.",
+    "macOS: событие RunEvent::Reopen (клик по значку в Dock) не обрабатывается. Если главное окно скрыто в трей при closeToTray, вернуть его можно только через трей. Для этого нужен .build(ctx)…run(|app, e| …) в lib.rs (пакет wire или позже).",
+    "Автозапуск (Windows): по отчёту deps, auto-launch в режиме Dynamic пишет сначала в HKLM. Если QuickDrop запущен с правами администратора, повторный enable() в init может добавить вторую запись в HKLM. Проверить на этапе 8."
+   ]
+  },
+  {
+   "key": "rust-ext",
+   "status": "готово",
+   "summary": "Пакет rust-ext готов: src-tauri\\src\\ext_server.rs — самодостаточный модуль (без crate::, lib.rs не тронут) по контракту п. 2.14.4. В нём константы (EVENT_EXT_CAPTURE, MAX_BODY 1 МиБ, TAKE 5 с, DONE 10 с, 30 запросов за 10 с), ExtStatus/ExtPending (camelCase), ExtOutcome, ExtServer (apply, status, take_pending, complete, stop), чистые is_valid_token/ct_eq/is_extension_origin/host_matches и 4 команды; apply/take/done принимаются только от окна main. Привязка строго 127.0.0.1 через свой TcpListener и tiny_http::Server::from_listener. Пока приём выключен, порт не слушается. Обработка в одном потоке qd-ext-http. При смене порта сначала открывается новый, потом закрывается старый; если новый не открылся, прежний продолжает работать и возвращается Err. Проверки идут строго по порядку таблицы (Host 403, Origin 403, OPTIONS 204 + CORS, 404/405, 429 + Retry-After, 401 за постоянное время, ping, 415, 411/413, 400). Затем сообщение кладётся в слот, вызывается notify(requestId), сервер ждёт take и done и отвечает 200 {ok, duplicate} / 422 / 503 / 504. Заголовки ответа: json, no-store, nosniff, Vary: Origin, ACAO только для проверенного origin. Токен не попадает в ошибки, события и ответы. Найдена и закрыта уязвимость tiny_http: при удалении запроса с непрочитанным телом он выделяет буфер на весь заявленный Content-Length. Без защиты запрос с `Content-Length: 99999999999999` от любого локального процесса ронял процесс: проверено, «memory allocation … failed», 0xc0000409. Теперь такие запросы (больше 16 МиБ, тело не прочитано) не удаляются — mem::forget, без ответа. Непрочитанные тела больше 1 КиБ дочитываются в отдельных потоках (не больше 8), поэтому молчащий клиент не останавливает приём. Проверочная цель src-tauri\\tests\\ext_server_module.rs из двух строк. cargo check --test ext_server_module проходит без предупреждений, в том числе без allow(dead_code) (проверено временно). cargo test --test ext_server_module: 33 passed, 5 прогонов подряд, около 0,7 с. Тесты покрывают каждую строку таблицы, успешную запись и дубль, 422, 504 без take (слот пуст), 504 без done, 503 при stop, повторный apply без перезапуска, смену токена (старый даёт 401), смену порта, занятый порт (прежний сервер жив), свободный порт после stop, тело ровно MAX_BODY (200) и MAX_BODY+1 (413), огромный Content-Length.",
+   "deviations": [
+    "Смена токена (и версии, notify) на том же порту — подмена на месте, без перезапуска (в спецификации: остановка и новый запуск). Так порт не остаётся закрытым ни на миг, и ожидающее сообщение не получает 503. Тест «старый токен → 401» проходит.",
+    "ExtServer::default() — ручной impl Default вместо #[derive(Default)]: сроки take/done хранятся полями, чтобы в тестах их можно было укоротить (приватный with_timeouts).",
+    "Повторённые заголовки Host / Origin / Authorization / Content-Type считаются непрошедшей проверкой (403/403/401/415).",
+    "Ответ 405 несёт заголовок Allow. Для PermissionDenied при bind (зарезервированный диапазон портов Windows) отдельный текст: «Порт N недоступен: зарезервирован системой, выберите другой».",
+    "ExtStatus.port = None, когда сервер не работает.",
+    "OPTIONS с верными Host и Origin отвечает 204 на любом пути: в таблице preflight (шаг 3) идёт раньше проверки маршрута (шаг 4).",
+    "Добавлено сверх спецификации: запрос с непрочитанным телом и заявленным Content-Length больше 16 МиБ не удаляется (mem::forget, без ответа), иначе tiny_http роняет процесс на выделении памяти. Непрочитанные тела больше 1 КиБ дочитываются в отдельных потоках qd-ext-drain (не больше 8; сверх лимита — тоже forget).",
+    "Тексты 503: «Приём выключен, запись не сохранена» (сообщение не было забрано) / «Приём выключен. Проверьте «Входящие»» (было забрано). Текст ошибки 422 от главного окна обрезается до 500 символов, пустой заменяется на «Не удалось сохранить».",
+    "В событии ext-capture передаётся только requestId (как в коде п. 2.14.4), содержимого нет."
+   ],
+   "notVerified": [
+    "Команды Tauri вживую: проверка метки окна main, доставка emit_to(\"main\", \"ext-capture\", id), версия из app.package_info(). Модуль собран только в проверочной цели, в lib.rs не подключён.",
+    "Настоящие запросы из Chrome-расширения: CORS preflight, Access-Control-Allow-Private-Network, наличие Origin на GET /v1/ping, Local Network Access.",
+    "macOS и Linux: тесты шли только на Windows.",
+    "Порт из зарезервированного диапазона Windows (ветка PermissionDenied) вживую не проверялся.",
+    "Насколько заметно для интерфейса, что синхронные команды блокируют главный поток: stop ждёт поток до 1 с, повторное открытие того же порта сразу после остановки ретраится до 1 с."
+   ],
+   "forMainSession": [
+    "wire: app.manage(ext_server::ExtServer::default()) и 4 команды ext_server::{ext_server_apply, ext_server_status, ext_take_pending, ext_capture_done}. Новых зависимостей и прав не нужно (tiny_http, serde_json, tauri уже есть).",
+    "Команды объявлены как #[tauri::command] на синхронных fn, значит в Tauri 2 выполняются в главном потоке. ext_server_apply при выключении или смене порта может ждать до ~1 с (STOP_WAIT), при повторном открытии того же порта — ещё до ~1 с (REBIND_WAIT). Если интерфейс заметно подвисает, пометить #[tauri::command(async)] — сигнатура для invoke_handler та же.",
+    "Оставшиеся риски (в коде не закрываются без новых зависимостей): (1) у tiny_http нет таймаутов сокета — держатель токена может остановить единственный поток медленной отправкой тела до 1 МиБ; (2) пул потоков соединений tiny_http не ограничен — локальный процесс может плодить потоки полуоткрытыми запросами; (3) в Windows нет SO_EXCLUSIVEADDRUSE (std его не ставит, нужен socket2/windows-sys) — процесс того же пользователя теоретически может перехватить порт; (4) запросы, лежащие в очереди tiny_http в момент stop, удаляет сам tiny_http — тот же путь дочитывания тела, но без нашей защиты.",
+    "Проверочная цель src-tauri/tests/ext_server_module.rs после сведения дублирует тесты модуля (33 теста, ~0,7 с): удалить или оставить при коммите — на ваше усмотрение.",
+    "git не трогался, коммит — за основной сессией."
+   ]
+  },
+  {
+   "key": "ext-inbox",
+   "status": "готово",
+   "summary": "The ext-inbox package is done: the main window can now take in records from the browser extension. npm run typecheck passes. npm test passes (81 files, 2364 tests), 46 of them are this package's tests. The code was not run in a Tauri window.\n\nWhat was added:\n- src/lib/extensionCapture.ts (pure module): the length limits (URL 2048, title 300, text 500,000) and two functions. parseExtensionMessage accepts only a plain object with v === 1 and a known kind. The URL must be http/https and is required for page and link; for a selection a bad URL is simply dropped. It cleans up the title, normalizes line breaks in the text, discards extra fields, and throws errors with Russian messages. extensionMessageToInput turns a page or link into a link record; a selection is sorted by detectInput into a link, code (titled with the page name, no source line) or text with a «Источник: …» line. Every record gets status 'inbox' and source 'extension'.\n- src/lib/extInbox.ts:\n  - handleExtCapture never throws. For links it checks for a duplicate and returns {ok:true, duplicate:true} without creating anything. Otherwise it saves through createAndEnrich, and errors are reported via describeError(e, 'Не удалось сохранить'). By default it uses repo.findDuplicateLink and actions.createAndEnrich, loaded on demand.\n  - drainExtInbox calls ext_take_pending, then handles messages strictly one at a time and calls ext_capture_done {requestId, ok, duplicate, error|null} for each. A call that arrives while it is working sets a \"repeat\" flag and gets the same promise back, so nothing is lost and nothing runs in parallel. It never throws.\n  - startExtInbox listens through getCurrentWebviewWindow().listen('ext-capture'), not the global listen, then drains once. It is safe to call repeatedly and does nothing outside Tauri or in the mini-window.\n  - notifySaved shows the toast «Сохранено из браузера» with an «Открыть» button, only when the page is visible.",
+   "deviations": [
+    "Added an error the spec does not list, «Адрес слишком длинный»: a URL longer than 2048 characters before or after encoding by new URL (for example Cyrillic) is rejected. The URL is passed on in its normalized URL.href form.",
+    "Code from a selection loses its leading blank lines and trailing spaces; text from a selection is trimmed before the «Источник:» line is added.",
+    "Error text sent to Rust and the extension is cut to 500 characters.",
+    "The «Открыть» button calls openItemInSection(item), which switches to the record's section and selects it, rather than a bare select.",
+    "No toast is shown for a duplicate, because the spec mentions a toast only after a successful save. handleExtCapture also does not call onSaved for a duplicate.",
+    "Extra exports beyond the spec: notifySaved, EVENT_EXT_CAPTURE, SAVE_ERROR, and the EXT_ERR_* error-text constants. The contract signatures are unchanged.",
+    "If a link message arrives with a title, the title is kept, as the spec's mapping says."
+   ],
+   "notVerified": [
+    "Not tested against the real Rust commands ext_take_pending and ext_capture_done (rust-ext package): only the expected shape [{ requestId: number, message }] and the camelCase arguments { requestId, ok, duplicate, error } are covered with a mock.",
+    "Delivery of the 'ext-capture' event to the main window through emit_to and getCurrentWebviewWindow().listen in a real Tauri window.",
+    "How the toast looks and how «Открыть» behaves in the UI, including whether it appears when the window is hidden in the tray.",
+    "End to end: Chrome extension, HTTP, main window, record in the Inbox."
+   ],
+   "forMainSession": [
+    "Hooking it up (wire package): add `if (isTauri()) void import('./lib/extInbox').then((m) => m.startExtInbox())` to main.tsx. startExtInbox never throws, and it does nothing outside Tauri or in the mini-window.",
+    "Rust (rust-ext package): ext_take_pending must return an array of { requestId: u64 as a number, message }. ext_capture_done receives an error of either null or a string up to 500 characters. Entries whose requestId is not a non-negative safe integer are skipped and get no confirmation.",
+    "Duplicate check: the code relies on findDuplicateLinkIn treating http/https and www as the same link."
+   ]
+  },
+  {
+   "key": "ui-capture",
+   "status": "готово",
+   "summary": "Пакет ui-capture сдан. Форма вынесена в CaptureForm.tsx с пропсами из п. 2.14.5, QuickCapture остался диалогом с прежним контрактом. Добавлены capture.html, capture-main.tsx, capture-window.css, CaptureWindowApp, captureWindow.ts с тестом (16 тестов), правка vite.config.ts. typecheck чист, npm test: 81 файл / 2364 теста. В браузере на /capture.html проверены: раскладка 640x440 без прокрутки страницы, пиксельная сцена и «Классика», Esc (форма закрывается с сохранением черновика и восстановлением), Esc при открытом списке категории (закрывает только список), сохранение Ctrl+Enter (запись в inbox, форма сброшена, toast нет). Тестовая запись удалена из IndexedDB.",
+   "deviations": [
+    "captureWindow.ts: добавлен экспорт isCaptureWindowVisible(). Он нужен, потому что при первом создании окна capture-shown может прийти раньше подписки; CaptureWindowApp после подписки спрашивает, видимо ли окно, и тогда открывает форму.",
+    "createBlurHider.resume() при потерянном фокусе планирует скрытие как обычную потерю фокуса. Так фокус из Rust, пришедший позже события поля файла, отменяет скрытие, а при реальной потере фокуса во время диалога окно не зависает.",
+    "Esc в CaptureWindowApp: перехват на window запоминает открытый выпадающий список по [aria-expanded=true], всплытие закрывает окно, если событие не занято и список не был открыт. Спека предлагала только фазу всплытия и defaultPrevented; для Base UI этого недостаточно, потому что DOM успевает обновиться между слушателями.",
+    "vite.config.ts: блок build добавлен условным spread только при isTauriBuild, а не input: undefined для веба. Веб-конфиг при этом остаётся побайтово прежним по смыслу.",
+    "Шапка мини-окна с заголовком «Быстрая запись» показана и в «Классике» (в диалоге заголовок там sr-only): окно без системной рамки, шапка нужна как область перетаскивания и для кнопки закрытия.",
+    "Вне Tauri «скрытие» формы окна сбрасывает её (новый key), а не размонтирует, чтобы страница /capture.html в браузере не оставалась пустой после сохранения."
+   ],
+   "notVerified": [
+    "Всё поведение в окне Tauri: показ, скрытие по потере фокуса, перетаскивание шапки, фокус в поле при повторном показе, гонка первого создания, openInMain, системный диалог файла и пауза blur-hider.",
+    "Событие cancel у поля файла и порядок событий change/focus в WebView2.",
+    "Вид «Классики» в мини-окне и в диалоге проверен только подменой класса сцены на живой странице (в диалоге получились артефакты смешанного состояния). Чистая загрузка в «Классике» не проверялась: ThemeProvider берёт сцену из настроек в БД.",
+    "Диалог в основном окне открывался в пиксельной «Осени» ночью, в узкой панели браузера; клавиши Enter и Esc, вопрос о файлах и предупреждение о дубле в диалоге вживую не гонялись (код перенесён механически).",
+    "Дубль ссылки в мини-окне и кнопка «Открыть» (openInMain) вживую не проверялись.",
+    "Сборка для Tauri с двумя входами (vite build с TAURI_ENV_PLATFORM) не запускалась (npm run build запрещён); проверен только typecheck конфига.",
+    "Ширина 375 px и сцены «Луг», «Бумага», «Зима» не просматривались."
+   ],
+   "forMainSession": [
+    "Проверить в окне Tauri после сведения: capture-shown приходит после создания окна (иначе сработает запасной isCaptureWindowVisible), Esc / blur / крестик скрывают окно, а при прикреплённых файлах показывается вопрос и окно остаётся.",
+    "В Rust показ окна должен делать set_focus. Если toggle_capture_window скрывает окно напрямую (hide) при видимом и сфокусированном окне, форма остаётся смонтированной со своим текстом; следующий capture-shown только возвращает фокус в поле. Это сделано намеренно.",
+    "Права capture.json (core:default, allow-hide, allow-start-dragging) соответствуют тому, что использует веб-слой: hide, start-dragging через data-tauri-drag-region, listen и onFocusChanged окна. Проверить, что core:default хватает для window.isVisible, которое использует isCaptureWindowVisible.",
+    "Нужна проверка, что npm run build с TAURI_ENV_PLATFORM кладёт capture.html в dist и что веб-сборка и precache PWA его не содержат.",
+    "В capture.html CSP отдельно не задаётся: в Tauri действует политика из tauri.conf.json, а веб-плагин quickdrop:web-csp добавит свою meta только на входную страницу веб-сборки, где capture.html не собирается."
+   ]
+  },
+  {
+   "key": "ui-settings",
+   "status": "готово",
+   "summary": "Секция «Быстрый захват» (QuickCaptureSection, id quick-capture) написана и вставлена в SettingsView после ShortcutsSection. Вне Tauri показывает только QUICK_CAPTURE_DESKTOP_HINT. В Tauri: переключатели «Мини-окно быстрой записи» и «Сворачивать в трей при закрытии» (setSettings + applyShellOptions; при отказе — toast, флаг сохранён и применится при запуске), перенесённое без изменений поведения поле «Глобальное сочетание», «Запускать вместе с системой» (getAutostart при показе, после смены перечитывается; available=false — выключен, причина рядом), блок «Расширение для Chrome» (приём с созданием токена и включением только после успешного запуска, строка состояния role=status с text-destructive при ошибке, поле «Порт» с применением при включённом приёме, токен только для чтения с «Показать/Скрыть», «Скопировать», «Сменить» через confirmDialog, нумерованная инструкция). В ShortcutsSection на месте поля стоит строка-указатель. Использованы только примитивы Section/Row/Field/CommitInput/Switch/Button/Input и Icon, brand не применяется. typecheck чистый, npm test: 78 файлов, 2302 теста прошли.",
+   "deviations": [
+    "ShortcutsSection больше не принимает проп settings (после переноса поля он не используется, а noUnusedParameters не даёт его оставить); вызов в SettingsView обновлён: <ShortcutsSection />.",
+    "Ошибка смены порта при включённом приёме показывается как toast.error (CommitInput выводит под полем только ошибки validate, а исключение onCommit превращает в toast), а не текстом под полем; прежний порт остаётся в настройках.",
+    "Если приём не включился, текст ошибки показывается только в toast: строка состояния при выключенной настройке по extStatusText остаётся «Выключено».",
+    "Если токена ещё нет, «Сменить» создаёт его без подтверждения (подтверждение нужно, только когда есть что инвалидировать). Подпись кнопки остаётся «Сменить».",
+    "При смене токена и включённом приёме новый токен сохраняется в настройки только после успешного перезапуска сервера; при отказе остаётся прежний, ошибка — в toast и в строке состояния.",
+    "Заголовок блока расширения — h3, у списка шагов — подзаголовок h4 «Установка расширения» (в спецификации заголовка нет).",
+    "В браузере не проверял: общее правило задания запрещает запускать браузер и dev-сервер, хотя в описании пакета проверка в браузере упомянута."
+   ],
+   "notVerified": [
+    "Вид секции в пиксельных сценах и в «Классике» (вне Tauri и с подставленным window.__TAURI_INTERNALS__), мобильная ширина, переноса кнопок токена, вид нумерованного списка и Switch в disabled — браузер не запускался.",
+    "Поведение с реальными командами Rust (set_shell_options, get_autostart/set_autostart, ext_server_apply/status) и окном Tauri.",
+    "Отсутствие падения секции при отказе команд проверено только чтением кода (обёртки desktop.ts не бросают), не запуском.",
+    "Для компонента нет отдельных тестов: список файлов пакета не допускает новых тестовых файлов, окружение vitest — node."
+   ],
+   "forMainSession": [
+    "При проверке в Tauri/браузере: расходится ли вёрстка строки токена (Input + три кнопки в flex-wrap) на мобильной ширине и в пиксельных сценах; при необходимости подправить классы.",
+    "Если Rust при смене токена на включённом сервере сначала останавливает старый, а новый не открывается, статус покажет ошибку, а в настройках останется старый токен — сверить с реализацией ext_server_apply.",
+    "Добавьте в HANDOFF отметку: ui-settings готов, ShortcutsSection теперь без пропа settings."
+   ]
+  },
+  {
+   "key": "extension",
+   "status": "готово",
+   "summary": "Расширение Chrome (Manifest V3, без сборки и зависимостей) создано в extension: manifest, service worker (три пункта меню и команда Alt+Shift+Q, итог значком OK/! на 2 с), shared.js, popup, options, ui.css (светлая и тёмная тема, терракота только на главной кнопке), README, четыре PNG значка и скрипт scripts/gen-extension-icons.mjs (запущен). Проверено: node --check всех .js, manifest как JSON с нужными правами, размеры значков 16/32/48/128, а shared.js прогнан в node с подставными chrome и fetch (проверки до отправки, тела запросов, коды ответов, сетевой отказ, таймаут, ping).",
+   "deviations": [
+    "ping(config?) принимает необязательный аргумент (сигнатура ping() из спецификации сохранена): страница настроек проверяет значения из формы до сохранения.",
+    "send дополнительно проверяет порт и формат токена (43 символа) до отправки; неверный токен даёт русский текст без запроса.",
+    "Заголовок страницы передаётся только для kind page; для link уходит только адрес; для selection заголовок идёт вместе с адресом источника, если он http/https (иначе адрес отбрасывается).",
+    "Тело запроса содержит только v, kind, url, title, text (без лишних полей), как ждёт parseExtensionMessage.",
+    "npm run typecheck, npm test и cargo не запускались: пакет не трогает TypeScript и Rust."
+   ],
+   "notVerified": [
+    "Загрузка расширения в Chrome (режим разработчика), работа меню, команды, popup и страницы настроек вживую.",
+    "Реальный обмен с сервером Rust (ext_server.rs): preflight OPTIONS с Origin chrome-extension, заголовок Authorization, ответы 200/401/403/413/429/504 проверены только на подставном fetch.",
+    "Внешний вид popup и options в светлой и тёмной темах (поддержка oklch в Chrome 116 ожидается, не проверено глазами).",
+    "Поведение setTimeout на 2 с в service worker для сброса значка."
+   ],
+   "forMainSession": [
+    "Сервер должен отвечать на OPTIONS с Origin chrome-extension://... и заголовком Access-Control-Allow-Private-Network, а Host ровно 127.0.0.1:{port}: fetch расширения шлёт Content-Type application/json и Authorization, то есть всегда с preflight.",
+    "Расширение ждёт в ответе 200 поля ok:true и duplicate (bool); для ping — ok:true, app:'quickdrop', version (строка). Иначе показывает ошибку.",
+    "Тексты ошибок 422/503/504 берутся из поля error ответа сервера (обрезаются до 300 символов).",
+    "Версия расширения 0.1.0 ведётся отдельно от приложения; scripts/check-version.mjs её не сверяет."
+   ]
+  },
+  {
+   "key": "wire",
+   "status": "готово",
+   "summary": "Пакет wire сведён, все проверки прошли. Изменения в lib.rs: подключены модули ext_server и shell. В блоке #[cfg(desktop)] плагин single-instance стоит первым и вызывает shell::on_second_instance(app, &args); дальше идут global-shortcut и tauri_plugin_autostart::Builder::new().args([shell::AUTOSTART_ARG]).build(). В setup после approved-dirs и own-backups добавлены app.manage(ext_server::ExtServer::default()) и shell::init(app)?, затем create_main_window(app, shell::started_hidden()): при hidden окно создаётся с .visible(false), обработчик скачиваний macOS сохранён. Подключён .on_window_event → shell::on_window_event. В invoke_handler к прежним 9 командам добавлены 7 команд shell и 4 команды ext_server, всего 20. fetch_link_meta, backup и тесты lib.rs не менялись. main.tsx: после void initDesktop() при isTauri() динамически импортируется ./lib/extInbox и вызывается startExtInbox(); ошибка уходит в catch и console.warn. Результаты: cargo check прошёл без предупреждений. cargo test: в библиотеке 102 passed, 1 ignored (60 прежних + 33 ext_server + 9 shell); проверочные цели ext_server_module — 33 passed, shell_module — 9 passed. npm run typecheck прошёл, npm test — 81 файл, 2364 теста. npm run build (веб): index.html и sw.js есть, capture.html нет, extInbox вынесен отдельным чанком. Сборка с TAURI_ENV_PLATFORM=windows: index.html и capture.html есть, sw.js и manifest.webmanifest нет. После этого dist пересобран обычной веб-сборкой. Имена аргументов invoke в desktop.ts и extInbox.ts сверены с параметрами команд Rust.",
+   "deviations": [
+    "Прежний встроенный обработчик второго запуска (unminimize/show/set_focus в lib.rs) заменён на shell::on_second_instance, как требует п. 2.14.8. Поведение то же, но запуск с --autostart теперь не поднимает окно.",
+    "create_main_window получила второй параметр hidden: bool, как требует п. 2.14.8."
+   ],
+   "notVerified": [
+    "Окно Tauri не запускалось: ничего из п. 2.14.11 вживую не проверено. Не проверены: крестик при выключенном closeToTray завершает процесс, при этом мини-окно создано и скрыто; скрытый старт с --autostart и показ окна из трея; меню трея (Открыть, Быстрая запись, Выход), левый и двойной клик; запись из мини-окна появляется в главном окне без перезагрузки; заголовок ссылки, сохранённой из мини-окна, догружается; Esc при открытом списке категорий закрывает список, а не окно; выбор файла скрепкой не прячет окно; расширение сохраняет, пока главное окно в трее; при выключенном приёме порт закрыт; смена порта и токена применяется без перезапуска; fetch к 127.0.0.1:47821/v1/capture с обычного сайта получает отказ; в экспорте копии нет extToken, extPort, extEnabled; вид секции настроек и мини-окна в «Классике» и в пиксельной сцене; веб-версия показывает в секции только пояснение.",
+    "Реальная запись автозапуска в реестр Windows не проверена: в отладочной сборке он недоступен, а релизную я не собирал. Отчёт deps отмечает, что путь к exe в ключе Run пишется без кавычек.",
+    "macOS: сборка проверена только на Windows (cargo check, cargo test)."
+   ],
+   "forMainSession": [
+    "Временные проверочные цели src-tauri/tests/shell_module.rs и src-tauri/tests/ext_server_module.rs теперь дублируют тесты модулей, которые собираются в составе библиотеки. Их надо удалить при коммите этапа 7 (или оставить ценой времени сборки).",
+    "dist сейчас собран обычной веб-сборкой (с sw.js, без capture.html). Tauri-сборка пересоберёт его сама через beforeBuildCommand.",
+    "Вживую проверить по п. 2.14.11, перечень — в notVerified и в .progress/agents/stage7-wire.md."
+   ]
+  }
+ ],
+ "review": {
+  "confirmed": [
+   {
+    "dim": "security",
+    "title": "Запрос без токена навсегда занимает поток и сокет (mem::forget), а соединения ничем не ограничены",
+    "file": "src-tauri/src/ext_server.rs",
+    "severity": "средне"
+   },
+   {
+    "dim": "security",
+    "title": "Предел частоты считает запросы без токена и без Origin: любая страница может заблокировать расширение и узнать, что QuickDrop запущен",
+    "file": "src-tauri/src/ext_server.rs",
+    "severity": "мелочь"
+   },
+   {
+    "dim": "security",
+    "title": "«Удалить все данные» стирает токен и флаг приёма, но сервер продолжает принимать записи со старым токеном",
+    "file": "src/db/seed.ts",
+    "severity": "средне"
+   },
+   {
+    "dim": "rust-shell",
+    "title": "Мини-окно создаётся скрытым с \"focus\": true: WebView2 при создании забирает фокус ввода у главного окна",
+    "file": "src-tauri/tauri.conf.json",
+    "severity": "средне"
+   },
+   {
+    "dim": "rust-shell",
+    "title": "Автозапуск в режиме Dynamic: из процесса с правами администратора запись уходит в HKLM, и выключить её из приложения уже нельзя",
+    "file": "src-tauri/src/shell.rs",
+    "severity": "средне"
+   },
+   {
+    "dim": "ui",
+    "title": "«Удалить все данные» не останавливает приём от расширения: сервер продолжает принимать записи со старым токеном, а настройки показывают «Выключено»",
+    "file": "src/views/settings/DataSection.tsx",
+    "severity": "средне"
+   },
+   {
+    "dim": "ui",
+    "title": "Мини-окно пропускает проверку дубля ссылки, если сохранить сразу после показа",
+    "file": "src/components/capture/CaptureForm.tsx",
+    "severity": "средне"
+   }
+  ],
+  "rejected": [],
+  "minor": [
+   {
+    "dim": "security",
+    "title": "Если accept() упал, приём умирает молча, а состояние остаётся «Принимает записи»",
+    "file": "src-tauri/src/ext_server.rs"
+   },
+   {
+    "dim": "rust-shell",
+    "title": "Пункт трея «Быстрая запись» молча ничего не делает, если мини-окно не создалось или не показалось",
+    "file": "src-tauri/src/shell.rs"
+   },
+   {
+    "dim": "rust-shell",
+    "title": "macOS: скрытое главное окно нельзя вернуть кликом по значку в Dock (нет обработки RunEvent::Reopen)",
+    "file": "src-tauri/src/lib.rs"
+   },
+   {
+    "dim": "rust-shell",
+    "title": "Подсказка к полю «Глобальное сочетание» описывает прежнее поведение",
+    "file": "src/views/settings/QuickCaptureSection.tsx"
+   },
+   {
+    "dim": "ui",
+    "title": "Мини-окно читает все записи и строит полный поисковый индекс, который ему не нужен",
+    "file": "src/hooks/useItems.ts"
+   },
+   {
+    "dim": "ui",
+    "title": "Флаги трея и мини-окна из импортированной копии не применяются в Rust до перезапуска",
+    "file": "src/views/settings/DataSection.tsx"
+   },
+   {
+    "dim": "ui",
+    "title": "Отказ при смене порта: поле продолжает показывать непринятый порт, ошибка — только во всплывающем сообщении",
+    "file": "src/views/settings/QuickCaptureSection.tsx"
+   },
+   {
+    "dim": "ui",
+    "title": "Потеря фокуса мини-окном с прикреплёнными файлами переключает вопрос «Закрыть?» туда и обратно",
+    "file": "src/components/capture/CaptureWindowApp.tsx"
+   },
+   {
+    "dim": "ui",
+    "title": "Устаревшие и вводящие в заблуждение тексты секции «Быстрый захват»",
+    "file": "src/lib/shellUi.ts"
+   }
+  ]
+ },
+ "fixes": [
+  {
+   "group": "rust",
+   "count": 7,
+   "summary": "All 7 rust-group findings were handled. Six have direct fixes. Finding 5 needed no separate change because the finding 1 rewrite removes the cause.\n\nThe extension server (src-tauri/src/ext_server.rs) no longer uses tiny_http. It runs its own small server on std::net with these limits:\n- The listener is non-blocking and polled every 50 ms. An accept error now means a short pause and another try, not an exit, which also fixes finding 5.\n- At most MAX_CONN=8 connections at a time, each in its own thread. A guard object releases the slot when the thread ends. Connections over the limit are closed immediately.\n- Headers are limited to 8 KB (over that the server answers 431). Headers, body and response each get a 5 s deadline for the whole operation, not per read.\n- The body is read only after steps 1–9, so a huge Content-Length gets 413 without reading.\n- Every response carries Connection: close. After a response the server throws away at most 2 MB of the unread request, for at most 1 s, so the client can still read the answer.\n- mem::forget, send() and the drainer threads are gone.\n- The rate limit now runs after the token check, so requests without a valid token no longer use up the shared window.\n\nThe capture window is created with \"focus\": false in the config and with focused(false) in create_capture. The main window is created the same way when started with --autostart.\n\nAutostart no longer goes through the plugin. It calls auto-launch 0.6 directly in CurrentUser mode with a quoted exe path. If an HKLM entry is still there after disable(), set_autostart now returns an error instead of a silent Ok.\n\nThe tray \"Быстрая запись\" item now falls back to the main window when the capture window fails. On macOS, a Dock click (RunEvent::Reopen) shows the main window when it is hidden or minimized.\n\nNew tests:\n- server: no_leak_on_huge_length, slow_clients_bounded, header_too_large, unauth_does_not_consume_rate, plus tests for parsing, malformed requests, Expect: 100-continue and response format. huge_declared_length_does_not_crash now expects a 413 response and checks that the connection counter returns to 0.\n- shell: config focus check, quoted path, the error when the HKLM entry stays, and the tray fallback. An #[ignore] HKCU-only test exists but was not run because it writes to the user's registry.\n\nChecks: cargo check --all-targets has no warnings. cargo test passes (115 + 42 + 13; the ext_server tests were run 5 times and stayed stable). npm run typecheck passes, and npm test passes (82 files, 2381 tests).\n\nNot verified: the macOS-only code (cfg target_os = \"macos\") was never compiled on this Windows machine. The Reopen handler (finding 7) has no automated test.",
+   "fixed": [
+    "1: ext_server.rs — tiny_http and mem::forget replaced by a std::net server: at most 8 connections (MAX_CONN, guard-counted), headers limited to 8 KB (else 431), 5 s deadlines for headers, body and write; 411/413 before reading the body; Connection: close plus bounded linger; tiny_http removed from Cargo.toml; tests no_leak_on_huge_length, slow_clients_bounded, header_too_large; huge_declared_length_does_not_crash now expects 413 and an active_connections() return to 0",
+    "2: ext_server.rs — rate step moved after the token, so only valid-token requests count; tests unauth_does_not_consume_rate and an extended row5_rate_limit. The suggested fail_rate was deliberately not added: brute-forcing the token is impossible, and an extension with an outdated token would get 429 instead of 401",
+    "3: tauri.conf.json focus:false for the capture window; shell.rs create_capture uses .visible(false).focused(false) with an explanation; test capture_window_config_does_not_take_focus. Also: in lib.rs the hidden main window started with --autostart is built focused(false)",
+    "4: tauri-plugin-autostart replaced by auto-launch 0.6 (shell::Autostart, WindowsEnableMode::CurrentUser, quoted exe path; macOS LaunchAgent as in the plugin); set_autostart(false) returns Err if the entry is still present after disable (HKLM); tests autostart_path_is_quoted, autostart_disable_reports_stuck_entry, and #[ignore] autostart_writes_current_user_only (not run)",
+    "5: covered by the new accept loop — an accept error pauses and continues instead of break, so status() stays accurate",
+    "6: shell.rs tray_capture goes through capture_or_main: if the capture window fails, it shows the main window and emits open-capture; test tray_capture_falls_back_to_main",
+    "7: lib.rs uses .build().run(shell::on_run_event); on macOS RunEvent::Reopen shows the main window if it is hidden or minimized (no test: no pure logic, and macOS code is not compiled on Windows)"
+   ],
+   "skipped": [
+    ".progress/spec-tauri.md is outside the rust group. Needed edits: line 779 'tiny_http = \"0.12\"' → own server on std::net::TcpListener; lines 806 and 1352–1353: swap the Rate and Authorization rows, rate row text 'не больше 30 запросов с верным токеном за 10 с (неверный токен — 401 раньше и в счёт не идёт)'; line 912 'Обработка запросов последовательная (один поток)' → 'соединения параллельно, не больше MAX_CONN = 8, лишние закрываются сразу'; line 618 '\"focus\": true' → '\"focus\": false'; lines 605/734/949/1078/1605/1615/1700: tauri-plugin-autostart → direct auto-launch = \"0.6\" (CurrentUser, quoted path, Err if an HKLM entry remains), remove tiny_http mentions (950/956/1078/1604/1615/1618/1700); replace lines 1027–1028 with the new limits (8 connections, headers ≤ 8 KB → 431, 5 s for headers/body/write, 413 without reading the body, linger ≤ 2 MB / 1 s; a local program can occupy all 8 slots without resources piling up — accepted); line 1336 'Один поток обработки (qd-ext-http): recv_timeout…' → 'Поток приёма qd-ext-http (неблокирующий accept раз в 50 мс) и поток на каждое соединение'. The same text is in .progress/agents/fix-review7-rust.md",
+    "Finding 2, separate fail_rate limiter for a wrong token: not added on purpose (no benefit: a 43-character token cannot be brute-forced; harm: when a foreign page fills the window, an extension with an outdated token would get 429 'Слишком часто' instead of a clear 401). Finding 2, second part ('a page can tell QuickDrop is running'): the verifier is right that this is a property of any local server, mitigated by Local Network Access, not a code defect",
+    "Finding 4, #[ignore] test autostart_writes_current_user_only: written but not run (it writes to the user's HKCU registry); run manually: cargo test -- --ignored"
+   ]
+  },
+  {
+   "group": "web",
+   "count": 9,
+   "summary": "All 9 findings in the web group are closed. Findings 1 and 2 were duplicates and were fixed once. \"Delete all data\" now stops the browser-extension receiver: new clearAllDataAndStopExtension in src/lib/dataDesktop.ts, which calls stopExtensionServer in desktop.ts. As a second safeguard, extInbox.drainOnce reads extEnabled and replies ok:false «Приём выключен» to every message without creating records. If the settings cannot be read, it also refuses. The mini window no longer misses a duplicate link right after it is shown: the check goes through findDuplicateLinkNow, which uses the snapshot when there is one and otherwise queries the database. Wiki-links without a snapshot now read the live records through repo.listLiveItems. The mini window no longer builds the search index. Changed texts: the global shortcut hint now depends on the mini-window toggle; install step 2 now says the extension folder comes from the source code; README has a new «Быстрый захват» section. Import with \"Replace\" applies the tray and mini-window flags in Rust right away. When a new port is rejected, the error now shows under the field and the status row is re-read from Rust. Along the way: the global shortcut field used to show «Сохранено» even when it failed; that is fixed. Losing focus no longer flips the «Закрыть?» question back and forth (hideOnBlur plus autoHideRef). typecheck passes; npm test: 82 files, 2381 tests, all green. Rust was not changed, so cargo was not run. Report: .progress\\agents\\fix-review7-web.md.",
+   "fixed": [
+    "1+2: «Удалить все данные» останавливает приём: clearAllDataAndStopExtension (src/lib/dataDesktop.ts) + stopExtensionServer (desktop.ts), вызов в DataSection.doClear; второй рубеж в extInbox.drainOnce (extEnabled!==true или ошибка настроек → ok:false «Приём выключен», записи не создаются). Тесты: dataDesktop.test.ts, extInbox.test.ts",
+    "3: дубль ссылки в мини-окне — findDuplicateLinkNow (actions.ts: снимок или repo.findDuplicateLink), используется в CaptureForm.save; actApplyWikiLinks без снимка читает repo.listLiveItems (новый экспорт). Тесты в actions.test.ts, прежний тест «снимка нет → []» переписан",
+    "4+9 (подсказка): подсказка глобального сочетания зависит от settings.captureWindow (shellUi.globalShortcutHint); README: исправлен абзац про сочетание",
+    "5: мини-окно не строит индекс поиска (useItems: schedulePrepareIndex только вне isCaptureWindow); тест в useItems.test.ts проверен на падение без правки",
+    "6: импорт «Заменить» сразу применяет closeToTray/captureWindow в Rust (applyImportedShellSettings в DataSection.doImport, toast при отказе); тест в dataDesktop.test.ts",
+    "7: CommitInput.inlineCommitError — отказ onCommit под полем (aria-invalid), отвергнутое значение не отправляется повторно при blur; commitPort при отказе перечитывает состояние из Rust, текст shellUi.portRejectedText; попутно поле глобального сочетания больше не показывает «Сохранено» при отказе",
+    "8: потеря фокуса не переключает вопрос «Закрыть?»: captureWindow.hideOnBlur + необязательный проп CaptureForm.autoHideRef (!saving && !hasFiles); тест в captureWindow.test.ts",
+    "9 (шаг установки): шаг 2 — «папку extension из исходников QuickDrop (в установщик она не входит)»; в README добавлен раздел «Быстрый захват (настольная версия)»; тест в shellUi.test.ts"
+   ],
+   "skipped": [
+    "1, вариант 3 (useEffect в ExtensionBlock на settings.extEnabled): не сделан, потому что вреден. toggleEnabled(on) сначала запускает сервер, затем пишет extEnabled=true. Эффект, увидевший устаревшее extEnabled=false при status.running=true, остановил бы только что включённый приём. Расхождение и так закрыто остановкой при стирании и проверкой в extInbox.",
+    "5, вторая часть (повторное полное чтение таблицы при каждом показе мини-окна после паузы 2 с): не делалось. TagInput через useAllTags всё равно нужен полный снимок, а постоянная подписка в скрытом окне читала бы таблицу на каждую мутацию главного окна."
+   ]
+  }
+ ],
+ "checks": {
+  "typecheck": "чисто (npm run typecheck: tsc -b, без ошибок, код выхода 0)",
+  "tests": "чисто: 82 файла тестов, 2381 тест, все прошли, упавших нет (npm test / vitest run, код выхода 0)",
+  "cargo": "прошло 170, упало 0 (lib 115 прошло / 2 игнорировано; ext_server_module 42 прошло; shell_module 13 прошло / 1 игнорирован; main и doc-tests без тестов). Ошибок компиляции нет, предупреждений 0. Код выхода 0.",
+  "version": "Версия 0.1.0: согласовано</version>\n</invoke>\n\n"
+ }
+}

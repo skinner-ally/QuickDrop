@@ -199,8 +199,16 @@ export interface Settings {
   /** Модель со зрением для распознавания. Пусто — использовать aiModel. */
   aiVisionModel: string
 
-  /** Этап 7 (Tauri). Закрытие окна сворачивает в трей, а не завершает приложение. */
+  /**
+   * Этап 7 (Tauri). Крестик главного окна прячет его в трей, а не завершает приложение.
+   * По умолчанию выключено: без ведома пользователя закрытие ведёт себя как раньше.
+   */
   closeToTray: boolean
+  /**
+   * Этап 7 (Tauri). Глобальное сочетание из другой программы открывает мини-окно быстрой записи;
+   * выключено — поднимается главное окно с диалогом добавления.
+   */
+  captureWindow: boolean
   /** Приём записей от расширения браузера (локальный сервер на 127.0.0.1). */
   extEnabled: boolean
   extPort: number
@@ -229,7 +237,8 @@ export const DEFAULT_SETTINGS: Settings = {
   mdExportDir: '',
   aiAutoOcr: false,
   aiVisionModel: '',
-  closeToTray: true,
+  closeToTray: false,
+  captureWindow: true,
   extEnabled: false,
   extPort: 47821,
   extToken: '',

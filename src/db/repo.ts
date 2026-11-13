@@ -973,6 +973,14 @@ export async function findDuplicateLink(url: string, excludeId?: string): Promis
   return findDuplicateLinkIn(await db.items.where('type').equals('link').toArray(), url, excludeId)
 }
 
+/**
+ * Записи вне корзины прямым чтением таблицы — для мест, где общего снимка (hooks/useItems) ещё нет:
+ * мини-окно читает его заново после каждого показа.
+ */
+export async function listLiveItems(): Promise<Item[]> {
+  return db.items.filter((it) => it.deletedAt === undefined).toArray()
+}
+
 // ───────────────────────── сортировка (чистая) ─────────────────────────
 // matchesFilter — в lib/filter (реэкспорт в начале файла).
 

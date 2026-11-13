@@ -5,13 +5,15 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { clearAllData, seedDemoData } from '@/db/seed'
+import { seedDemoData } from '@/db/seed'
 import { setSetting, useSettings } from '@/db/settings'
 import { useAllItems, useTrashedItems } from '@/hooks/useItems'
 import { actEmptyTrashAsk, saveBlob } from '@/lib/actions'
+import { applyImportedShellSettings, clearAllDataAndStopExtension } from '@/lib/dataDesktop'
 import { describeError } from '@/lib/errors'
 import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from '@/lib/exportImport'
 import { formatBytes } from '@/lib/itemTitle'
+import { isTauri } from '@/lib/platform'
 import { TRASH_DAYS_OPTIONS, trashDaysLabel } from '@/lib/trash'
 import { Row, Section, saved } from './Section'
 
@@ -135,6 +137,12 @@ export function DataSection() {
     void run('import', async () => {
       const r = await importBackup(file, mode)
       setReport(r)
+      // «Заменить» переносит флаги трея и мини-окна и глобальное сочетание: оболочка узнаёт их только из команд.
+      if (mode === 'replace' && isTauri()) {
+        const shell = await applyImportedShellSettings()
+        if (!shell.shellOk) toast.error('Настройки окна из копии вступят в силу при следующем запуске')
+        if (shell.shortcutError) toast.error(shell.shortcutError)
+      }
     })
   }
 
@@ -146,10 +154,11 @@ export function DataSection() {
 
   const doClear = () =>
     run('clear', async () => {
-      await clearAllData()
+      const stopError = await clearAllDataAndStopExtension()
       setClearOpen(false)
       setConfirmWord('')
       toast.success('Все данные удалены', { duration: 2000 })
+      if (stopError) toast.error(stopError)
     })
 
   const canClear = confirmWord.trim().toLowerCase() === 'удалить'
@@ -298,7 +307,8 @@ export function DataSection() {
             <DialogTitle>Удалить все данные?</DialogTitle>
             <DialogDescription>
               Все записи, файлы и категории, а также ключ API, настройки ИИ-помощника и адрес прокси будут удалены с
-              этого устройства без возможности восстановления. Сначала сделайте экспорт, если данные нужны. Для
+              этого устройства без возможности восстановления.
+              {isTauri() && ' Приём записей от расширения браузера выключится, его токен будет удалён.'} Сначала сделайте экспорт, если данные нужны. Для
               подтверждения введите слово «удалить».
             </DialogDescription>
           </DialogHeader>

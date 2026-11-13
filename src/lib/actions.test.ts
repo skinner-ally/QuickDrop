@@ -44,6 +44,7 @@ import {
   actUnlinkItems,
   applyWikiLinks,
   createAndEnrich,
+  findDuplicateLinkNow,
   openLink,
   isLinkMetaLoading,
   openItemInSection,
@@ -658,6 +659,25 @@ describe('подтверждения окончательного удалени
   })
 })
 
+describe('findDuplicateLinkNow', () => {
+  it('снимок есть — проверка по нему', async () => {
+    const old = await createItem({ type: 'link', url: 'https://example.com/a' })
+    mocks.allSnapshot.mockReturnValue([old])
+    expect((await findDuplicateLinkNow('https://www.example.com/a/'))?.id).toBe(old.id)
+    mocks.allSnapshot.mockReturnValue([])
+    expect(await findDuplicateLinkNow('https://example.com/a')).toBeUndefined()
+  })
+
+  it('снимка нет — дубль находится запросом к базе, а не по пустому списку', async () => {
+    const old = await createItem({ type: 'link', url: 'https://example.com/a' })
+    mocks.allSnapshot.mockReturnValue(undefined)
+    expect((await findDuplicateLinkNow('https://example.com/a?utm_source=x'))?.id).toBe(old.id)
+    expect(await findDuplicateLinkNow('https://example.com/b')).toBeUndefined()
+    await deleteItems([old.id])
+    expect(await findDuplicateLinkNow('https://example.com/a')).toBeUndefined()
+  })
+})
+
 describe('actApplyWikiLinks', () => {
   const all = () => db.items.toArray()
 
@@ -691,12 +711,19 @@ describe('actApplyWikiLinks', () => {
     expect(mocks.toast).not.toHaveBeenCalled()
   })
 
-  it('снимка нет или в тексте нет «[[» — ничего', async () => {
+  it('снимка нет (мини-окно сразу после показа) — записи читаются из базы, корзина не в счёт', async () => {
+    const self = await createItem({ type: 'text', title: 'Заметка', content: '' })
+    const alpha = await note('Альфа')
+    const trashed = await note('Бета')
+    await deleteItems([trashed.id])
+    mocks.allSnapshot.mockReturnValue(undefined)
+    expect(await actApplyWikiLinks(self.id, '[[Альфа]] [[Бета]]', { silent: true })).toEqual([alpha.id])
+    expect((await getItem(self.id))!.links).toEqual([alpha.id])
+  })
+
+  it('в тексте нет «[[» — ничего', async () => {
     const self = await createItem({ type: 'text', title: 'Заметка', content: '' })
     await note('Альфа')
-    expect(await actApplyWikiLinks(self.id, '[[Альфа]]')).toEqual([])
-    expect((await getItem(self.id))!.links).toEqual([])
-
     mocks.allSnapshot.mockReturnValue(await all())
     mocks.allSnapshot.mockClear()
     expect(await actApplyWikiLinks(self.id, 'Альфа без скобок')).toEqual([])

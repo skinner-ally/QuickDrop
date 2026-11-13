@@ -7,11 +7,13 @@ import {
   deleteItems,
   deleteSavedSearch,
   emptyTrash,
+  findDuplicateLink,
   getFile,
   getItem,
   getPositions,
   linkItems,
   listCategories,
+  listLiveItems,
   listSavedSearches,
   purgeItems,
   reorderSavedSearches,
@@ -28,6 +30,7 @@ import {
 } from '@/db/repo'
 import { getSettings } from '@/db/settings'
 import { getAllItemsSnapshot, getTrashedItemsSnapshot } from '@/hooks/useItems'
+import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
 import { displayTitle } from '@/lib/itemTitle'
 import { fetchLinkMeta } from '@/lib/linkMeta'
@@ -447,7 +450,17 @@ export async function applyWikiLinks(itemId: string, content: string, items: rea
 }
 
 /**
- * applyWikiLinks по снимку записей (getAllItemsSnapshot); снимка нет или в тексте нет «[[» → [].
+ * Дубль ссылки перед сохранением: по общему снимку, если он есть, иначе запросом к базе. Снимка нет сразу
+ * после показа мини-окна (он сбрасывается через 2 с после скрытия), а «сочетание → вставка → Enter»
+ * укладывается в это время — проверка по пустому снимку пропустила бы дубль. Ошибку чтения пробрасывает.
+ */
+export async function findDuplicateLinkNow(url: string): Promise<Item | undefined> {
+  const snapshot = getAllItemsSnapshot()
+  return snapshot ? findDuplicateLinkIn(snapshot, url) : findDuplicateLink(url)
+}
+
+/**
+ * applyWikiLinks по снимку записей (getAllItemsSnapshot; снимка нет — прямое чтение); в тексте нет «[[» → [].
  * Сообщает о новых связях, если не silent: «Добавлена связь: «<заголовок>»» / «Добавлено связей: N».
  */
 export async function actApplyWikiLinks(
@@ -456,7 +469,8 @@ export async function actApplyWikiLinks(
   options: { silent?: boolean } = {},
 ): Promise<string[]> {
   if (typeof content !== 'string' || !mayHaveWikiLinks(content)) return []
-  const items = getAllItemsSnapshot()
+  // Снимка нет (мини-окно сразу после показа) — читаем записи сами, иначе связи молча не создались бы.
+  const items = getAllItemsSnapshot() ?? (await safe(listLiveItems))
   if (!items) return []
   const added = await applyWikiLinks(itemId, content, items)
   if (added.length === 0 || options.silent) return added

@@ -10,6 +10,7 @@
 @source not "../.progress";
 @source not "../docs";
 @source not "../mockup";
+@source not "../extension";
 
 @custom-variant dark (&:is(.dark *));
 @custom-variant pixel (&:is(.pixel *));

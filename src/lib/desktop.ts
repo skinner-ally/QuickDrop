@@ -3,7 +3,17 @@ import { getSettings } from '@/db/settings'
 import { dirsInUse } from '@/lib/backupUi'
 import { invokeChunked, ipcError, type InvokeFn } from '@/lib/ipc'
 import { isTauri } from '@/lib/platform'
+import {
+  isExtensionToken,
+  tokenFromBytes,
+  validateExtPort,
+  type AutostartState,
+  type ExtServerStatus,
+} from '@/lib/shellUi'
 import { useUi } from '@/store/ui'
+import { DEFAULT_SETTINGS, type Settings } from '@/types'
+
+export type { ExtServerStatus, AutostartState } from '@/lib/shellUi'
 
 /** Сочетание из настроек, которое не удалось зарегистрировать при запуске (занято другой программой). */
 let failedShortcut: string | null = null
@@ -25,15 +35,50 @@ async function raiseWindow(): Promise<void> {
   await win.setFocus()
 }
 
+/** Прежнее поведение сочетания: поднять главное окно и открыть в нём диалог добавления. */
+function captureInMainWindow(): void {
+  void raiseWindow()
+    .catch((err) => console.warn('[desktop] не удалось показать окно', err))
+    .finally(() => useUi.getState().openCapture())
+}
+
+/**
+ * Нажатие глобального сочетания. Из другой программы (главное окно не в фокусе) при включённом мини-окне
+ * показывает или прячет мини-окно; иначе, а также если мини-окно не открылось, — прежний диалог.
+ */
+async function onGlobalShortcut(): Promise<void> {
+  let mini = false
+  try {
+    mini = (await getSettings()).captureWindow && !document.hasFocus()
+  } catch {
+    /* настройки не прочитаны — как раньше */
+  }
+  if (mini) {
+    try {
+      await toggleCaptureWindow()
+      return
+    } catch (err) {
+      console.warn('[desktop] мини-окно не открылось, открываем главное', err)
+    }
+  }
+  captureInMainWindow()
+}
+
+/**
+ * Сочетание, которое сейчас действительно зарегистрировано (null — никакого). Нужно для отката: после импорта
+ * копии в настройках уже новое значение, и прежнее оттуда не узнать.
+ */
+let activeShortcut: string | null = null
+
 async function registerShortcut(shortcut: string): Promise<void> {
   const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut')
   await unregisterAll()
+  activeShortcut = null
   await register(shortcut, (e) => {
     if (e.state !== 'Pressed') return
-    void raiseWindow()
-      .catch((err) => console.warn('[desktop] не удалось показать окно', err))
-      .finally(() => useUi.getState().openCapture())
+    void onGlobalShortcut()
   })
+  activeShortcut = shortcut
 }
 
 /** Итог скачивания из Rust (lib.rs, событие download-finished). */
@@ -58,25 +103,80 @@ async function listenDownloads(): Promise<void> {
   })
 }
 
+/** Открыть в главном окне запись по id (событие open-item от Rust: «Открыть» у дубля в мини-окне). */
+async function openItemById(id: string): Promise<void> {
+  try {
+    // Динамически: actions.ts сам импортирует этот модуль.
+    const [{ getItem }, { openItemInSection }] = await Promise.all([import('@/db/repo'), import('./actions')])
+    const item = await getItem(id)
+    if (!item) {
+      toast.error('Запись не найдена')
+      return
+    }
+    openItemInSection(item)
+  } catch (err) {
+    console.warn('[desktop] не удалось открыть запись', err)
+  }
+}
+
 /**
- * Инициализация desktop-оболочки: глобальное сочетание из настроек, сверка подтверждённых папок, автокопии.
- * Вне Tauri ничего не делает.
+ * События, адресованные главному окну (emit_to("main", …)). Подписка окна, а не глобальная: глобальный listen
+ * получил бы и события, адресованные другим окнам.
+ */
+async function listenWindowEvents(): Promise<void> {
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+  const win = getCurrentWebviewWindow()
+  await win.listen('open-capture', () => useUi.getState().openCapture())
+  await win.listen<{ id?: unknown } | null>('open-item', ({ payload }) => {
+    const id = payload?.id
+    if (typeof id === 'string' && id) void openItemById(id)
+  })
+}
+
+/** Запуск приёма от расширения при старте; не запустился — toast со ссылкой на настройки. */
+async function startExtensionServer(settings: Settings): Promise<void> {
+  const status = await applyExtensionServer(settings)
+  if (status.running) return
+  toast.error('Приём от расширения не запущен', {
+    description: status.error,
+    duration: 10_000,
+    action: { label: 'Настройки', onClick: () => useUi.getState().setView('settings') },
+  })
+}
+
+/**
+ * Инициализация desktop-оболочки главного окна: подписки окна, флаги трея и мини-окна, приём от расширения,
+ * глобальное сочетание из настроек, сверка подтверждённых папок, автокопии. Вне Tauri ничего не делает.
+ * Мини-окно её не вызывает.
  */
 export async function initDesktop(): Promise<void> {
   if (!isTauri()) return
   void listenDownloads().catch((err) => console.warn('[desktop] не удалось подписаться на скачивания', err))
+  void listenWindowEvents().catch((err) => console.warn('[desktop] не удалось подписаться на события окна', err))
   void reconcileApprovedDirs()
   // Динамический импорт: autoBackup.ts сам импортирует этот модуль.
   void import('./autoBackup')
     .then((m) => m.initAutoBackup())
     .catch((err) => console.warn('[desktop] не удалось запустить автоматическое копирование', err))
-  let shortcut = ''
+  let settings: Settings
   try {
-    shortcut = (await getSettings()).globalShortcut
-    if (shortcut) await registerShortcut(shortcut)
+    settings = await getSettings()
+  } catch (err) {
+    console.warn('[desktop] настройки не прочитаны', err)
+    return
+  }
+  void applyShellOptions(settings)
+  if (settings.extEnabled) {
+    void startExtensionServer(settings).catch((err) =>
+      console.warn('[desktop] не удалось запустить приём от расширения', err),
+    )
+  }
+  const shortcut = settings.globalShortcut
+  if (!shortcut) return
+  try {
+    await registerShortcut(shortcut)
   } catch (err) {
     console.warn('[desktop] не удалось зарегистрировать глобальное сочетание', err)
-    if (!shortcut) return
     failedShortcut = shortcut
     toast.error(`Сочетание ${shortcut} не назначено`, {
       description: 'Скорее всего, его заняла другая программа. Выберите другое в настройках.',
@@ -108,6 +208,37 @@ export async function applyGlobalShortcut(shortcut: string): Promise<{ ok: boole
       /* ignore */
     }
     return { ok: false, error: 'Сочетание занято другой программой или записано неверно' }
+  }
+}
+
+/**
+ * Применить сочетание, уже записанное в настройки в обход поля (импорт копии с заменой). Совпадает с
+ * действующим — ничего не делает. Не назначилось — возвращает действовавшее прежде и помечает новое
+ * неприменённым (globalShortcutFailure), чтобы поле в настройках это показало. Не бросает.
+ */
+export async function reapplyGlobalShortcut(next: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isTauri()) return { ok: true }
+  const value = typeof next === 'string' ? next.trim() : ''
+  const prev = activeShortcut
+  if (!value || value === prev) return { ok: true }
+  try {
+    await registerShortcut(value)
+    failedShortcut = null
+    return { ok: true }
+  } catch (err) {
+    console.warn('[desktop] сочетание из копии не зарегистрировано', err)
+    if (prev) {
+      try {
+        await registerShortcut(prev)
+      } catch {
+        /* ignore */
+      }
+    }
+    failedShortcut = value
+    return {
+      ok: false,
+      error: `Сочетание ${value} из копии не назначено: занято другой программой или записано неверно`,
+    }
   }
 }
 
@@ -278,6 +409,167 @@ export async function writeExportFile(
     // Остаток .qdpart экспорта никто, кроме этой команды, не уберёт: write_export_file такие имена отклоняет.
     discard: () => invoke<boolean>('discard_export_part', { dir, relPath }),
   })
+}
+
+// ───────────────────────── этап 7: оболочка и приём от расширения ─────────────────────────
+
+/** Новый токен расширения: 32 байта crypto.getRandomValues → base64url (43 символа). */
+export function generateExtensionToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return tokenFromBytes(bytes)
+}
+
+/**
+ * set_shell_options: флаги трея (крестик прячет окно) и мини-окна (Rust создаёт или убирает скрытое окно).
+ * Не бросает; false — вне Tauri или отказ команды.
+ */
+export async function applyShellOptions(s: Pick<Settings, 'closeToTray' | 'captureWindow'>): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    const invoke = await desktopInvoke()
+    await invoke('set_shell_options', {
+      closeToTray: s.closeToTray === true,
+      captureWindow: s.captureWindow === true,
+    })
+    return true
+  } catch (err) {
+    console.warn('[desktop] не удалось применить настройки окна', err)
+    return false
+  }
+}
+
+/** toggle_capture_window: показать мини-окно или спрятать видимое. true — показано. Бросает Error при отказе. */
+export async function toggleCaptureWindow(): Promise<boolean> {
+  const invoke = await desktopInvoke()
+  try {
+    return (await invoke<boolean>('toggle_capture_window')) === true
+  } catch (e) {
+    throw ipcError(e, 'Не удалось показать окно быстрой записи')
+  }
+}
+
+/** show_main_window: показать и сфокусировать главное окно (в т.ч. спрятанное в трей). Не бросает. */
+export async function showMainWindow(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    const invoke = await desktopInvoke()
+    await invoke('show_main_window')
+  } catch (err) {
+    console.warn('[desktop] не удалось показать главное окно', err)
+  }
+}
+
+/** open_in_main: показать главное окно и открыть в нём запись (вызывает мини-окно). Не бросает. */
+export async function openInMain(id: string): Promise<void> {
+  if (!isTauri() || typeof id !== 'string' || !id) return
+  try {
+    const invoke = await desktopInvoke()
+    await invoke('open_in_main', { id })
+  } catch (err) {
+    console.warn('[desktop] не удалось открыть запись в главном окне', err)
+  }
+}
+
+/** quit_app: завершить приложение целиком (в т.ч. из трея). Вне Tauri ничего не делает; отказ команды → Error. */
+export async function quitApp(): Promise<void> {
+  if (!isTauri()) return
+  const invoke = await desktopInvoke()
+  try {
+    await invoke('quit_app')
+  } catch (e) {
+    throw ipcError(e, 'Не удалось завершить приложение')
+  }
+}
+
+/** Состояние автозапуска из системы. Вне Tauri и при ошибке — { enabled: false, available: false, reason }. Не бросает. */
+export async function getAutostart(): Promise<AutostartState> {
+  if (!isTauri()) return { enabled: false, available: false, reason: DESKTOP_ONLY_MESSAGE }
+  try {
+    const invoke = await desktopInvoke()
+    const r = await invoke<Partial<AutostartState> | null>('get_autostart')
+    const state: AutostartState = { enabled: r?.enabled === true, available: r?.available === true }
+    if (typeof r?.reason === 'string' && r.reason) state.reason = r.reason
+    return state
+  } catch (e) {
+    return {
+      enabled: false,
+      available: false,
+      reason: ipcError(e, 'Не удалось узнать состояние автозапуска').message,
+    }
+  }
+}
+
+/** set_autostart. Не бросает: отказ (в т.ч. вне Tauri и в отладочной сборке) → { ok: false, error }. */
+export async function setAutostart(on: boolean): Promise<{ ok: boolean; error?: string }> {
+  if (!isTauri()) return { ok: false, error: DESKTOP_ONLY_MESSAGE }
+  try {
+    const invoke = await desktopInvoke()
+    await invoke('set_autostart', { enabled: on === true })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: ipcError(e, 'Не удалось изменить автозапуск').message }
+  }
+}
+
+const EXT_STOPPED: ExtServerStatus = { running: false, port: null }
+
+/** Ответ Rust (ExtStatus) → ExtServerStatus без лишних полей. */
+function extStatusFrom(r: unknown): ExtServerStatus {
+  const v = (r ?? {}) as { running?: unknown; port?: unknown }
+  return {
+    running: v.running === true,
+    port: typeof v.port === 'number' && Number.isInteger(v.port) ? v.port : null,
+  }
+}
+
+/**
+ * ext_server_apply: запустить, перезапустить с новым портом или токеном, остановить приём от расширения.
+ * Вне Tauri, без годного токена или порта при extEnabled, при отказе команды — { running: false, port: null, error }:
+ * негодный токен в Rust не уходит. Не бросает.
+ */
+export async function applyExtensionServer(
+  s: Pick<Settings, 'extEnabled' | 'extPort' | 'extToken'>,
+): Promise<ExtServerStatus> {
+  if (!isTauri()) return { ...EXT_STOPPED, error: DESKTOP_ONLY_MESSAGE }
+  const enabled = s.extEnabled === true
+  const portOk = typeof s.extPort === 'number' && validateExtPort(String(s.extPort)) === null
+  if (enabled) {
+    if (!isExtensionToken(s.extToken)) return { ...EXT_STOPPED, error: 'Токен расширения не создан' }
+    if (!portOk) return { ...EXT_STOPPED, error: 'Порт должен быть от 1024 до 65535' }
+  }
+  try {
+    const invoke = await desktopInvoke()
+    const r = await invoke<unknown>('ext_server_apply', {
+      enabled,
+      // Для остановки порт и токен не важны: токен при выключении не передаём вовсе.
+      port: portOk ? s.extPort : DEFAULT_SETTINGS.extPort,
+      token: enabled ? s.extToken : '',
+    })
+    return extStatusFrom(r)
+  } catch (e) {
+    return {
+      ...EXT_STOPPED,
+      error: ipcError(e, enabled ? 'Не удалось запустить приём от расширения' : 'Не удалось остановить приём от расширения')
+        .message,
+    }
+  }
+}
+
+/** Остановить приём от расширения: порт и токен для остановки не нужны. Не бросает (см. applyExtensionServer). */
+export function stopExtensionServer(): Promise<ExtServerStatus> {
+  return applyExtensionServer({ extEnabled: false, extPort: DEFAULT_SETTINGS.extPort, extToken: '' })
+}
+
+/** ext_server_status. Вне Tauri и при отказе — { running: false, port: null, error }. Не бросает. */
+export async function getExtServerStatus(): Promise<ExtServerStatus> {
+  if (!isTauri()) return { ...EXT_STOPPED, error: DESKTOP_ONLY_MESSAGE }
+  try {
+    const invoke = await desktopInvoke()
+    return extStatusFrom(await invoke<unknown>('ext_server_status'))
+  } catch (e) {
+    return { ...EXT_STOPPED, error: ipcError(e, 'Не удалось узнать состояние приёма').message }
+  }
 }
 
 /** Показать файл или папку в проводнике. false — вне Tauri или не удалось. Никогда не бросает. */

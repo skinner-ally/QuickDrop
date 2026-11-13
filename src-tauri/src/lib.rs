@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod backup;
+mod ext_server;
+mod shell;
 
 const MAX_BYTES: usize = 512 * 1024;
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
@@ -293,7 +295,8 @@ fn download_handler<R: tauri::Runtime>(
 
 /// Главное окно создаётся здесь, а не из конфига автоматически (`create: false`):
 /// обработчик скачиваний задаётся только при создании окна.
-fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
+/// `hidden` — запуск при входе в систему (`--autostart`): окно создаётся скрытым, его показывает трей.
+fn create_main_window(app: &tauri::App, hidden: bool) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -303,6 +306,8 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
         .cloned()
         .ok_or(tauri::Error::WindowNotFound)?;
     let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    // Скрытое окно не забирает ввод при создании (WebView2 переводит фокус даже в невидимое окно).
+    let builder = if hidden { builder.visible(false).focused(false) } else { builder };
     // Windows (WebView2) скачивает сам и показывает свою панель загрузок — его не трогаем.
     let builder = if cfg!(target_os = "macos") {
         builder.on_download(download_handler())
@@ -319,16 +324,13 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        use tauri::Manager;
+        // single-instance — первым: второй запуск exe не должен успеть поднять остальное.
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.unminimize();
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
+            .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+                shell::on_second_instance(app, &args)
             }))
             .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        // Автозапуск — без плагина, в shell::init (режим Windows только HKCU).
     }
 
     builder
@@ -339,9 +341,12 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             app.manage(backup::ApprovedDirs::load(config_dir.join("approved-dirs.json")));
             app.manage(backup::OwnBackups::load(config_dir.join("own-backups.json")));
-            create_main_window(app)?;
+            app.manage(ext_server::ExtServer::default());
+            shell::init(app)?;
+            create_main_window(app, shell::started_hidden())?;
             Ok(())
         })
+        .on_window_event(|window, event| shell::on_window_event(window, event))
         .invoke_handler(tauri::generate_handler![
             fetch_link_meta,
             backup::pick_directory,
@@ -351,10 +356,23 @@ pub fn run() {
             backup::prune_backups,
             backup::list_backups,
             backup::write_export_file,
-            backup::discard_export_part
+            backup::discard_export_part,
+            shell::set_shell_options,
+            shell::toggle_capture_window,
+            shell::capture_pointer_down,
+            shell::show_main_window,
+            shell::open_in_main,
+            shell::quit_app,
+            shell::get_autostart,
+            shell::set_autostart,
+            ext_server::ext_server_apply,
+            ext_server::ext_server_status,
+            ext_server::ext_take_pending,
+            ext_server::ext_capture_done
         ])
-        .run(tauri::generate_context!())
-        .expect("ошибка запуска QuickDrop");
+        .build(tauri::generate_context!())
+        .expect("ошибка запуска QuickDrop")
+        .run(|app, event| shell::on_run_event(app, &event));
 }
 
 #[cfg(test)]
