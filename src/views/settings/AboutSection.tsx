@@ -2,7 +2,7 @@ import { isTauri } from '@/lib/platform'
 import { Section } from './Section'
 
 export function AboutSection() {
-  const version = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? '0.1.0'
+  const version = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? '0.2.0'
   return (
     <Section id="about" title="О приложении">
       <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-2sm">
