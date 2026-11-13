@@ -13,7 +13,12 @@
   на ноде нет». `GraphNode.favorite`, темы `--graph-fav`/`--graph-fav-edge` (index.css — Классика, scenes.css — сцены),
   `drawNodes` шаг 5: пиксельная звезда 5×5 с контуром при масштабе k ≥ 0.75, золотой квадрат при 0.25 ≤ k < 0.75,
   ниже ничего. Тесты draw/scene/theme. НЕ ПРОВЕРЕНО глазами: Классика и дневные сцены (контраст — тестом).
-Проверки: typecheck чист, vitest 90 файлов / 2669 тестов, линт без ошибок. Версия по-прежнему 0.2.0, тег не ставился.
+Проверки: typecheck чист, vitest 90 файлов / 2669 тестов, линт без ошибок.
+Версия поднята до 0.2.1 (package.json, package-lock.json, tauri.conf.json, Cargo.toml, Cargo.lock, AboutSection;
+check-version v0.2.1 согласовано; extension/manifest.json остался 0.1.0). cargo test --locked 131. Собран
+src-tauri/target/release/bundle/nsis/QuickDrop_0.2.1_x64-setup.exe (3,36 МиБ, `npm run tauri build`, код выхода 0).
+«Прод» = установленное на этом ПК приложение (AppData\Local\QuickDrop, было 0.2.0). Установщик НЕ запускался:
+запущенное приложение закрывает пользователь (при «закрывать в трей» — «Выход» в меню трея). Тег не ставился, ничего не пушилось.
 
 ## После ревью: версия 0.2.0, новый CLAUDE.md (2026-11-13) — читать первым
 
