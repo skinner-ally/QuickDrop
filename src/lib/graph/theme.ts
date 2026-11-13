@@ -55,6 +55,8 @@ export function composeGraphTheme(pixel: boolean, read: GraphColorReader): Graph
     shadow: optional('--graph-shadow'),
     inbox: css('--graph-inbox'),
     inboxEdge: css('--graph-inbox-edge'),
+    fav: css('--graph-fav'),
+    favEdge: css('--graph-fav-edge'),
     sel: css('--graph-sel'),
     selEdge: optional('--graph-sel-edge'),
     hover: css('--graph-hover'),

@@ -64,6 +64,12 @@ describe('buildGraphScene: какие записи — ноды', () => {
     expect(get('inbox')).toMatchObject({ color: 'pink', zone: 'c2', inbox: true })
   })
 
+  it('избранное: нода помечается favorite', () => {
+    const scene = buildGraphScene(input([item({ id: 'f', favorite: 1 }), item({ id: 'p', favorite: 0 })]))
+    expect(scene.nodes[scene.byId.get('f')!].favorite).toBe(true)
+    expect(scene.nodes[scene.byId.get('p')!].favorite).toBe(false)
+  })
+
   it('заголовок — производный, как в списках', () => {
     const scene = buildGraphScene(input([item({ id: 'x', title: '', content: 'Первая строка\nвторая' })]))
     expect(scene.nodes[0].title).toBe('Первая строка')

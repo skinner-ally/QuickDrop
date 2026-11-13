@@ -50,6 +50,8 @@ function withoutDates(filter: UiFilter): UiFilter {
 
 interface UiState {
   view: View
+  /** Раздел, из которого открыли «Настройки»: повторное нажатие на кнопку возвращает туда. */
+  settingsFrom: Exclude<View, 'settings'>
   /** Открытая в панели подробностей запись. */
   selectedId: string | null
   /** Строка поиска (общая для всех разделов). */
@@ -106,6 +108,7 @@ interface UiState {
 
 export const useUi = create<UiState>((set) => ({
   view: 'inbox',
+  settingsFrom: 'inbox',
   selectedId: null,
   query: '',
   appliedQuery: null,
@@ -128,6 +131,7 @@ export const useUi = create<UiState>((set) => ({
         s.appliedQuery !== null && s.query === s.appliedQuery && view !== s.appliedView && !NO_LIST_VIEWS.has(view)
       return {
         view,
+        ...(view === 'settings' && s.view !== 'settings' ? { settingsFrom: s.view } : {}),
         selectedId: null,
         filter: {},
         customDates: false,

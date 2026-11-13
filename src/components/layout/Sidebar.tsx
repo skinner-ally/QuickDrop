@@ -102,6 +102,7 @@ function NewCategory({ onDone }: { onDone: () => void }) {
 
 export function Sidebar() {
   const view = useUi((s) => s.view)
+  const settingsFrom = useUi((s) => s.settingsFrom)
   const filter = useUi((s) => s.filter)
   const setView = useUi((s) => s.setView)
   const setFilter = useUi((s) => s.setFilter)
@@ -311,7 +312,7 @@ export function Sidebar() {
         <div className="min-w-0 flex-1">
           <NavButton
             active={view === 'settings'}
-            onClick={() => go('settings')}
+            onClick={() => go(view === 'settings' ? settingsFrom : 'settings')}
             icon={<Icon name="settings" className="size-4" />}
             label="Настройки"
           />

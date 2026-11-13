@@ -152,6 +152,7 @@
     --graph-bg: var(--background);
     --graph-node-edge: transparent;  --graph-shadow: transparent;
     --graph-inbox: var(--brand);     --graph-inbox-edge: var(--background);
+    --graph-fav: var(--gold);        --graph-fav-edge: var(--background);
     --graph-sel: var(--brand);       --graph-sel-edge: transparent;
     --graph-hover: var(--foreground);
     --graph-link: color-mix(in srgb, var(--muted-foreground) 50%, transparent);

@@ -575,6 +575,26 @@ function frameExcept(ctx: CanvasRenderingContext2D, x: number, y: number, size: 
   fillRectExcept(ctx, x + size - w, y + w, w, size - 2 * w, ex)
 }
 
+/** Ниже этого масштаба устройства (zoom · dpr) звёздочки избранного нет: нода меньше 4 px. */
+const FAV_MIN_K = 0.25
+/** С этого масштаба избранное — звезда, ниже — золотой квадрат. */
+const FAV_STAR_MIN_K = 0.75
+/** Звезда 5×5: [строка, колонка, длина]. */
+const FAV_STAR_RUNS: ReadonlyArray<readonly [number, number, number]> = [
+  [0, 2, 1],
+  [1, 1, 3],
+  [2, 0, 5],
+  [3, 1, 3],
+  [4, 1, 1],
+  [4, 3, 1],
+]
+const FAV_EDGE_SHIFTS: ReadonlyArray<readonly [number, number]> = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+]
+
 function nodeAlpha(n: GraphNode): number {
   return n.dim ? GRAPH_ALPHA_DIM : n.archived ? GRAPH_ALPHA_ARCHIVED : 1
 }
@@ -667,6 +687,28 @@ export function drawNodes(
     if (mInner >= 1) ctx.fillRect(x0 + s - m + b + mPad, y0 - b + mPad, mInner, mInner)
     else ctx.fillRect(x0 + s - m + b, y0 - b, m, m)
   }
+  // Избранное: от 75 % — звезда 5×5 «клеток» размером fu px (контур наружу, вылет b, как у метки «Входящие»);
+  // на 25–75 % звезду не разобрать — золотой квадрат внутри ноды.
+  const favStar = k >= FAV_STAR_MIN_K
+  const fu = Math.max(1, Math.round(k))
+  const favSq = Math.max(2, Math.round(5 * k))
+  const favMark = (x0: number, y0: number, pass: 'edge' | 'core'): void => {
+    if (!favStar) {
+      ctx.fillRect(x0 + b, y0 + s - b - favSq, favSq, favSq)
+      return
+    }
+    const x = x0 - b + fu
+    const y = y0 + s + b - 6 * fu
+    for (const [row, col, len] of FAV_STAR_RUNS) {
+      if (pass === 'core') {
+        ctx.fillRect(x + col * fu, y + row * fu, len * fu, fu)
+        continue
+      }
+      for (const [dx, dy] of FAV_EDGE_SHIFTS) {
+        ctx.fillRect(x + col * fu + dx * fu, y + row * fu + dy * fu, len * fu, fu)
+      }
+    }
+  }
   // Часть полупрозрачной ноды под меткой «Входящие» не рисуется: метка ложится на землю, а не на ноду.
   const exclOf = (q: number): Rect | null => (withInbox && nodes[visible[q]].inbox ? markRect(xs[q], ys[q]) : null)
 
@@ -724,6 +766,22 @@ export function drawNodes(
       }
     }
   }
+  // 5. Звёздочка избранного (левый нижний угол). Контур — звезда, сдвинутая на единицу в четыре стороны.
+  if (k >= FAV_MIN_K) {
+    for (const pass of ['edge', 'core'] as const) {
+      if (pass === 'edge' && !favStar) continue
+      let filled = false
+      for (let q = 0; q < count; q++) {
+        if (!nodes[visible[q]].favorite) continue
+        if (!filled) {
+          setFill(pass === 'edge' ? theme.favEdge : theme.fav)
+          filled = true
+        }
+        setAlpha(alphas[q])
+        favMark(xs[q], ys[q], pass)
+      }
+    }
+  }
   setAlpha(1)
 
   // Нода, которую тянут: клетка, куда встанет, и сама нода в точке указателя — поверх остальных.
@@ -751,6 +809,14 @@ export function drawNodes(
       inboxEdge(dragX, dragY, true)
       setFill(theme.inbox)
       inboxCore(dragX, dragY)
+    }
+    if (k >= FAV_MIN_K && n.favorite) {
+      if (favStar) {
+        setFill(theme.favEdge)
+        favMark(dragX, dragY, 'edge')
+      }
+      setFill(theme.fav)
+      favMark(dragX, dragY, 'core')
     }
   }
 

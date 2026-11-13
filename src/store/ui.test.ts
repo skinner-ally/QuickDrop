@@ -67,6 +67,15 @@ describe('сброс customDates', () => {
     expect(useUi.getState()).toMatchObject({ view: 'library', filter: {}, customDates: false })
   })
 
+  it('setView: «Настройки» помнят раздел, откуда их открыли', () => {
+    useUi.getState().setView('graph')
+    useUi.getState().setView('settings')
+    expect(useUi.getState().settingsFrom).toBe('graph')
+    // Повторный вход в настройки (уже открыты) прежний раздел не затирает.
+    useUi.getState().setView('settings')
+    expect(useUi.getState().settingsFrom).toBe('graph')
+  })
+
   it('resetFilter', () => {
     arm()
     useUi.getState().resetFilter()

@@ -51,6 +51,7 @@ export function buildGraphScene(input: SceneInput): GraphScene {
         zone: categoryId ?? GRAPH_NONE_ZONE,
         inbox: item.status === 'inbox',
         archived: item.status === 'archive',
+        favorite: item.favorite === 1,
         dim: match !== null && !match.has(item.id),
         title: displayTitle(item),
         links: [],

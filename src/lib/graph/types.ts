@@ -52,6 +52,8 @@ export interface GraphNode {
   zone: string
   inbox: boolean
   archived: boolean
+  /** В избранном: на ноде золотая звёздочка. */
+  favorite: boolean
   /** Не проходит отбор. */
   dim: boolean
   title: string
@@ -92,6 +94,9 @@ export interface GraphTheme {
   shadow: string | null
   inbox: string
   inboxEdge: string
+  /** Звёздочка избранного и её контур. */
+  fav: string
+  favEdge: string
   sel: string
   selEdge: string | null
   hover: string

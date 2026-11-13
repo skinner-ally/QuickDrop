@@ -17,7 +17,7 @@ const LINK_HOT = packRgba(200, 150, 0, 255)
 const cat = Object.fromEntries(GRAPH_COLOR_KEYS.map((key) => [key, `cat-${key}`])) as Record<GraphColorKey, string>
 
 const PIXEL: GraphTheme = {
-  pixel: true, cat, nodeEdge: 'edge', shadow: 'shadow', inbox: 'inbox', inboxEdge: 'inbox-edge',
+  pixel: true, cat, nodeEdge: 'edge', shadow: 'shadow', inbox: 'inbox', inboxEdge: 'inbox-edge', fav: 'fav', favEdge: 'fav-edge',
   sel: 'sel', selEdge: 'sel-edge', hover: 'hover',
   link: LINK, linkAlt: LINK_ALT, linkEdge: LINK_EDGE, linkHot: LINK_HOT, linkCss: 'link-css', linkHotCss: 'hot-css',
 }
@@ -33,7 +33,7 @@ type NodeSpec = Partial<GraphNode> & { x: number; y: number }
 /** Сцена напрямую (без записей): id `n<индекс>`, если не задан. links — [a, b, поля связи]. */
 function makeScene(specs: NodeSpec[], pairs: Array<[number, number, Partial<GraphLink>?]> = []): GraphScene {
   const nodes: GraphNode[] = specs.map((p, i) => ({
-    id: `n${i}`, color: 'none', zone: 'none', inbox: false, archived: false, dim: false, title: '', links: [], ...p,
+    id: `n${i}`, color: 'none', zone: 'none', inbox: false, archived: false, favorite: false, dim: false, title: '', links: [], ...p,
   }))
   const byId = new Map(nodes.map((n, i) => [n.id, i]))
   const links: GraphLink[] = pairs.map(([a, b, extra]) => {
@@ -171,6 +171,34 @@ describe('drawNodes', () => {
     expect(rects()).toHaveLength(5)
     // порядок проходов: тень → рамка → заливка → метка
     expect(rects().map((c) => c.fill)).toEqual(['shadow', 'edge', 'cat-blue', 'inbox-edge', 'inbox'])
+  })
+
+  it('избранное: звезда 5×5 с контуром в левом нижнем углу; без избранного золота нет', () => {
+    const { ctx, calls, rects } = mockCtx()
+    drawNodes(ctx, makeScene([{ x: 0, y: 0, color: 'blue', favorite: true }]), vp(800, 600), PIXEL, NONE)
+    // угол ноды (392, 292), s = 16, b = 2: звезда с вылетом наружу — левый верх (391, 304)
+    expect(hasRect(calls, 'fav', 393, 304, 1, 1)).toBe(true)
+    expect(hasRect(calls, 'fav', 391, 306, 5, 1)).toBe(true)
+    expect(hasRect(calls, 'fav-edge', 390, 306, 5, 1)).toBe(true)
+    const fills = rects().map((c) => c.fill)
+    expect(fills.indexOf('fav-edge')).toBeLessThan(fills.indexOf('fav'))
+    expect(fills.indexOf('cat-blue')).toBeLessThan(fills.indexOf('fav-edge'))
+
+    const plain = mockCtx()
+    drawNodes(plain.ctx, makeScene([{ x: 0, y: 0, color: 'blue' }]), vp(800, 600), PIXEL, NONE)
+    expect(plain.rects().some((c) => c.fill === 'fav' || c.fill === 'fav-edge')).toBe(false)
+  })
+
+  it('избранное на малом масштабе: от 0.25 — золотой квадрат внутри ноды, ниже — ничего', () => {
+    const mid = mockCtx()
+    drawNodes(mid.ctx, makeScene([{ x: 0, y: 0, favorite: true }]), vp(800, 600, 0.5), PIXEL, NONE)
+    // s = 8, b = 1, угол (396, 296); квадрат 3×3 прижат к левому нижнему углу
+    expect(hasRect(mid.calls, 'fav', 397, 300, 3, 3)).toBe(true)
+    expect(mid.rects().some((c) => c.fill === 'fav-edge')).toBe(false)
+
+    const tiny = mockCtx()
+    drawNodes(tiny.ctx, makeScene([{ x: 0, y: 0, favorite: true }]), vp(800, 600, 0.125), PIXEL, NONE)
+    expect(tiny.rects().some((c) => c.fill === 'fav')).toBe(false)
   })
 
   it('«Классика»: одна заливка на ноду, без рамки и тени', () => {

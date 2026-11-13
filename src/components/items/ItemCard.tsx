@@ -479,7 +479,7 @@ export const ItemRow = memo(function ItemRow({
 
         <div className="hidden shrink-0 items-center md:flex pixel:self-center" onClick={(e) => e.stopPropagation()}>
           <div className="grid items-center justify-items-end">
-            <div className="col-start-1 row-start-1 flex items-center gap-2 transition-opacity pixel:flex-col pixel:items-end pixel:gap-0.5 pointer-fine:group-focus-within:opacity-0 pointer-fine:group-hover:opacity-0">
+            <div className="col-start-1 row-start-1 flex items-center gap-2 transition-opacity pixel:flex-col pixel:items-end pixel:gap-0.5 pointer-fine:group-focus-within:pointer-events-none pointer-fine:group-focus-within:opacity-0 pointer-fine:group-hover:pointer-events-none pointer-fine:group-hover:opacity-0">
               <CategoryBadge categoryId={item.categoryId} className="hidden pixel:inline-flex" />
               {trashed ? (
                 <TrashMeta item={item} stacked />

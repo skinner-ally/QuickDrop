@@ -110,6 +110,7 @@
   --graph-bg: var(--ground);
   --graph-node-edge: var(--wood-dark);  --graph-shadow: var(--shadow);
   --graph-inbox: var(--brand);          --graph-inbox-edge: var(--wood-dark);
+  --graph-fav: var(--gold);             --graph-fav-edge: var(--wood-dark);
   --graph-sel: var(--gold);             --graph-sel-edge: var(--wood-dark);
   --graph-hover: var(--label);
   --graph-link: var(--rope-b);  --graph-link-alt: var(--rope-a);  --graph-link-edge: var(--rope-edge);

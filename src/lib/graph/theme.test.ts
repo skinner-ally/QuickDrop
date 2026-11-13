@@ -75,6 +75,8 @@ describe('composeGraphTheme', () => {
       '--graph-shadow': 'shadow',
       '--graph-inbox': 'inbox',
       '--graph-inbox-edge': 'inbox-edge',
+      '--graph-fav': 'fav',
+      '--graph-fav-edge': 'fav-edge',
       '--graph-sel': 'sel',
       '--graph-sel-edge': 'sel-edge',
       '--graph-hover': 'hover',
@@ -102,6 +104,8 @@ describe('composeGraphTheme', () => {
     expect(t.shadow).toBe('shadow')
     expect(t.inbox).toBe('inbox')
     expect(t.inboxEdge).toBe('inbox-edge')
+    expect(t.fav).toBe('fav')
+    expect(t.favEdge).toBe('fav-edge')
     expect(t.sel).toBe('sel')
     expect(t.selEdge).toBe('sel-edge')
     expect(t.hover).toBe('hover')
@@ -218,6 +222,8 @@ describe('scenes.css: граф читается на земле во всех в
       // рамки: золото выбранной и соседей, наведение и курсор — с тёмной кромкой
       expect(edged(v('--graph-sel'), v('--graph-sel-edge'), ground), 'золото').toBe(true)
       expect(edged(v('--graph-hover'), v('--graph-sel-edge'), ground), 'наведение').toBe(true)
+      // звёздочка избранного: золото с тёмной кромкой
+      expect(edged(v('--graph-fav'), v('--graph-fav-edge'), ground), 'избранное').toBe(true)
       // нода любой категории: рамка/контур или сама заливка
       for (const key of GRAPH_COLOR_KEYS) {
         const fill = v(`--cat-${key}`)
