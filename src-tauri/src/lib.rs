@@ -190,7 +190,9 @@ fn link_client(allow_private: bool) -> reqwest::Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(policy)
-        .user_agent(USER_AGENT);
+        .user_agent(USER_AGENT)
+        // Прокси из HTTP(S)_PROXY/ALL_PROXY сам разрешает целевые имена и обходит PublicOnlyResolver.
+        .no_proxy();
     if !allow_private {
         builder = builder.dns_resolver(Arc::new(PublicOnlyResolver));
     }
@@ -315,6 +317,10 @@ fn create_main_window(app: &tauri::App, hidden: bool) -> tauri::Result<()> {
         builder
     };
     builder.build()?;
+    // WebView2 создаётся видимым и у скрытого окна: без этого живой фон крутится в трее с первого запуска.
+    if hidden {
+        shell::set_main_webview_visible(app.handle(), false);
+    }
     Ok(())
 }
 
@@ -459,9 +465,57 @@ mod tests {
         out
     }
 
+    /// Переменные окружения общие для процесса: сетевые тесты не идут параллельно с тестом прокси.
+    static NET_LOCK: Mutex<()> = Mutex::new(());
+
+    fn net_lock() -> std::sync::MutexGuard<'static, ()> {
+        NET_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Клиент создаётся внутри рантайма: reqwest требует реактор tokio.
-    fn get(allow_private: bool, url: String) -> Result<reqwest::Response, reqwest::Error> {
+    fn get_unlocked(allow_private: bool, url: String) -> Result<reqwest::Response, reqwest::Error> {
         tauri::async_runtime::block_on(async move { link_client(allow_private)?.get(url).send().await })
+    }
+
+    fn get(allow_private: bool, url: String) -> Result<reqwest::Response, reqwest::Error> {
+        let _guard = net_lock();
+        get_unlocked(allow_private, url)
+    }
+
+    #[test]
+    fn link_client_ignores_proxy_env() {
+        let _guard = net_lock();
+        // «Прокси», который принимает соединения и молчит: через него запрос упёрся бы в таймаут.
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+        let names = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"];
+        let saved: Vec<_> = names.iter().map(|n| (*n, std::env::var_os(n))).collect();
+        for n in &names[..3] {
+            std::env::set_var(n, &proxy_url);
+        }
+        std::env::remove_var("NO_PROXY");
+
+        let target = redirect_server("/next");
+        let private = get_unlocked(true, format!("http://127.0.0.1:{}/", target.port()));
+        let public = get_unlocked(false, format!("http://127.0.0.1:{}/", target.port()));
+        let accepted = proxy.accept();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+
+        let private = error_chain(&private.unwrap_err());
+        assert!(private.contains("Слишком много перенаправлений"), "{private}");
+        let public = error_chain(&public.unwrap_err());
+        assert!(public.contains(PRIVATE_REDIRECT), "{public}");
+        assert!(
+            matches!(&accepted, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "запрос ушёл через прокси из окружения"
+        );
     }
 
     #[test]

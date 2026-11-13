@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Icon } from '@/components/icons'
 import { ErrorBoundary, StorageErrorFallback } from '@/components/layout/ErrorBoundary'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
@@ -9,6 +10,7 @@ import {
   CAPTURE_BLUR_DELAY_MS,
   capturePointerDown,
   createBlurHider,
+  focusCaptureWindow,
   hideCaptureWindow,
   hideOnBlur,
   initCaptureWindow,
@@ -21,8 +23,16 @@ import type { Item } from '@/types'
 import { CaptureForm } from './CaptureForm'
 import type { SnapshotFn } from './CaptureForm'
 
-/** Сохранённое мини-окно просто прячется: toast не нужен (запись появится во входящих главного окна). */
-const noopSaved = () => {}
+/**
+ * Обычное «Сохранить» прячет окно (toast гасит close), поэтому подтверждение нужно, только когда окно остаётся
+ * открытым («Сохранить и добавить ещё»): иначе не видно, сохранилось ли что-то или поля просто сбросились.
+ * Без кнопки «Открыть»: она увела бы фокус в главное окно.
+ */
+function notifyWindowSaved(ids: string[], toLibrary: boolean) {
+  toast.success(
+    ids.length > 1 ? `Сохранено записей: ${ids.length}` : toLibrary ? 'Сохранено в базу знаний' : 'Сохранено во входящие',
+  )
+}
 
 function CaptureWindow() {
   const inTauri = isTauri()
@@ -37,9 +47,14 @@ function CaptureWindow() {
   const blurRef = useRef<BlurHider | null>(null)
   const openRef = useRef(open)
   openRef.current = open
+  /** Окно сейчас в фокусе (по событиям Rust) и был ли бросок в него без фокуса: тогда окно не прячется само. */
+  const focusedRef = useRef(true)
+  const droppedUnfocusedRef = useRef(false)
 
   /** Закрыть без опроса формы: размонтировать и спрятать окно. */
   const close = useCallback(() => {
+    // sonner останавливает таймер у скрытого окна: toast не должен дожидаться следующего показа.
+    toast.dismiss()
     if (!inTauri) {
       setFormKey((k) => k + 1)
       return
@@ -57,6 +72,7 @@ function CaptureWindow() {
   requestCloseRef.current = requestClose
 
   const onShown = useCallback(() => {
+    droppedUnfocusedRef.current = false
     setOpen(true)
     setShownTick((t) => t + 1)
   }, [])
@@ -69,28 +85,40 @@ function CaptureWindow() {
     // Пока зажата кнопка мыши (файл тащат из Проводника), окно не прячется.
     const blur = createBlurHider(
       () => {
-        if (openRef.current) hideOnBlur(autoHideRef.current, requestCloseRef.current)
+        // Бросок текста или ссылки из другой программы фокус окну не отдаёт: без этой отметки окно исчезло бы
+        // прямо после броска. Отметка снимается фокусом окна и новым показом.
+        if (openRef.current && !droppedUnfocusedRef.current) hideOnBlur(autoHideRef.current, requestCloseRef.current)
       },
       CAPTURE_BLUR_DELAY_MS,
       capturePointerDown,
     )
     blurRef.current = blur
-    // Файл уже над окном: скрытие на паузе до броска или ухода курсора из окна. Слушатели окна в фазе
-    // перехвата: форма останавливает всплытие drop. Счётчик — dragenter/dragleave приходят на каждый элемент.
+    // Файл, текст или ссылка уже над окном: скрытие на паузе до броска или ухода курсора из окна. Слушатели окна
+    // в фазе перехвата: форма останавливает всплытие drop. Счётчик — dragenter/dragleave приходят на каждый элемент.
     let dragDepth = 0
-    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
-    const onDragEnter = (e: DragEvent) => {
-      if (!hasFiles(e)) return
+    const onDragEnter = () => {
       if (dragDepth++ === 0) blur.suspend()
     }
-    const onDragLeave = (e: DragEvent) => {
-      if (!hasFiles(e) || dragDepth === 0) return
+    const onDragLeave = () => {
+      if (dragDepth === 0) return
       if (--dragDepth === 0) blur.resume()
     }
-    const onDropEnd = () => {
+    const onDropEnd = (e: Event) => {
+      if (e.type === 'drop' && !focusedRef.current) {
+        // Бросок текста или ссылки фокус окну не даёт: без него Enter и Esc не работают. Флаг — страховка от скрытия.
+        droppedUnfocusedRef.current = true
+        void focusCaptureWindow()
+      }
       if (dragDepth === 0) return
       dragDepth = 0
       blur.resume()
+    }
+    const focusAware = {
+      onFocusChange(f: boolean) {
+        focusedRef.current = f
+        if (f) droppedUnfocusedRef.current = false
+        blur.onFocusChange(f)
+      },
     }
     window.addEventListener('dragenter', onDragEnter, true)
     window.addEventListener('dragleave', onDragLeave, true)
@@ -98,7 +126,7 @@ function CaptureWindow() {
     window.addEventListener('dragend', onDropEnd, true)
     let cancelled = false
     let off: (() => void) | undefined
-    initCaptureWindow({ onShown: () => onShownRef.current(), blur })
+    initCaptureWindow({ onShown: () => onShownRef.current(), blur: focusAware })
       .then(async (unlisten) => {
         if (cancelled) {
           unlisten()
@@ -186,7 +214,7 @@ function CaptureWindow() {
             snapshotRef={snapshotRef}
             autoHideRef={autoHideRef}
             onClose={close}
-            onSaved={noopSaved}
+            onSaved={notifyWindowSaved}
             onOpenItem={openItem}
             onFilePicker={onFilePicker}
           />
@@ -196,10 +224,59 @@ function CaptureWindow() {
   )
 }
 
+/**
+ * Заглушка при сбое хранилища. Шапка и обработчики окна вместе с деревом размонтированы, а окно без рамки и поверх
+ * всех, поэтому заглушка сама даёт «Закрыть» и Esc, а новый показ окна пробует отрисовать дерево заново.
+ * Не зависит ни от БД, ни от ThemeProvider.
+ */
+function CaptureErrorFallback({ error, reset }: { error: Error; reset: () => void }) {
+  const close = useCallback(() => {
+    if (isTauri()) hideCaptureWindow().catch((err) => console.warn('[capture] не удалось спрятать окно', err))
+    else reset()
+  }, [reset])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('keydown', onKey)
+    let off: (() => void) | undefined
+    let cancelled = false
+    if (isTauri()) {
+      void import('@tauri-apps/api/webviewWindow')
+        .then(({ getCurrentWebviewWindow }) => getCurrentWebviewWindow().listen('capture-shown', () => reset()))
+        .then((unlisten) => {
+          if (cancelled) unlisten()
+          else off = unlisten
+        })
+        .catch((err) => console.warn('[capture] подписка на показ окна не установлена', err))
+    }
+    return () => {
+      cancelled = true
+      window.removeEventListener('keydown', onKey)
+      off?.()
+    }
+  }, [close, reset])
+  return (
+    <div className="relative">
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-10 h-9" />
+      <button
+        type="button"
+        aria-label="Закрыть"
+        title="Закрыть (Esc)"
+        className="absolute top-1.5 right-2 z-20 h-7 rounded-lg border bg-background px-2.5 text-sm px-btn"
+        onClick={close}
+      >
+        Закрыть
+      </button>
+      <StorageErrorFallback error={error} />
+    </div>
+  )
+}
+
 export function CaptureWindowApp() {
   return (
     // Граница выше ThemeProvider: он сам читает настройки из БД (useLiveQuery) и падает первым.
-    <ErrorBoundary fallback={(error) => <StorageErrorFallback error={error} />}>
+    <ErrorBoundary fallback={(error, reset) => <CaptureErrorFallback error={error} reset={reset} />}>
       <ThemeProvider>
         <TooltipProvider delay={400}>
           <CaptureWindow />

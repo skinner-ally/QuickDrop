@@ -187,18 +187,46 @@ describe('ocrBlockView: «Текст не найден» и запуск', () =>
     })
   })
 
-  it('PDF со слоем после «Очистить» (ocrAt есть, текста и ocrVisionAt нет) — «Извлечь текст», не «скан»', () => {
-    const cleared = pdf({ ocrAt: 1, ocrText: undefined, ocrVisionAt: undefined })
-    expect(ocrBlockView(cleared, undefined, undefined, true)).toEqual({
+  it('PDF со слоем после «Очистить» (ocrClearedAt) — «Извлечь текст» без сети, не «скан»', () => {
+    const cleared = pdf({ ocrAt: 5, ocrClearedAt: 5, ocrText: undefined, ocrVisionAt: undefined })
+    for (const blocked of [true, false]) {
+      expect(ocrBlockView(cleared, undefined, undefined, blocked)).toEqual({
+        kind: 'start',
+        label: 'Извлечь текст',
+        network: null,
+      })
+    }
+  })
+
+  it('скан PDF после перезапуска (ocrAt есть, текста и note нет) — «Распознать текст» или примечание', () => {
+    expect(ocrBlockView(pdf({ ocrAt: 5 }), undefined, undefined, false)).toEqual({
       kind: 'start',
-      label: 'Извлечь текст',
-      network: null,
-    })
-    expect(ocrBlockView(cleared, undefined, undefined, false)).toEqual({
-      kind: 'start',
-      label: 'Извлечь текст',
+      label: 'Распознать текст',
       network: 'pdf',
     })
+    expect(ocrBlockView(pdf({ ocrAt: 5 }), undefined, undefined, true)).toEqual({
+      kind: 'note',
+      text: OCR_SCAN_PDF_NOTE,
+    })
+  })
+
+  it('повтор после ошибки у очищенного PDF — по слою, без сети', () => {
+    expect(
+      ocrBlockView(pdf({ ocrAt: 5, ocrClearedAt: 5 }), undefined, note('failed', 'сбой'), false),
+    ).toMatchObject({ retry: { network: null } })
+  })
+
+  it('повтор после ошибки у очищенной картинки — строка о сети остаётся', () => {
+    expect(ocrBlockView(image({ ocrAt: 5, ocrClearedAt: 5 }), undefined, note('failed', 'сбой'), false)).toMatchObject({
+      kind: 'failed',
+      retry: { network: 'image' },
+    })
+  })
+
+  it('повтор после ошибки у очищенного скана PDF, распознанного зрением, — строка о сети остаётся', () => {
+    expect(
+      ocrBlockView(pdf({ ocrAt: 5, ocrVisionAt: 5, ocrClearedAt: 6 }), undefined, note('failed', 'сбой'), false),
+    ).toMatchObject({ kind: 'failed', retry: { network: 'pdf' } })
   })
 
   it('скан PDF (слой проверен в этом сеансе, текста нет), ИИ доступен — «Текст не найден» с повтором', () => {

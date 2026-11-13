@@ -2,7 +2,53 @@
 
 Обновлено: 2026-11-13
 
-## ЭТАП 8 ЗАКОММИЧЕН (2026-11-13) — читать первым
+## Финальное ревью: исправления и доводка (2026-11-13) — читать первым
+
+Финальное ревью всего обновления (af91a0b..399f8e9) проведено на opus (пользователь 2026-11-13: «Фейбл больше не
+используй» — субагентам fable не назначать): 10 направлений, 31 находка подтверждена (13 средних, 18 мелких, критичных
+и серьёзных нет), отклонённых нет; итог — .progress/final-review-result.json. Исправления (группы logic, ui, rust,
+docs — .progress/agents/final-fix-*.md) и доводка после повторной сверки (.progress/agents/final-polish.md)
+ЗАКОММИЧЕНЫ. Проверки основной сессии после правок: typecheck чист, vitest 90 файлов / 2665 тестов, cargo test 131
+(2 ignored), линт без ошибок, версия согласована.
+
+ВАЖНО, НЕ СДЕЛАНО: после правок ревью приложение Windows НЕ ПЕРЕСОБРАНО и вживую не проверено — пересборка упала
+(«Отказано в доступе»), потому что quickdrop.exe из сборки этапа 8 был запущен пользователем. В
+src-tauri/target/release лежит exe БЕЗ правок ревью. Когда пользователь закроет приложение: `npm run tauri build`,
+затем обязательно проверить сворачивание и разворот главного окна и возврат из трея (правка SetIsVisible ниже —
+при ошибке окно после разворота может остаться пустым), фокус мини-окна после броска текста.
+
+Доводка:
+- ocrView: «Повторить» после ошибки без строки о сети — только у очищенного PDF со слоем (без ocrVisionAt);
+  у очищенной картинки и очищенного скана, распознанного зрением, строка о сети снова есть. Тесты.
+- Живой фон в трее и в свёрнутом окне (Windows): shell::set_main_webview_visible — SetIsVisible контроллера WebView2
+  (скрытие в трей, сворачивание, запуск с --autostart → false; show_main, разворот, фокус главного окна → true;
+  последнее значение — ShellState.main_webview_hidden). Страница получает visibilitychange=hidden, useAmbient
+  уходит в static. НЕ ПРОВЕРЕНО ВЖИВУЮ: трей, сворачивание, возврат из трея, --autostart, глобальное сочетание при
+  выключенном мини-окне (JS raiseWindow: показ без show_main — видимость возвращает событие Focused(true)).
+- Мини-окно: после броска текста или ссылки без фокуса — focusCaptureWindow() (lib/captureWindow.ts), право
+  core:window:allow-set-focus в capabilities/capture.json; отметка droppedUnfocusedRef оставлена страховкой.
+  Вживую не проверено.
+- release.yml: Tauri-вариант фронтенда для cargo test + проверка состава dist; в web — линт и проверка веб-сборки.
+  README уточнён.
+- effects.test.ts: testTimeout 30 с на файл (тяжёлые переборы растров шли 6–10 с и падали по таймауту 5 с).
+
+Принятые компромиссы:
+- fetch_link_meta (link_client) — `.no_proxy()`: прокси из HTTP(S)_PROXY/ALL_PROXY обходил фильтр внутренней сети.
+  Если интернет доступен только через такой прокси, заголовки ссылок не загрузятся; fetchLinkMeta не бросает,
+  UI берёт titleFromUrl. Системный прокси WinINET не учитывался и раньше.
+- Установщик Windows — только NSIS (bundle.targets = nsis, app, dmg): шаблон WiX (MSI) при удалении не чистит
+  HKCU\...\Run\QuickDrop, шаблон NSIS — чистит (DeleteRegValue при удалении, не при обновлении).
+
+Отложено (долги):
+- graphKeyTarget при записи вне сцены графа; drainPdfBackfill после restoreFromTrash (после импорта вызывается).
+- Необязательные п.7 и п.13 группы ui сделаны (по отчёту final-fix-ui) (MarkdownView → openItemInSection; drainPdfBackfill после импорта).
+- Резерв API оставлен (не удалён): showMainWindow, quitApp (lib/desktop.ts; команды show_main_window и quit_app в
+  generate_handler), exportMarkdownToDir (lib/exportDir.ts), removePositions (repo.ts) — покрыты тестами, в UI не
+  используются; удалять вместе со строками CLAUDE.proposed.md, если резерв не понадобится.
+
+Проверки доводки: typecheck чист, vitest 90 файлов / 2665 тестов, cargo test 131 (2 ignored).
+
+## ЭТАП 8 ЗАКОММИЧЕН (2026-11-13)
 
 Распознавание текста зрением, долги, документация, CI. Спецификация — .progress/spec-stage8.md (решения Р1–Р12),
 итог потока (пакеты, ревью, исправления) — .progress/stage8-result.json. Ревью: 10 подтверждённых + 6 мелких,
@@ -16,7 +62,9 @@
 - Новые поля Item: ocrVisionAt, ocrClearedAt, ocrAutoSkipAt; настройка aiAutoOcrSince. repo: setVisionText,
   markVisionTried, clearOcrText, markVisionAutoSkip. Схема Dexie и версия копии не менялись.
 - Расширение Chrome вложено в установщик (bundle.resources), в настройках — путь и «Показать папку».
-- CI: .github/workflows/ci.yml (typecheck, тесты, cargo test), cargo test в release.yml для Windows.
+- CI: .github/workflows/ci.yml — web: typecheck, линт, тесты, сборка и проверка состава dist (sw.js есть, capture.html
+  нет); rust (Windows): сборка с TAURI_ENV_PLATFORM и проверка состава dist (capture.html есть, sw.js нет), cargo test.
+  release.yml повторяет те же проверки в web и в desktop (Windows) перед tauri-action.
 - Документация: README.md, docs/ИНСТРУКЦИЯ.md, docs/DESIGN.md §14. CLAUDE.md НЕ менялся: предлагаемая редакция —
   .progress/CLAUDE.proposed.md, ждёт решения пользователя.
 
@@ -30,7 +78,7 @@
 отказ сети → «Нет связи с сервисом ИИ» и «Повторить», тексты настроек.
 
 Приёмка Windows (spec-stage8 §10) — выполнена частично:
-- Сделано: `npm run tauri build` прошёл; NSIS 3,36 МиБ, MSI 4,05 МиБ, quickdrop.exe 6,7 МБ; extension/ лежит рядом
+- Сделано: `npm run tauri build` прошёл; NSIS 3,36 МиБ, MSI 4,05 МиБ (MSI после финального ревью снят с выпуска, см. «Финальное ревью»), quickdrop.exe 6,7 МБ; extension/ лежит рядом
   с exe (ресурс), capture.html в dist. Дымовой запуск quickdrop.exe с отдельным каталогом WebView2
   (WEBVIEW2_USER_DATA_FOLDER в scratchpad, чтобы не трогать базу пользователя в %LOCALAPPDATA%\app.quickdrop.desktop):
   окно «QuickDrop» создаётся, второй экземпляр завершается сам, закрытие окна завершает процесс.
@@ -42,8 +90,9 @@
 Долги этапа 8: предел 100 автозапросов — за сеанс, не скользящее окно; остановка авто по ошибке настройки
 снимается только перезапуском или сменой настроек; несколько вкладок веб-версии ведут независимые очереди; пустой
 ответ при «Распознать заново» стирает прежний текст (так в спецификации); частичный текст PDF при сбое на странице
-не сохраняется; нехватка памяти при декодировании неотличима от «не картинка»; spec-stage8.md отстал от кода после
-исправлений ревью (импорт, сдвиг since, классы ошибок, отмена = ocrAutoSkipAt). Оставленные долги прошлых этапов —
+не сохраняется; нехватка памяти при декодировании неотличима от «не картинка»; ~~spec-stage8.md отстал от кода~~
+(закрыт: раздел «Поправки после ревью 8 и финального ревью» в spec-stage8.md; CLAUDE.proposed.md тоже приведён к
+коду). Оставленные долги прошлых этапов —
 таблица spec-stage8 §5.4. Отставшие спецификации (истина — код): spec-stage2 §2.5, §2.8, §2.10, §6, §7;
 spec-stage4 §2.1, §2.8, §2.12, §5.7; spec-stage6; spec-tauri §1.1.5, §1.3, §1.4, пп. 2.1–2.12.
 

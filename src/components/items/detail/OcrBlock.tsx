@@ -5,6 +5,8 @@ import { useSettings } from '@/db/settings'
 import { useOcrJob, useOcrNote } from '@/hooks/useOcr'
 import { actCancelRecognize, actClearOcrText, actRecognize, actSaveOcrText, copyText } from '@/lib/actions'
 import { aiHostLabel, visionAvailability } from '@/lib/ai'
+import { cleanOcrText } from '@/lib/normalize'
+import { OCR_EDIT_MAX } from '@/lib/ocrState'
 import type { Item } from '@/types'
 import { ContentEditor } from './ContentEditor'
 import { charsLabel, isBlankOcrDraft, ocrBlockView, ocrNetworkLine, visibleOcrText, type OcrNetwork } from './ocrView'
@@ -206,6 +208,10 @@ export function OcrBlock({ item, readOnly }: { item: Item; readOnly?: boolean })
                   if (isBlankOcrDraft(v)) void actClearOcrText(item)
                 }}
                 onEditingChange={setEditing}
+                // repo.setOcrText чистит текст (trim, пустые строки): сравнение идёт с той же нормализацией.
+                normalize={cleanOcrText}
+                // Предел правки: вставка сверх него закрыла бы поле посреди работы (canEdit станет false).
+                maxLength={OCR_EDIT_MAX}
                 readOnly={!view.canEdit}
                 toolbar={toolbar}
                 renderView={() => (

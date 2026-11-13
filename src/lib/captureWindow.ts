@@ -23,6 +23,20 @@ export async function isCaptureWindowVisible(): Promise<boolean> {
   }
 }
 
+/**
+ * Вернуть фокус мини-окну: после броска текста или ссылки из другой программы окно его не получает,
+ * и Enter/Esc не работают до щелчка. Не бросает; false — не удалось.
+ */
+export async function focusCaptureWindow(): Promise<boolean> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().setFocus()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export interface BlurHider {
   /** false — скрыть через delayMs, если фокус не вернулся и нет паузы; true — отменить ожидающее скрытие. */
   onFocusChange(focused: boolean): void

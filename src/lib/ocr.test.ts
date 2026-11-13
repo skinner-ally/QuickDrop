@@ -348,6 +348,31 @@ describe('extractItemText', () => {
     expect((await fresh(third.id)).ocrAt).toBeUndefined()
   })
 
+  it('«Отменить» задачи, ждущей очереди слоя, снимает её сразу; новый запуск встаёт в очередь', async () => {
+    const slow = deferred<PdfTextResult>()
+    mocks.extractPdfText.mockReturnValueOnce(slow.promise)
+    const first = await pdfItem()
+    const second = await pdfItem()
+
+    const busy = extractItemText(first)
+    const waiting = extractItemText(second)
+    await vi.waitFor(() => expect(mocks.extractPdfText).toHaveBeenCalledTimes(1))
+    expect(getOcrJob(second.id)?.phase).toBe('queued')
+    getOcrJob(second.id)!.cancel!()
+    expect(await waiting).toEqual({ status: 'skipped' })
+    expect(getOcrJob(second.id)).toBeUndefined()
+
+    mocks.extractPdfText.mockResolvedValue(result('ok', 'второй'))
+    const again = extractItemText(await fresh(second.id), { force: true })
+    expect(again).not.toBe(waiting)
+    expect(getOcrJob(second.id)?.phase).toBe('queued')
+    slow.resolve(result('ok', 'первый'))
+    expect(await busy).toEqual(LAYER_OK)
+    expect(await again).toEqual(LAYER_OK)
+    expect(mocks.extractPdfText).toHaveBeenCalledTimes(2)
+    expect((await fresh(second.id)).ocrText).toBe('второй')
+  })
+
   it('одновременные вызовы для одной записи разбирают файл один раз', async () => {
     const slow = deferred<PdfTextResult>()
     mocks.extractPdfText.mockReturnValue(slow.promise)

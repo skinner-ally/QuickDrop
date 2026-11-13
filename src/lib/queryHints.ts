@@ -1,4 +1,4 @@
-import { normalizeTag } from '@/lib/normalize'
+import { normalizeTag, tagKey } from '@/lib/normalize'
 import { parseQuery, resolveCategoryName } from '@/search'
 import type { Category, Item, ItemFilter } from '@/types'
 
@@ -39,13 +39,16 @@ export function missingQueryTargets(
   }
 
   if (knownTags !== null) {
-    const known = new Set(knownTags)
+    // Сравнение по tagKey, как в поиске (ё = е): иначе «#отчеты» находит записи с «отчёты», а подсказка
+    // утверждает, что такого тега нет. В тексте — тег в том виде, как его набрали.
+    const known = new Set(knownTags.map(tagKey))
     const seen = new Set<string>()
     for (const raw of [...(parsed.filter.tags ?? []), ...(filter.tags ?? [])]) {
       const tag = normalizeTag(raw)
-      if (!tag || seen.has(tag)) continue
-      seen.add(tag)
-      if (!known.has(tag)) hints.push({ kind: 'tag', name: tag })
+      const key = tagKey(raw)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      if (!known.has(key)) hints.push({ kind: 'tag', name: tag })
     }
   }
 

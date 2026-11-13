@@ -186,7 +186,16 @@ async function run(p: Pipeline, stage: Stage): Promise<OcrOutcome> {
   try {
     if (stage === 'image') return await runVision(p, 'image')
     if (stage === 'pdf-vision') return await runVision(p, 'pdf')
-    const layer = await enqueue(() => runLayer(p))
+    // Ожидание очереди слоя прерывается отменой (как у очереди зрения): иначе отменённая задача висела бы
+    // «В очереди…» до своей очереди, а повторный запуск возвращал бы её промис. Работа в очереди отработает
+    // вхолостую — runLayer сразу видит signal.aborted; publish не тронет новую задачу той же записи.
+    const aborted = untilAborted(p.ctrl.signal)
+    let layer: LayerResult
+    try {
+      layer = await Promise.race([enqueue(() => runLayer(p)), aborted.promise])
+    } finally {
+      aborted.dispose()
+    }
     if (!layer.scan || !p.vision || p.ctrl.signal.aborted) return layer.outcome
     return await runVision(p, 'pdf')
   } catch (e) {
@@ -216,6 +225,17 @@ interface LayerResult {
   outcome: OcrOutcome
   /** Текста в слое нет: дальше — зрение, если оно разрешено. */
   scan: boolean
+}
+
+/** Промис, который при отмене даёт skipped; dispose снимает слушателя. */
+function untilAborted(signal: AbortSignal): { promise: Promise<LayerResult>; dispose: () => void } {
+  let onAbort = () => {}
+  const promise = new Promise<LayerResult>((resolve) => {
+    onAbort = () => resolve({ outcome: skipped(), scan: false })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
+  return { promise, dispose: () => signal.removeEventListener('abort', onAbort) }
 }
 
 async function runLayer(p: Pipeline): Promise<LayerResult> {

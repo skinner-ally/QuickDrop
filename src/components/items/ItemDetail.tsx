@@ -46,7 +46,7 @@ const SOURCE_LABEL: Record<ItemSource, string> = {
   drop: 'перетаскивание',
   import: 'импорт',
   demo: 'демо',
-  extension: 'Из браузера',
+  extension: 'из браузера',
   share: 'из «Поделиться»',
 }
 

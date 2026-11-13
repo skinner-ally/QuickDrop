@@ -30,11 +30,17 @@ jobs:
       - name: Проверка типов
         run: npm run typecheck
 
+      - name: Линт
+        run: npm run lint
+
       - name: Тесты
         run: npm test
 
       - name: Сборка веб-версии
         run: npm run build
+
+      - name: Проверка веб-сборки
+        run: test -f dist/sw.js && test ! -f dist/capture.html
 
   rust:
     name: Rust (cargo test, Windows)
@@ -56,9 +62,16 @@ jobs:
       - name: Установка зависимостей
         run: npm ci
 
-      # Каталог dist нужен для сборки контекста Tauri (frontendDist)
+      # Каталог dist нужен для сборки контекста Tauri (frontendDist). Вариант Tauri: второй вход capture.html
+      # и без service worker (vite.config.ts, isTauriBuild) — так же собирает фронтенд tauri build
       - name: Сборка фронтенда для тестов Rust
         run: npm run build
+        env:
+          TAURI_ENV_PLATFORM: windows
+
+      - name: Проверка Tauri-сборки
+        shell: bash
+        run: test -f dist/capture.html && test ! -f dist/sw.js
 
       - name: Тесты Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked

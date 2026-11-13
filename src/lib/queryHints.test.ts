@@ -13,6 +13,11 @@ describe('missingQueryTargets', () => {
     expect(missingQueryTargets('cat:"мои  проекты"', {}, cats, tags)).toEqual([])
   })
 
+  it('тег сравнивается по правилу поиска: ё = е, повторы по ключу схлопываются', () => {
+    expect(missingQueryTargets('#отчеты', {}, cats, ['отчёты'])).toEqual([])
+    expect(missingQueryTargets('#отчеты tag:отчёты', {}, cats, [])).toEqual([{ kind: 'tag', name: 'отчеты' }])
+  })
+
   it('cat: без категории в базе', () => {
     expect(missingQueryTargets('отчёт cat:Финансы', {}, cats, tags)).toEqual([{ kind: 'category', name: 'Финансы' }])
     expect(missingQueryTargets('cat:"Старые проекты"', {}, cats, tags)).toEqual([

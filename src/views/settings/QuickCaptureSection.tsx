@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { Icon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
@@ -322,6 +322,8 @@ function DesktopBlock({ settings }: { settings: Settings }) {
   const [autostart, setAutostartState] = useState<AutostartState | undefined>()
   const [autostartBusy, setAutostartBusy] = useState(false)
   const alive = useRef(true)
+  // globalShortcutFailure — переменная модуля, не реактивна: после повтора перерисовываем вручную.
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
 
   useEffect(() => {
     alive.current = true
@@ -364,6 +366,14 @@ function DesktopBlock({ settings }: { settings: Settings }) {
     }
   }
 
+  // Enter в поле с тем же значением ничего не делает (CommitInput), поэтому у неназначенного сочетания своя кнопка.
+  const retryShortcut = async () => {
+    const res = await applyGlobalShortcut(settings.globalShortcut)
+    if (res.ok) toast.success('Сочетание назначено')
+    else toast.error(res.error ?? 'Сочетание занято другой программой')
+    if (alive.current) rerender()
+  }
+
   const shortcutFailed = globalShortcutFailure() === settings.globalShortcut
 
   return (
@@ -383,8 +393,11 @@ function DesktopBlock({ settings }: { settings: Settings }) {
           // Сочетание из настроек не зарегистрировалось при запуске — поле не должно выглядеть рабочим.
           shortcutFailed ? (
             <span className="text-destructive">
-              Сочетание {settings.globalShortcut} не назначено: скорее всего, его заняла другая программа. Укажите
-              другое.
+              Сочетание {settings.globalShortcut} не назначено: скорее всего, его заняла другая программа. Освободите
+              его и нажмите «Повторить» или укажите другое.{' '}
+              <Button variant="link" size="sm" className="h-auto p-0 align-baseline" onClick={() => void retryShortcut()}>
+                Повторить
+              </Button>
             </span>
           ) : (
             globalShortcutHint(settings.captureWindow)

@@ -44,6 +44,7 @@ function PickerBox({ scene, items, categories, id }: GraphOverlayProps & { id: s
   const viewSize = useGraph((s) => s.viewSize)
   const [ref, size] = useMeasuredSize<HTMLDivElement>()
   const rowRefs = useRef<Array<HTMLDivElement | null>>([])
+  const listRef = useRef<HTMLDivElement>(null)
 
   const item = items.get(id)
   const node = scene.nodes[scene.byId.get(id) ?? -1]
@@ -56,8 +57,18 @@ function PickerBox({ scene, items, categories, id }: GraphOverlayProps & { id: s
   const [active, setActive] = useState(currentIndex)
 
   // Фокус — на строку, которая сейчас под курсором списка (при открытии — текущая категория).
+  // preventScroll: иначе браузер прокрутит слой графа, пока коробка ещё не измерена и не перевёрнута;
+  // видимость строки держит прокрутка самого списка.
   useEffect(() => {
-    rowRefs.current[active]?.focus()
+    const row = rowRefs.current[active]
+    const list = listRef.current
+    if (!row) return
+    row.focus({ preventScroll: true })
+    if (!list) return
+    const lr = list.getBoundingClientRect()
+    const rr = row.getBoundingClientRect()
+    if (rr.top < lr.top) list.scrollTop -= lr.top - rr.top
+    else if (rr.bottom > lr.bottom) list.scrollTop += rr.bottom - lr.bottom
   }, [active])
 
   // Клик вне списка закрывает его.
@@ -146,7 +157,14 @@ function PickerBox({ scene, items, categories, id }: GraphOverlayProps & { id: s
       style={{ left, top }}
       onKeyDown={onKeyDown}
     >
-      <div role="listbox" aria-label="Категория записи" className="max-h-64 overflow-y-auto p-1">
+      <div
+        ref={listRef}
+        role="listbox"
+        aria-label="Категория записи"
+        className="overflow-y-auto p-1"
+        // Не выше сцены (два поля placeBox по 8 px и рамка с отступами): нижние строки достигаются прокруткой списка.
+        style={{ maxHeight: Math.min(256, Math.max(64, viewSize.height - 16 - 10)) }}
+      >
         {rows.map((r, i) => {
           const current = r.id === item.categoryId
           return (

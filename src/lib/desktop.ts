@@ -191,6 +191,9 @@ export async function applyGlobalShortcut(shortcut: string): Promise<{ ok: boole
   if (!isTauri()) return { ok: false, error: 'Доступно только в настольной версии' }
   const value = shortcut.trim()
   if (!value) return { ok: false, error: 'Укажите сочетание клавиш' }
+  // Откат — на действующее, а не на значение из настроек: после импорта копии с занятым сочетанием они
+  // расходятся. Действующего нет (сбой на старте) — пробуем значение из настроек, как прежде.
+  const prev = activeShortcut
   try {
     await registerShortcut(value)
     failedShortcut = null
@@ -199,10 +202,11 @@ export async function applyGlobalShortcut(shortcut: string): Promise<{ ok: boole
     console.warn('[desktop] сочетание не зарегистрировано', err)
     // Не оставляем приложение без сочетания: пробуем вернуть прежнее
     try {
-      const { globalShortcut } = await getSettings()
-      if (globalShortcut && globalShortcut !== value) {
-        await registerShortcut(globalShortcut)
-        failedShortcut = null
+      const target = prev ?? (await getSettings()).globalShortcut
+      if (target && target !== value) {
+        await registerShortcut(target)
+        // Снимаем отметку, только если вернули именно неприменённое значение настроек.
+        if (failedShortcut === target) failedShortcut = null
       }
     } catch {
       /* ignore */

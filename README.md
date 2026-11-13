@@ -96,7 +96,7 @@ node scripts/gen-extension-icons.mjs              # значки расшире�
 ## Установщики
 
 После `npm run tauri build` установщики лежат в `src-tauri/target/release/bundle/`:
-в Windows — в подпапках `msi/` и `nsis/`, в macOS — в `dmg/` и `macos/`.
+в Windows — в подпапке `nsis/`, в macOS — в `dmg/` и `macos/`.
 При сборке под universal-вариант macOS путь другой: `src-tauri/target/universal-apple-darwin/release/bundle/`.
 Папка `extension/` кладётся в установщик как ресурс (`bundle.resources` в `src-tauri/tauri.conf.json`).
 
@@ -125,21 +125,32 @@ npm run tauri build -- --target universal-apple-darwin
 Два workflow в `.github/workflows/`:
 
 - `ci.yml` — проверки на каждый push в `main` и на каждый pull request. Задача `web` (Ubuntu): согласованность
-  версии, `npm ci`, `npm run typecheck`, `npm test`, `npm run build`. Задача `rust` (Windows): `npm ci`,
-  `npm run build`, `cargo test --locked`.
+  версии, `npm ci`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` (проверяется наличие `dist/sw.js` и
+  отсутствие `dist/capture.html`). Задача `rust` (Windows): `npm ci`,
+  `npm run build` (в варианте Tauri: с `TAURI_ENV_PLATFORM`, проверяется наличие `dist/capture.html` и отсутствие
+  `dist/sw.js`), `cargo test --locked`.
 - `release.yml` — запускается при пуше тега `v*` и вручную (`workflow_dispatch`). Сначала задача `web` с теми же
-  проверками (версия сверяется с тегом), затем сборка Windows и macOS (universal): в Windows перед сборкой
-  выполняется `cargo test`, на macOS тесты Rust не гоняются. Установщики появляются в черновике релиза на
+  проверками (при пуше тега версия сверяется с тегом; при ручном запуске не с тега проверяется только совпадение
+  версии в файлах версии), затем сборка Windows и macOS (universal): в Windows перед сборкой
+  выполняется `cargo test` на Tauri-варианте фронтенда (как в задаче `rust` из `ci.yml`), на macOS тесты Rust не гоняются. Установщики появляются в черновике релиза на
   странице GitHub Releases.
 
 Порядок выпуска версии:
 
 1. Поднять версию одинаково в трёх файлах: `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`.
-2. Проверить: `node scripts/check-version.mjs v1.2.3` (то же делает workflow).
-3. Закоммитить и запушить тег `v1.2.3`.
+   Затем обновить lock-файлы: `cargo update -p quickdrop --manifest-path src-tauri/Cargo.toml --offline` (или любая
+   команда cargo без `--locked`, например `cargo check --manifest-path src-tauri/Cargo.toml`) и
+   `npm install --package-lock-only`. CI запускает `cargo test --locked`: без обновлённого `src-tauri/Cargo.lock`
+   он упадёт.
+2. Проверить: `node scripts/check-version.mjs v1.2.3` (то же делает workflow; сверяет и `src-tauri/Cargo.lock`).
+3. Закоммитить все пять файлов (три файла версии, `src-tauri/Cargo.lock`, `package-lock.json`) и запушить тег `v1.2.3`.
 
 Тег без поднятой версии workflow отклонит: имя релиза берётся из `tauri.conf.json`, и такой тег дополнил бы
 черновик прошлой версии.
+
+Ручной запуск `release.yml` не с тега собирает установщики под текущую версию из `tauri.conf.json`: если релиз
+`v<версия>` уже опубликован, задача `web` останавливается с ошибкой (черновик релиза через это не виден: в нём
+одноимённые установщики были бы заменены). Запускайте вручную только после подъёма версии или с тега.
 
 ## Веб-версия и PWA
 
@@ -330,8 +341,9 @@ QuickDrop слушает только `127.0.0.1` и только пока пр�
 
 ## ИИ-помощник и распознавание (необязательно)
 
-Выключено по умолчанию: пока «Включить ИИ-помощника» не включено и не указан ключ, никакие запросы к ИИ не
-отправляются. Включается в «Настройки → ИИ-помощник». Работает с любым OpenAI-совместимым API (`/chat/completions`);
+Выключено по умолчанию: пока «Включить ИИ-помощника» выключено, записи и их изображения не отправляются; кнопки
+«Проверить подключение» и «Проверить распознавание» (доступны, когда указан ключ) отправляют только проверочные
+данные. Включается в «Настройки → ИИ-помощник». Работает с любым OpenAI-совместимым API (`/chat/completions`);
 есть пресеты DeepSeek и OpenAI, адрес API и модель можно задать вручную. Пресет DeepSeek (`deepseek-chat`)
 изображения не принимает: для распознавания укажите модель со зрением в поле «Модель для распознавания».
 

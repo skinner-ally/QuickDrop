@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildClearing } from '@/lib/ambient/clearing'
 import { chA, createRaster } from '@/lib/ambient/raster'
 import type { AmbientEffect, AmbientScene, EffectFrame, Raster } from '@/lib/ambient/types'
@@ -9,6 +9,9 @@ import { BUTTERFLY_H, BUTTERFLY_W, butterflies, butterflyNearR, butterflySprite,
 import { fireflies, firefliesOfCell } from './fireflies'
 import { effectsFor } from './index'
 import { snow, snowCount } from './snow'
+
+// Перебор растров по сценам и масштабам: под полной нагрузкой vitest отдельные тесты идут 6–10 с.
+vi.setConfig({ testTimeout: 30_000 })
 
 /** Кадр эффектов как у движка: k = zoom · dpr, арт-пиксель — e пикселей устройства, запас видимой части 64 px. */
 function makeFrame(

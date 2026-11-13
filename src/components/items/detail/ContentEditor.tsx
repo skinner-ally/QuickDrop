@@ -29,6 +29,8 @@ export function ContentEditor({
   toolbar,
   onCommitted,
   onEditingChange,
+  normalize,
+  maxLength,
 }: {
   value: string
   onSave: (value: string) => unknown
@@ -44,9 +46,13 @@ export function ContentEditor({
   onCommitted?: (value: string) => void
   /** Поле правки открыто или закрыто (при размонтировании — false). */
   onEditingChange?: (editing: boolean) => void
+  /** Нормализация, с которой onSave сохраняет значение (trim и т.п.): иначе набранный в конце пробел «съедается». */
+  normalize?: (value: string) => string
+  /** Предел длины ввода (UTF-16, как и string.length). */
+  maxLength?: number
 }) {
   const [editing, setEditing] = useState(false)
-  const { value, setValue, flush } = useAutosave(saved, onSave, AUTOSAVE_DELAY)
+  const { value, setValue, flush } = useAutosave(saved, onSave, AUTOSAVE_DELAY, normalize)
   const ref = useRef<HTMLTextAreaElement>(null)
   // Значение на входе в правку: Esc откатывает к нему, даже если таймер уже автосохранил часть набранного.
   const originRef = useRef(saved)
@@ -136,6 +142,7 @@ export function ContentEditor({
         aria-label={label}
         placeholder={placeholder}
         spellCheck={!mono}
+        maxLength={maxLength}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => finish(value)}
         onKeyDown={(e) => {

@@ -17,6 +17,7 @@ import {
   type BackupData,
   type ImportReport,
 } from '@/lib/exportImport'
+import { restoreFromTrash } from '@/db/repo'
 import { getSettings } from '@/db/settings'
 import { snapToGrid } from '@/lib/graphLayout'
 import { MAX_OCR_TEXT } from '@/lib/normalize'
@@ -1256,6 +1257,58 @@ describe('версия 2: корзина, распознанный текст, �
         expect(isVisionBacklog(pic, (await getSettings()).aiAutoOcrSince), mode).toBe(false)
         expect(needsVision(pic), mode).toBe(true) // кнопка «Распознать» остаётся
         expect(Object.hasOwn((await db.items.get('done'))!, 'ocrAutoSkipAt'), mode).toBe(false)
+      }
+    })
+
+    it('корзина и PDF без проверенного слоя: авто не берёт и после восстановления или разбора слоя', async () => {
+      for (const mode of ['merge', 'replace'] as const) {
+        await reset()
+        await enableAuto()
+        const copy = backup({
+          items: [
+            makeItem('pic', {
+              type: 'image',
+              fileId: 'f1',
+              fileName: 'f1.png',
+              createdAt: SINCE + 1_000,
+              deletedAt: Date.now() - DAY,
+            }),
+            makeItem('scan', {
+              type: 'file',
+              fileId: 'f2',
+              fileName: 'f2.pdf',
+              mimeType: 'application/pdf',
+              createdAt: SINCE + 1_000,
+            }),
+            makeItem('layer', {
+              type: 'file',
+              fileId: 'f3',
+              fileName: 'f3.pdf',
+              mimeType: 'application/pdf',
+              createdAt: SINCE + 1_000,
+              ocrText: 'текст слоя',
+              ocrAt: 6_000,
+            }),
+          ],
+          files: [fileRec('f1', 'pic'), fileRec('f2', 'scan'), fileRec('f3', 'layer')],
+        })
+        await importBackup(backupBlob(copy), mode)
+
+        expect((await db.items.get('pic'))!.ocrAutoSkipAt, mode).toBeTypeOf('number')
+        await restoreFromTrash('pic')
+        const pic = (await db.items.get('pic'))!
+        expect(pic.deletedAt, mode).toBeUndefined()
+        expect(isVisionBacklog(pic, SINCE), mode).toBe(false)
+        expect(needsVision(pic), mode).toBe(true)
+
+        expect((await db.items.get('scan'))!.ocrAutoSkipAt, mode).toBeTypeOf('number')
+        // разбор слоя: текста нет — запись становится сканом
+        await db.items.update('scan', { ocrAt: 7_000 })
+        const scan = (await db.items.get('scan'))!
+        expect(needsVision(scan), mode).toBe(true)
+        expect(isVisionBacklog(scan, SINCE), mode).toBe(false)
+
+        expect(Object.hasOwn((await db.items.get('layer'))!, 'ocrAutoSkipAt'), mode).toBe(false)
       }
     })
 

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     unlistenFocus,
     hide: vi.fn().mockResolvedValue(undefined),
     isVisible: vi.fn().mockResolvedValue(true),
+    setFocus: vi.fn().mockResolvedValue(undefined),
     listen: vi.fn(async (_event: string, h: (e: { payload: unknown }) => void) => {
       state.shown = h
       return unlistenShown
@@ -27,7 +28,8 @@ const mocks = vi.hoisted(() => {
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
   getCurrentWebviewWindow: () => ({ listen: mocks.listen, onFocusChanged: mocks.onFocusChanged }),
 }))
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ hide: mocks.hide, isVisible: mocks.isVisible }) }))
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ hide: mocks.hide, isVisible: mocks.isVisible, setFocus: mocks.setFocus }),
+}))
 const invoke = vi.hoisted(() => vi.fn<(cmd: string) => Promise<unknown>>())
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
@@ -36,6 +38,7 @@ import {
   CAPTURE_WINDOW_LABEL,
   capturePointerDown,
   createBlurHider,
+  focusCaptureWindow,
   hideCaptureWindow,
   hideOnBlur,
   initCaptureWindow,
@@ -256,6 +259,15 @@ describe('isCaptureWindowVisible', () => {
     expect(await isCaptureWindowVisible()).toBe(false)
     mocks.isVisible.mockRejectedValueOnce(new Error('нет окна'))
     expect(await isCaptureWindowVisible()).toBe(false)
+  })
+})
+
+describe('focusCaptureWindow', () => {
+  it('ставит фокус окну; отказ (нет права set_focus) — false без исключения', async () => {
+    mocks.setFocus.mockResolvedValueOnce(undefined)
+    expect(await focusCaptureWindow()).toBe(true)
+    mocks.setFocus.mockRejectedValueOnce(new Error('window.set_focus not allowed'))
+    expect(await focusCaptureWindow()).toBe(false)
   })
 })
 

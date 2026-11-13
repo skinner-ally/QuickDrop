@@ -25,7 +25,7 @@ export const EXT_PORT_MAX = 65535
 /** Длина токена: 32 байта в base64url без '='. */
 export const EXT_TOKEN_LENGTH = 43
 
-const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
+const TOKEN_RE = new RegExp(`^[A-Za-z0-9_-]{${EXT_TOKEN_LENGTH}}$`)
 
 /** Годный токен расширения: ровно 43 символа base64url (то же проверяет Rust перед запуском сервера). */
 export function isExtensionToken(v: unknown): v is string {

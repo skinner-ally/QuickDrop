@@ -91,7 +91,7 @@ src-tauri/                     оболочка Tauri 2 (Cargo.toml, tauri.conf.
   capabilities/default.json    права главного окна;  capabilities/capture.json — права мини-окна
 extension/                     расширение Chrome (MV3, без сборки), README.md
 capture.html                   страница мини-окна; index.html — главного
-scripts/                       check-version.mjs, gen-icons.mjs (PWA/Tauri), gen-extension-icons.mjs
+scripts/                       check-version.mjs, gen-icons.mjs (PWA: public/pwa-*.png, apple-touch-icon.png), gen-extension-icons.mjs
 public/                        иконки PWA, theme-init.js (ранняя тема), licenses/pixelfx-LICENSE.txt
 docs/                          DESIGN.md (правила дизайна, нормативно), ИНСТРУКЦИЯ.md (для пользователя)
 mockup/                        справочный образец пиксельного вида (в сборку не входит, не править)
@@ -118,8 +118,12 @@ mockup/                        справочный образец пиксел�
   в поиске и сниппетах, в экспорте Markdown («Распознанный текст») и в резервной копии. `Item.ocrAt` — когда текст
   извлекали в последний раз, в т.ч. безрезультатно (`ocrAt` есть, `ocrText` нет). `Item.ocrVisionAt` — когда
   вложение в последний раз пробовали распознать моделью со зрением (успех, «текста нет» или неустранимая ошибка);
-  поля нет — не пробовали. Все три — вне `ItemPatch`, пишут только `repo.setOcrText`, `repo.setVisionText`,
-  `repo.markVisionTried`; `updatedAt` не меняется. Предел текста — `MAX_OCR_TEXT` (200 000 знаков, `cleanOcrText`).
+  поля нет — не пробовали. `Item.ocrClearedAt` — текст убрал пользователь: PDF с этой отметкой и без `ocrVisionAt`
+  не считается сканом и не уходит в ИИ; ставит только `repo.clearOcrText`, снимают `setOcrText` и `setVisionText`.
+  `Item.ocrAutoSkipAt` — автораспознавание запись не берёт (отмена задачи пользователем или импорт копии); ручное
+  «Распознать» работает; ставит только `repo.markVisionAutoSkip`; это решение этого устройства, поэтому в копию не
+  идёт и из неё не читается. Все пять — вне `ItemPatch`, пишут только `repo.setOcrText`, `repo.setVisionText`,
+  `repo.markVisionTried`, `repo.clearOcrText`, `repo.markVisionAutoSkip`; `updatedAt` не меняется. Предел текста — `MAX_OCR_TEXT` (200 000 знаков, `cleanOcrText`).
 - `positions` — сохранённые положения нод графа (`NodePosition`: `id` записи, `x`, `y`, мировые координаты).
 - `searches` — сохранённые поиски (`SavedSearch`: `id`, `name`, `query`, `order`, `createdAt`). Запрос — строка с
   операторами (`search.serializeFilter`/`composeQuery`).
@@ -137,7 +141,7 @@ mockup/                        справочный образец пиксел�
   «Удалить все данные» стирает вместе с записями (`CLEARED_SETTINGS`): ключ, адрес и модели ИИ, `aiEnabled`,
   `aiAutoOcr`, `aiAutoOcrSince`, `linkProxyUrl`, `extEnabled`, `extToken`; `backupLastAt` не сбрасывается.
 - Формат резервной копии — JSON, `BACKUP_VERSION = 2` (читаются версии 1–2): настройки (кроме закрытых), категории,
-  записи (`deletedAt`, `ocrText`, `ocrAt`, `ocrVisionAt`), `positions`, `searches`, файлы в base64.
+  записи (`deletedAt`, `ocrText`, `ocrAt`, `ocrVisionAt`, `ocrClearedAt`; `ocrAutoSkipAt` не выгружается), `positions`, `searches`, файлы в base64.
 
 ## Контракты модулей
 
@@ -164,18 +168,29 @@ purgeItems(ids: string | string[]): Promise<number>       // окончател�
 emptyTrash(): Promise<number>
 purgeExpired(days: number, now?: number): Promise<number> // автоочистка; days <= 0 — выкл.
 // статусы, избранное, категории, теги, связи
-setStatus(ids, status: ItemStatus) / unarchive(ids)       // prevStatus, processedAt
-toggleFavorite(id) / setFavorite(ids, favorite: boolean)
-setCategory(ids, categoryId: string | null)
-addTags(ids, tags) / removeTag(ids, tag) / renameTag(from, to) / deleteTag(tag)   // rename — по всей базе, со слиянием
-linkItems(a, b) / unlinkItems(a, b)                       // двунаправленно, без самоссылок
-listCategories() / createCategory(name, color?) / updateCategory(id, patch) / deleteCategory(id)   // updateCategory бросает на имя-дубль
+setStatus(ids: string | string[], status: ItemStatus): Promise<void> // ведёт prevStatus/processedAt
+unarchive(ids: string | string[]): Promise<void>          // вернуть в prevStatus (по умолчанию library)
+toggleFavorite(id: string): Promise<void>
+setFavorite(ids: string | string[], favorite: boolean): Promise<void>
+setCategory(ids: string | string[], categoryId: string | null): Promise<void>
+addTags(ids: string | string[], tags: string[]): Promise<void>
+removeTag(ids: string | string[], tag: string): Promise<void>
+renameTag(from: string, to: string): Promise<void>        // по всей базе, со слиянием
+deleteTag(tag: string): Promise<void>
+linkItems(a: string, b: string): Promise<void>            // двунаправленно, без самоссылок
+unlinkItems(a: string, b: string): Promise<void>
+listCategories(): Promise<Category[]>                     // по order
+createCategory(name: string, color?: CategoryColor): Promise<Category>
+updateCategory(id: string, patch: Partial<Pick<Category, 'name' | 'color' | 'order'>>): Promise<void>   // бросает на имя-дубль
+deleteCategory(id: string): Promise<void>                 // записи получают categoryId = null
 // граф и сохранённые поиски
 setPositions(map) / addPositions(...) / getPositions() / removePositions(ids) / clearPositions()
 listSavedSearches() / createSavedSearch(name, query) / updateSavedSearch(...) / deleteSavedSearch(id)
 reorderSavedSearches(ids) / restoreSavedSearch(search)
 // распознанный текст (updatedAt не меняется)
-setOcrText(id: string, text: string, at?: number): Promise<boolean>     // текст слоя PDF, правка, очистка; ocrVisionAt остаётся
+setOcrText(id: string, text: string, at?: number): Promise<boolean>     // текст слоя PDF и правка; снимает ocrClearedAt; ocrVisionAt остаётся. Очистка — только clearOcrText, не setOcrText('')
+clearOcrText(id: string, at?: number): Promise<boolean>                 // очистка пользователем: ocrText удалён, ocrAt = ocrClearedAt
+markVisionAutoSkip(id: string, at?: number): Promise<boolean>           // ocrAutoSkipAt: авто запись не берёт
 setVisionText(id: string, text: string, at?: number): Promise<boolean>  // итог зрения: ocrText (пусто — поле удалено), ocrAt = ocrVisionAt
 markVisionTried(id: string, at?: number): Promise<boolean>              // неустранимая ошибка зрения: только ocrVisionAt
 // чистые
@@ -184,14 +199,14 @@ matchesFilter(item: Item, filter: ItemFilter): boolean    // реэкспорт 
 sortItems(items: Item[], sort: SortMode): Item[]          // не мутирует
 type DeletedSnapshot = { item: Item; file?: StoredFile; linkedIds: string[] }
 ```
-`false` у `set*Text`/`markVisionTried` — записи нет; запись в корзине обновляется как обычная.
+`false` у `set*Text`/`markVision*`/`clearOcrText` — записи нет; запись в корзине обновляется как обычная.
 Остальное: `THUMB_MAX`, `MAX_FILE_SIZE`, `makeThumb`.
 
 ### `src/db/settings.ts`, `src/db/seed.ts`
 ```ts
 getSettings(): Promise<Settings>                          // DEFAULT_SETTINGS + сохранённое (значения проверяются isValidSetting)
 setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>
-setSettings(patch: Partial<Settings>): Promise<void>      // пакетно
+setSettings(patch: Partial<Settings>): Promise<void>      // пакетно; сдвигает aiAutoOcrSince на текущий момент, когда авто снова начинает действовать (ИИ включили, вернули ключ или модель) или меняется хост; явно переданный aiAutoOcrSince не трогает
 useSettings(): Settings | undefined                       // live-хук
 mergeSettings(records: readonly MetaRecord[]): Settings
 seedDemoData(force?: boolean): Promise<boolean>           // true, если засеяно; уважает settings.seeded
@@ -245,7 +260,8 @@ createAutoBackup(deps) / initAutoBackup() / runBackupNow() / checkAutoBackup() /
 clearAllDataAndStopExtension() / applyImportedShellSettings()   // lib/dataDesktop: «Удалить все данные» и импорт с учётом оболочки
 ```
 При слиянии копий записи корзины из копии живут не меньше `IMPORTED_TRASH_GRACE_DAYS` (7) суток; свежее распознавание
-(`ocrAt`) переносится вместе с `ocrText`, итоговый `ocrVisionAt` — наибольший из двух версий.
+(`ocrAt`) переносится вместе с `ocrText`, итоговый `ocrVisionAt` — наибольший из двух версий; `ocrClearedAt` переносится вместе
+с победившим текстом, `ocrAutoSkipAt` — своя отметка устройства.
 
 ### `src/lib/ai.ts` (необязательная часть)
 ```ts
@@ -275,7 +291,7 @@ VISION_MAX_SIDE = 2000; VISION_MIN_SIDE = 24; VISION_MAX_SOURCE_BYTES = 30 МБ;
 VISION_PDF_MAX_PAGES = 5; VISION_JPEG_QUALITY = 0.85; VISION_AUTO_INTERVAL_MS = 3000; VISION_AUTO_SESSION_LIMIT = 100;
 VISION_AUTO_FAIL_STREAK = 3; VISION_AUTO_COOLDOWN_MS = 10 мин; VISION_RATE_PAUSE_MS = 60 с;
 VISION_BACKLOG_BATCH = 20; VISION_BACKLOG_MIN_GAP_MS = 60 с; OCR_VIEW_CHARS = 20_000; OCR_EDIT_MAX = 50_000
-ocrKindOf(item): 'image' | 'pdf' | null;  isScanPdf(item);  needsVision(item);  isVisionBacklog(item, since)
+ocrKindOf(item): 'image' | 'pdf' | null;  isScanPdf(item);  needsVision(item);  isVisionBacklog(item, since)   // since + без ocrAutoSkipAt
 type OcrOutcome = { status: 'ok' | 'empty' | 'failed' | 'skipped'; error?; via?: 'text-layer' | 'vision'; pages?: { read; total }; truncated? }
 type OcrJob = { phase: 'queued' | 'running'; manual; page?; pages?; cancel? };  type OcrNote = { status: 'failed' | 'empty'; error?; at }
 getOcrJob(id) / setOcrJob(id, job | null) / getOcrNote(id) / setOcrNote(id, note | null) / subscribeOcr(cb) / resetOcrState()
@@ -288,7 +304,8 @@ drainVisionBacklog(): Promise<number>;  startVisionAuto(): void   // из main.t
 
 // visionImage.ts
 planVisionSize(width, height, maxSide?): { width; height } | null
-prepareVisionImage(blob: Blob, options?: { backend?: RasterBackend }): Promise<PreparedImage>   // 'ok' | 'too-small' | 'failed'
+planVisionTiles(width, height, maxSide?, overlap?, maxTiles?): ...   // вытянутая картинка — полосы (до 5), каждая — отдельный запрос
+prepareVisionImage(blob: Blob, options?: { backend?: RasterBackend }): Promise<PreparedImage>   // 'ok' | 'tiles' | 'too-small' | 'failed'
 
 // pdfText.ts / pdfEngine.ts / pdfRender.ts
 extractPdfText(data: Blob, options?: PdfTextOptions): Promise<PdfTextResult>   // 'ok' | 'empty' | 'failed' | 'aborted'; failed + permanent
@@ -298,8 +315,8 @@ openPdfPages(data: Blob, options?: { maxPages?; signal?; engine? }): Promise<Pdf
 ```
 Правила: параллельность зрения 1, ручной запуск идёт вне очереди авто и вне предела; авто не чаще раза в 3 с и не
 более 100 запросов за сеанс (страница PDF — запрос); перед КАЖДЫМ запросом заново читаются настройки — выключение ИИ
-действует на уже стоящие задачи; авто берёт только записи с `createdAt >= aiAutoOcrSince` (включение настройки не
-отправляет в ИИ накопленный архив); запись в корзине не распознаётся; мини-окно зрением не распознаёт (запись
+действует на уже стоящие задачи; авто берёт только записи с `createdAt >= aiAutoOcrSince` и без `ocrAutoSkipAt` (включение настройки не
+отправляет в ИИ накопленный архив; «Отменить» у задачи и импорт копии ставят `ocrAutoSkipAt`); запись в корзине не распознаётся; мини-окно зрением не распознаёт (запись
 подхватит главное окно); прежний `ocrText` не стирается, пока нет нового результата; PDF-скан — первые 5 страниц по
 одной, ошибка на любой странице — ошибка всей задачи, частичный текст не пишется. Декодеры сканов pdf.js (JBIG2, JPX)
 подключаются JS-вариантами (`useWasm: false`, `wasmUrl` → `pdfjs/`), файлы кладёт плагин Vite `quickdrop:pdf-decoders`.
@@ -427,11 +444,11 @@ src/views/*View.tsx                    без пропсов (ItemsView — об
 - Запись в БД — только через `db/repo.ts` (исключения: seed, импорт, settings, `settleStaleLinkMeta` в `db.ts`).
 - Чтение в React — через `useLiveQuery`/хуки из `hooks/useItems.ts`.
 - Типовые действия UI (с toast и «Отменить») — только через `lib/actions.ts`; вопрос пользователю — `confirmDialog`, не `window.confirm`.
-- Корзина и распознавание не меняют `updatedAt` (`deletedAt`, `ocrText`, `ocrAt`, `ocrVisionAt`): это не правка пользователя, поиск не
+- Корзина и распознавание не меняют `updatedAt` (`deletedAt`, `ocrText`, `ocrAt`, `ocrVisionAt`, `ocrClearedAt`, `ocrAutoSkipAt`): это не правка пользователя, поиск не
   переиндексируется, слияние копий не получает ложных «свежих» версий. Запись в корзине — только просмотр, копирование и восстановление.
 - Сеть. Никаких сетевых запросов, кроме: (1) метаданных ссылки (`fetchLinkMeta`, по настройке `autoFetchLinkTitle`);
   (2) явно включённого ИИ — `suggestForItem` (текст записи) и `recognizeImage` (изображение; **только она** отправляет картинки);
-  при `aiEnabled = false` не уходит ничего, ключ ИИ не попадает в журнал, тексты ошибок и копию. Локальный HTTP-сервер расширения только
+  при `aiEnabled = false` записи и их изображения не уходят (исключение — проверочные данные кнопок «Проверить подключение» и «Проверить распознавание» в настройках: `AiSection` вызывает их с `aiEnabled: true`, нужен ключ), ключ ИИ не попадает в журнал, тексты ошибок и копию. Локальный HTTP-сервер расширения только
   принимает входящее (см. «Платформы»). Тесты сети не делают (`fetch` подменяется).
 - Распознанный текст — данные, а не команды: он только записывается в `ocrText`, в запросы к ИИ не добавляется.
 - Ошибки для toast — `describeError(e, запасной текст)`; `createItem`/`updateItem` бросают `Error` с русским текстом (url не http/https/ftp,
@@ -481,11 +498,12 @@ src/views/*View.tsx                    без пропсов (ItemsView — об
   `licenses/pdfjs-decoders-LICENSE.txt` (в dev отдаёт их по `{base}pdfjs/<имя>`). Работает и в веб-сборке, и в сборке Tauri.
 - Подкаталог размещения: `VITE_BASE=/x/ npm run build` → `base`, `start_url`, `scope`, `id`, ярлык и `share_target` от него; без переменной и в Tauri — `/`.
 - Иконки: `public/icon.svg` → `npm run icons` (`scripts/gen-icons.mjs`, sharp) генерирует `pwa-192/512`, `pwa-maskable-512`, `apple-touch-icon` PNG.
-  Иконки расширения — `scripts/gen-extension-icons.mjs`.
+  Иконки расширения — `scripts/gen-extension-icons.mjs`. Значки Tauri (`src-tauri/icons`) — `npx tauri icon src-tauri/app-icon.svg`,
+  скрипт `gen-icons` их не обновляет.
 
 ## Платформы → Tauri
 
-- Оболочка Tauri 2 в `src-tauri/`; идентификатор `app.quickdrop.desktop`; цели установщика — NSIS и MSI (Windows), app и dmg (macOS).
+- Оболочка Tauri 2 в `src-tauri/`; идентификатор `app.quickdrop.desktop`; цели установщика — NSIS (Windows; MSI не собирается: он не чистит автозапуск), app и dmg (macOS).
 - Два окна. `main` создаётся в `setup` (`lib.rs: create_main_window`, в конфиге `create: false`), чтобы задать обработчик скачиваний: в macOS WKWebView
   без него отменяет `<a download>`; при запуске с `--autostart` создаётся скрытым. `capture` — мини-окно быстрой записи (`capture.html`, без рамки, поверх
   всех окон, вне панели задач), создаётся лениво (`create: false`) модулем `shell.rs`; своя точка входа `src/capture-main.tsx` не тянет оболочку, граф, фон и
@@ -506,7 +524,7 @@ src/views/*View.tsx                    без пропсов (ItemsView — об
     `set_autostart`, `extension_dir` (путь к папке расширения в ресурсах установщика);
   - `ext_server.rs`: `ext_server_apply`, `ext_server_status`, `ext_take_pending`, `ext_capture_done`.
 - Права окон — `src-tauri/capabilities/default.json` (главное окно: window show/focus/unminimize/is-visible, global-shortcut register/unregister,
-  opener: открытие только http/https и показ файла в проводнике) и `capture.json` (мини-окно: `core:default`, hide, start-dragging).
+  opener: открытие только http/https и показ файла в проводнике) и `capture.json` (мини-окно: `core:default`, hide, start-dragging, set-focus).
 - `src/lib/desktop.ts`: `initDesktop()` при старте подписывается на события, передаёт флаги трея и мини-окна, поднимает приём от расширения (если включён),
   регистрирует глобальное сочетание из настроек, сверяет подтверждённые папки и запускает автокопии; `applyGlobalShortcut()` перерегистрирует сочетание сразу
   (`unregisterAll` + `register`), при ошибке возвращает прежнее; `openExternal()` открывает http/https в системном браузере. Вне Tauri всё это ничего не делает.

@@ -3,7 +3,7 @@
  * Модуль ни от чего не зависит, поэтому его можно импортировать откуда угодно без циклов.
  */
 
-import type { GraphPoint, LinkMeta } from '@/types'
+import { SAVED_SEARCH_NAME_MAX, type GraphPoint, type LinkMeta } from '@/types'
 
 /** Сворачивает строку для сравнения «как человек»: NFKC, нижний регистр, ё = е. Идемпотентна. */
 export function foldText(s: string): string {
@@ -174,4 +174,21 @@ export function sanitizePoint(raw: unknown): GraphPoint | null {
 /** Ключ уникальности имени сохранённого поиска: foldText, пробелы схлопнуты, trim. */
 export function searchNameKey(name: string): string {
   return foldText(name).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Свободное имя поиска: «Имя (2)», «Имя (3)»… (taken — ключи searchNameKey занятых имён). Основа
+ * укорачивается, чтобы имя с суффиксом осталось в пределах SAVED_SEARCH_NAME_MAX — иначе поиск нельзя было бы
+ * пересохранить, а копия его не перенесла бы.
+ */
+export function freeSearchName(name: string, taken: ReadonlySet<string>): string {
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`
+    let base = name.slice(0, SAVED_SEARCH_NAME_MAX - suffix.length)
+    // Обрезка могла разорвать суррогатную пару.
+    const last = base.charCodeAt(base.length - 1)
+    if (last >= 0xd800 && last <= 0xdbff) base = base.slice(0, -1)
+    const candidate = base.trimEnd() + suffix
+    if (!taken.has(searchNameKey(candidate))) return candidate
+  }
 }

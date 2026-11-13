@@ -44,6 +44,13 @@ jobs:
       - name: Сборка фронтенда для тестов Rust
         if: matrix.platform == 'windows-latest'
         run: npm run build
+        env:
+          TAURI_ENV_PLATFORM: windows
+
+      - name: Проверка Tauri-сборки
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: test -f dist/capture.html && test ! -f dist/sw.js
 
       - name: Тесты Rust
         if: matrix.platform == 'windows-latest'
@@ -72,6 +79,18 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # Ручной запуск не с тега не должен дописывать установщики в уже опубликованный релиз той же версии
+      - name: Ручной запуск не дописывает в существующий релиз
+        if: github.event_name == 'workflow_dispatch' && github.ref_type != 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Релиз v$v уже существует: поднимите версию или запустите workflow с тега v$v"
+            exit 1
+          fi
+
       # tauri-action называет релиз по версии из tauri.conf.json, а не по запушенному тегу
       - name: Проверка версии
         env:
@@ -84,11 +103,17 @@ jobs:
       - name: Проверка типов
         run: npm run typecheck
 
+      - name: Линт
+        run: npm run lint
+
       - name: Тесты
         run: npm test
 
       - name: Сборка веб-версии
         run: npm run build
+
+      - name: Проверка веб-сборки
+        run: test -f dist/sw.js && test ! -f dist/capture.html
 
       - uses: actions/upload-artifact@v7
         with:

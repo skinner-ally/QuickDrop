@@ -13,6 +13,7 @@ import { applyImportedShellSettings, clearAllDataAndStopExtension } from '@/lib/
 import { describeError } from '@/lib/errors'
 import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from '@/lib/exportImport'
 import { formatBytes } from '@/lib/itemTitle'
+import { drainPdfBackfill } from '@/lib/ocr'
 import { isTauri } from '@/lib/platform'
 import { TRASH_DAYS_OPTIONS, trashDaysLabel } from '@/lib/trash'
 import { Row, Section, saved } from './Section'
@@ -137,6 +138,8 @@ export function DataSection() {
     void run('import', async () => {
       const r = await importBackup(file, mode)
       setReport(r)
+      // Текст PDF из копии — сразу, а не после перезапуска (стартовый обход к этому времени уже закончился).
+      void drainPdfBackfill()
       // «Заменить» переносит флаги трея и мини-окна и глобальное сочетание: оболочка узнаёт их только из команд.
       if (mode === 'replace' && isTauri()) {
         const shell = await applyImportedShellSettings()

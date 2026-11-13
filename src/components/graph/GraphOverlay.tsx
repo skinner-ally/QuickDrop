@@ -16,11 +16,12 @@ export interface GraphOverlayProps {
 
 /**
  * DOM-слой поверх canvas: подписи, подсказка, меню ноды, выбор категории, ручка и плашка связи, строка для диктора.
+ * overflow-clip, а не hidden: слой не скролл-контейнер, и focus() внутри не сдвинет подписи относительно canvas.
  * Сам слой не ловит указатель; интерактивные дети включают его себе (`pointer-events-auto`, `data-graph-ui`).
  */
 export function GraphOverlay(props: GraphOverlayProps) {
   return (
-    <div data-graph-overlay className="pointer-events-none absolute inset-0 overflow-hidden">
+    <div data-graph-overlay className="pointer-events-none absolute inset-0 overflow-clip">
       <GraphLabels {...props} />
       <GraphLinkTools {...props} />
       <GraphTooltip {...props} />

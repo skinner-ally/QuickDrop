@@ -1338,6 +1338,12 @@ describe('renameQueryOperators', () => {
     expect(renameQueryOperators('tag:работать #Работа', tag)).toBe('tag:работать #work')
     expect(renameQueryOperators('tag:работа', { tag: { from: 'работа', to: 'a.' } })).toBe('tag:"a."')
   })
+  it('сравнивает тег по правилу поиска: ё = е', () => {
+    expect(renameQueryOperators('#отчеты tag:ОТЧЁТЫ,x', { tag: { from: 'отчёты', to: 'reports' } })).toBe(
+      '#reports tag:reports,x',
+    )
+    expect(renameQueryOperators('#отчёты.', { tag: { from: 'отчеты', to: 'reports' } })).toBe('#reports.')
+  })
   it('переписывает cat: по ключу имени и не трогает остальное', () => {
     const cat = { category: { fromKey: 'мои проекты', to: 'Дела' } }
     expect(renameQueryOperators('cat:"Мои проекты"  x', cat)).toBe('cat:Дела  x')

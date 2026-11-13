@@ -340,7 +340,7 @@ export function GraphView() {
           aria-label="Граф записей"
           aria-describedby="graph-a11y-help"
           aria-busy={!loaded || undefined}
-          className="relative min-h-0 flex-1 touch-none overflow-hidden rounded-lg border border-border bg-background outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset data-[cursor=crosshair]:cursor-crosshair data-[cursor=grab]:cursor-grab data-[cursor=grabbing]:cursor-grabbing data-[cursor=pointer]:cursor-pointer px-graph-stage"
+          className="relative min-h-0 flex-1 touch-none overflow-clip rounded-lg border border-border bg-background outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset data-[cursor=crosshair]:cursor-crosshair data-[cursor=grab]:cursor-grab data-[cursor=grabbing]:cursor-grabbing data-[cursor=pointer]:cursor-pointer px-graph-stage"
         >
           <GraphCanvas scene={scene} stageRef={stageRef} live={graphLive} />
           <GraphOverlay scene={scene} items={itemsById} categories={categories} />

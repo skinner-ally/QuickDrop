@@ -991,6 +991,17 @@ describe('сохранённые поиски', () => {
     expect(await db.searches.get(b.id)).toEqual({ ...b, name: 'Дом (3)' })
     expect(await db.searches.count()).toBe(4)
   })
+
+  it('restoreSavedSearch: имя с суффиксом не длиннее предела', async () => {
+    const long = 'я'.repeat(SAVED_SEARCH_NAME_MAX)
+    const a = await createSavedSearch(long, 'q1')
+    await deleteSavedSearch(a.id)
+    await createSavedSearch(long, 'q2')
+    await restoreSavedSearch(a)
+    const name = (await db.searches.get(a.id))!.name
+    expect(name).toBe(`${'я'.repeat(SAVED_SEARCH_NAME_MAX - 4)} (2)`)
+    expect(name.length).toBeLessThanOrEqual(SAVED_SEARCH_NAME_MAX)
+  })
 })
 
 describe('распознанный текст и дубли ссылок', () => {

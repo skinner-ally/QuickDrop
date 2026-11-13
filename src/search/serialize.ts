@@ -5,7 +5,7 @@ import {
   formatDateToken,
   relativeRange,
 } from '@/lib/dates'
-import { categoryNameKey, normalizeTag } from '@/lib/normalize'
+import { categoryNameKey, normalizeTag, tagKey } from '@/lib/normalize'
 import { ITEM_STATUSES, ITEM_TYPES } from '@/types'
 import type { Category, ItemFilter } from '@/types'
 import { OPERATOR_KEYS, QUOTES, lex, parseQuery, withoutTypeOperators } from './query'
@@ -177,7 +177,7 @@ export function composeQuery(
 }
 
 export interface QueryRename {
-  /** Тег переименован: from — нормализованный старый, to — новый. */
+  /** Тег переименован: from — старый тег, сравнивается по tagKey (ё = е, регистр, NFKC), как в поиске; to — новый. */
   tag?: { from: string; to: string }
   /** Категория переименована: fromKey — categoryNameKey старого имени, to — новое имя. */
   category?: { fromKey: string; to: string }
@@ -200,6 +200,7 @@ export function renameQueryOperators(raw: string, rename: QueryRename): string {
     if (/[.,;:!?)]$/.test(tag) || ANY_QUOTE_RE.test(tag)) return quote(tag)
     return tag
   }
+  const fromKey = rename.tag ? tagKey(rename.tag.from) : ''
   for (const tok of lex(source)) {
     if (tok.kind !== 'word') continue
     const { value, quoted } = tok
@@ -207,7 +208,7 @@ export function renameQueryOperators(raw: string, rename: QueryRename): string {
       const tg = rename.tag
       if (!tg) continue
       const body = quoted ? value.slice(1) : value.slice(1).replace(/[.,;:!?)]+$/u, '')
-      if (normalizeTag(body) !== tg.from) continue
+      if (tagKey(body) !== fromKey) continue
       const text = tagText(tg.to)
       if (text !== null) replace(tok.start, tok.end, `#${text}${quoted ? '' : value.slice(1 + body.length)}`)
       continue
@@ -229,7 +230,7 @@ export function renameQueryOperators(raw: string, rename: QueryRename): string {
       let failed = false
       const next = values.map((v) => {
         const core = quoted ? v : v.replace(/[.,;:!?)]+$/u, '')
-        if (normalizeTag(core) !== tg.from) return v
+        if (tagKey(core) !== fromKey) return v
         const text = tagText(tg.to)
         if (text === null) {
           failed = true

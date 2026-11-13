@@ -48,7 +48,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "app", "dmg"],
+    "targets": ["nsis", "app", "dmg"],
     "resources": {
       "../extension/": "extension/"
     },

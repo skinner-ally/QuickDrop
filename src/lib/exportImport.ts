@@ -5,6 +5,7 @@ import { snapToGrid } from '@/lib/graphLayout'
 import {
   categoryNameKey,
   cleanOcrText,
+  freeSearchName,
   hasForeignScheme,
   normalizeTags,
   safeBlobType,
@@ -14,7 +15,7 @@ import {
   searchNameKey,
   settleLinkMeta,
 } from '@/lib/normalize'
-import { needsVision } from '@/lib/ocrState'
+import { ocrKindOf } from '@/lib/ocrState'
 import { isValidSetting } from '@/lib/settingsSchema'
 import {
   CATEGORY_COLORS,
@@ -470,7 +471,7 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   const ocrVisionAt = ts(raw.ocrVisionAt, now)
   if (ocrVisionAt !== undefined && item.fileId) item.ocrVisionAt = ocrVisionAt
   // «Текст убрал пользователь» — тоже только у записи с вложением и без текста. ocrAutoSkipAt из копии не
-  // читается: импорт ставит его сам всем новым записям, ждущим распознавания (importBackup).
+  // читается: импорт ставит его сам новым записям с вложением без текста (importBackup).
   const ocrClearedAt = ts(raw.ocrClearedAt, now)
   if (ocrClearedAt !== undefined && item.fileId && !item.ocrText) item.ocrClearedAt = ocrClearedAt
   // 0 не годится: корзину выбирают по индексу deletedAt > 0, запись с нулём выпала бы из «Очистить корзину».
@@ -516,22 +517,6 @@ function sanitizeSearch(raw: unknown, index: number, now: number): SavedSearch |
   if (!id || !name || !query) return null
   if (name.length > SAVED_SEARCH_NAME_MAX || query.length > SAVED_SEARCH_QUERY_MAX) return null
   return { id, name, query, order: num(raw.order) ?? index, createdAt: ts(raw.createdAt, now) ?? now }
-}
-
-/**
- * Свободное имя поиска: «Имя (2)», «Имя (3)»… Основа укорачивается, чтобы имя с суффиксом
- * осталось в пределах SAVED_SEARCH_NAME_MAX — иначе поиск нельзя было бы пересохранить.
- */
-function freeSearchName(name: string, taken: ReadonlySet<string>): string {
-  for (let n = 2; ; n++) {
-    const suffix = ` (${n})`
-    let base = name.slice(0, SAVED_SEARCH_NAME_MAX - suffix.length)
-    // Обрезка могла разорвать суррогатную пару.
-    const last = base.charCodeAt(base.length - 1)
-    if (last >= 0xd800 && last <= 0xdbff) base = base.slice(0, -1)
-    const candidate = base.trimEnd() + suffix
-    if (!taken.has(searchNameKey(candidate))) return candidate
-  }
 }
 
 /** Тип превью по сигнатуре — для копий без thumbType или с недопустимым thumbType. */
@@ -883,9 +868,16 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
         if ((loc.categoryId ?? null) !== item.categoryId) recategorized.push(item.id)
         // Решение «авто не брать» — здешнее (отмена здесь или прежний импорт): версия из копии его не снимает.
         if (loc.ocrAutoSkipAt !== undefined) item = { ...item, ocrAutoSkipAt: loc.ocrAutoSkipAt }
-      } else if (needsVision(item)) {
-        // Новая здесь запись из копии: автораспознавание её не отправляет, хотя createdAt может быть позже
-        // aiAutoOcrSince (копия с другого устройства). Распознать — кнопкой.
+      } else if (
+        ocrKindOf(item) !== null &&
+        item.ocrVisionAt === undefined &&
+        !item.ocrText &&
+        item.ocrClearedAt === undefined
+      ) {
+        // Новая здесь запись из копии с вложением без текста: автораспознавание её не отправляет, хотя
+        // createdAt может быть позже aiAutoOcrSince (копия с другого устройства), — ни сейчас, ни после
+        // восстановления из корзины или разбора слоя PDF (ocrAt ещё нет), поэтому не needsVision.
+        // Распознать — кнопкой.
         item = { ...item, ocrAutoSkipAt: now }
       }
       itemsToPut.push(item)

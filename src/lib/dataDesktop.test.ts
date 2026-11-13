@@ -124,6 +124,21 @@ describe('applyImportedShellSettings', () => {
     expect(mocks.register).not.toHaveBeenCalled()
   })
 
+  it('после занятого сочетания из копии неудачная правка поля возвращает действующее, а не значение настроек', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await activate()
+    mocks.register.mockImplementation(async (s) => {
+      if (s === 'Alt+Q' || s === 'Alt+W') throw new Error('HotKey already registered')
+    })
+    await setSettings({ globalShortcut: 'Alt+Q' })
+    await applyImportedShellSettings()
+    mocks.register.mockClear()
+    expect((await applyGlobalShortcut('Alt+W')).ok).toBe(false)
+    expect(mocks.register.mock.calls.map(([s]) => s)).toEqual(['Alt+W', DEFAULT_SHORTCUT])
+    // В настройках по-прежнему неприменённое Alt+Q.
+    expect(globalShortcutFailure()).toBe('Alt+Q')
+  })
+
   it('отказ команды → shellOk: false; вне Tauri — ничего не вызывается', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     await activate()

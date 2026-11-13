@@ -113,18 +113,24 @@ export function ocrBlockView(
   if (note?.status === 'failed') {
     // Картинку без ИИ повторить нельзя (toast с причиной вместо запроса) — кнопки нет; PDF разбирается локально.
     const canRetry = !(kind === 'image' && aiBlocked)
+    // Очищенный PDF со слоем (зрением не распознавали) повторяется локально; картинка и скан — снова зрением.
+    const layerRetry = kind === 'pdf' && item.ocrVisionAt === undefined && item.ocrClearedAt !== undefined
     return {
       kind: 'failed',
       error: note.error || 'Не удалось распознать текст',
-      retry: canRetry ? { network: aiBlocked ? null : kind } : null,
+      retry: canRetry ? { network: aiBlocked || layerRetry ? null : kind } : null,
     }
   }
 
-  // PDF без отметки зрения и без текста: слой не проверялся либо текст очистил сам пользователь (repo.setOcrText
-  // ставит ocrAt и при очистке) — отличить нельзя, поэтому предлагается локальное извлечение, а не «скан».
-  // «Нет текстового слоя» — только если слой проверен в этом сеансе (note.empty) или уже распознавали зрением.
-  if (kind === 'pdf' && item.ocrVisionAt === undefined && note?.status !== 'empty') {
-    return { kind: 'start', label: 'Извлечь текст', network: aiBlocked ? null : 'pdf' }
+  // PDF без отметки зрения и без текста, слой ещё не проверен либо текст убрал пользователь (ocrClearedAt):
+  // кнопка — локальное извлечение. У очищенного PDF слой с текстом, в сеть ничего не уйдёт.
+  // Скан (слой проверен и пуст: isScanPdf) идёт ниже — «Распознать текст» или примечание.
+  if (kind === 'pdf' && item.ocrVisionAt === undefined && note?.status !== 'empty' && !isScanPdf(item)) {
+    return {
+      kind: 'start',
+      label: 'Извлечь текст',
+      network: aiBlocked || item.ocrClearedAt !== undefined ? null : 'pdf',
+    }
   }
 
   const scan = kind === 'image' || isScanPdf(item)

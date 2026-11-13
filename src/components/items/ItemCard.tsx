@@ -27,6 +27,7 @@ import { CodeView } from './CodeView'
 import { FilePreview } from './FilePreview'
 import { Highlighted } from './Highlighted'
 import { ItemMenu } from './ItemMenu'
+import { ocrMatchSnippet } from './ocrSnippet'
 import { TagChip } from './TagChip'
 import { useDayKey } from '@/hooks/useItems'
 import { TrashDaysContext } from './trashContext'
@@ -114,8 +115,11 @@ function snippetOf(item: Item, terms: string[]): Snippet {
       return { text: searching ? makeSnippet(item, terms) : firstLine(item.content ?? ''), mono: true }
     case 'file':
     case 'image': {
-      const meta = [item.fileName, item.fileSize !== undefined ? formatBytes(item.fileSize) : ''].filter(Boolean)
-      return { text: meta.join(' · ') }
+      const size = item.fileSize !== undefined ? formatBytes(item.fileSize) : ''
+      // Найдено по распознанному тексту: показываем фрагмент с совпадением, иначе причина находки не видна.
+      const found = ocrMatchSnippet(item, terms)
+      if (found) return { lead: size || undefined, text: found }
+      return { text: [item.fileName, size].filter(Boolean).join(' · ') }
     }
     default: {
       // Без своего заголовка в роли заголовка выступает производная строка (displayTitle) — в сниппете её
@@ -281,6 +285,8 @@ function sameItem(a: Item, b: Item): boolean {
     a.updatedAt === b.updatedAt &&
     // Перенос в корзину и восстановление updatedAt не меняют.
     a.deletedAt === b.deletedAt &&
+    // Распознавание updatedAt не меняет, а сниппет зависит от текста.
+    a.ocrAt === b.ocrAt &&
     a.links.length === b.links.length &&
     a.links.every((l, i) => l === b.links[i])
   )
@@ -563,6 +569,7 @@ export const ItemCard = memo(function ItemCard({
 }: ItemEntryProps) {
   const { item, terms } = hit
   const lead = item.type === 'link' ? domainOf(item.url) : ''
+  const ocrFound = ocrMatchSnippet(item, terms)
   const cat = useListCategory(item.categoryId)
   const trashed = item.deletedAt !== undefined
 
@@ -596,6 +603,11 @@ export const ItemCard = memo(function ItemCard({
           <Highlighted text={displayTitle(item)} terms={terms} />
         </div>
         {lead && <div className="truncate text-xs text-muted-foreground">{lead}</div>}
+        {ocrFound && (
+          <div className="line-clamp-2 text-xs break-words text-muted-foreground">
+            <Highlighted text={ocrFound} terms={terms} />
+          </div>
+        )}
         <div className="mt-auto flex min-w-0 flex-wrap items-center gap-1.5 pt-1">
           <TypeIcon type={item.type} className="text-muted-foreground" />
           <CategoryBadge categoryId={item.categoryId} />

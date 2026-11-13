@@ -5,7 +5,7 @@ import { Icon } from '@/components/icons'
 import { CodeView } from '@/components/items/CodeView'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useAllItems } from '@/hooks/useItems'
-import { openLink } from '@/lib/actions'
+import { openItemInSection, openLink } from '@/lib/actions'
 import { normalizeLanguage } from '@/lib/detect'
 import { mdUrlTransform, openableLinkUrl, parseWikiHref, remarkSoftBreaks, remarkWikiLinks, toggleTaskAt, WIKI_SCHEME } from '@/lib/markdown'
 import { isTauri } from '@/lib/platform'
@@ -20,7 +20,7 @@ export interface MarkdownViewProps {
   selfId?: string
   /** Задан — задачи кликабельны; получает новый исходник целиком. */
   onChange?: (next: string) => void
-  /** Клик по вики-ссылке; по умолчанию useUi.getState().select(id). */
+  /** Клик по вики-ссылке; по умолчанию select(id), в графе — openItemInSection (показ архива). */
   onOpenItem?: (id: string) => void
   density?: 'normal' | 'compact'
   className?: string
@@ -33,14 +33,12 @@ interface ViewContext {
   source: string
   selfId?: string
   onChange?: (next: string) => void
-  onOpenItem: (id: string) => void
+  onOpenItem?: (id: string) => void
 }
-
-const openInPanel = (id: string): void => useUi.getState().select(id)
 
 // Данные просмотра — через контекст: так объект components общий для всех просмотров и не меняется,
 // а разобранное дерево пересоздаётся только при смене исходника.
-const ViewCtx = createContext<ViewContext>({ source: '', onOpenItem: openInPanel })
+const ViewCtx = createContext<ViewContext>({ source: '' })
 /** Позиция пункта-задачи в исходнике и её текст — для флажка внутри этого пункта (позиции нет — флажок только для чтения). */
 interface TaskInfo {
   offset?: number
@@ -78,7 +76,10 @@ function WikiLink({ target, children }: { target: string; children: ReactNode })
       className="qd-md-wiki"
       onClick={(e) => {
         e.stopPropagation()
-        onOpenItem(item.id)
+        if (onOpenItem) onOpenItem(item.id)
+        // В графе запись из скрытого архива должна попасть в сцену: иначе клавиши графа действуют на другую ноду.
+        else if (useUi.getState().view === 'graph') openItemInSection(item)
+        else useUi.getState().select(item.id)
       }}
     >
       {children}
@@ -252,7 +253,7 @@ const REHYPE_OPTIONS: Options['remarkRehypeOptions'] = { footnoteLabel: 'Сно�
 
 function MarkdownViewImpl({ source, selfId, onChange, onOpenItem, density, className }: MarkdownViewProps): ReactElement {
   const ctx = useMemo<ViewContext>(
-    () => ({ source, selfId, onChange, onOpenItem: onOpenItem ?? openInPanel }),
+    () => ({ source, selfId, onChange, onOpenItem }),
     [source, selfId, onChange, onOpenItem],
   )
   // Сырой HTML не разбирается (rehype-raw нет) и выводится текстом; skipHtml не включается — иначе он бы пропал.

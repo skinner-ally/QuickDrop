@@ -51,6 +51,9 @@ pub struct ShellState {
     /// WebView2, и геттер (состояние tao) даёт false, пока курсор стоит в поле. События же Tauri синтезирует
     /// из GotFocus/LostFocus самого WebView2 — на них работает и `onFocusChanged` в JS.
     capture_focused: AtomicBool,
+    /// Последнее значение, переданное WebView2 главного окна в `SetIsVisible(false)` (см. `set_main_webview_visible`).
+    /// По умолчанию false: wry создаёт контроллер видимым даже у скрытого окна.
+    main_webview_hidden: AtomicBool,
 }
 
 impl ShellState {
@@ -175,9 +178,31 @@ fn show_main(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Главное окно не найдено".to_string())?;
     let _ = win.unminimize();
     win.show().map_err(|e| format!("Не удалось показать главное окно: {e}"))?;
+    set_main_webview_visible(app, true);
     let _ = win.set_focus();
     Ok(())
 }
+
+/// Видимость WebView2 главного окна. Скрытие окна в трей и сворачивание WebView2 сам не замечает
+/// (wry зовёт `SetIsVisible` только при создании и в `set_visible`), и страница остаётся `visible`:
+/// живой фон крутится в невидимом окне. С `SetIsVisible(false)` страница получает `visibilitychange`
+/// и `hidden`, анимация встаёт. Повторно одно и то же значение WebView2 не передаётся.
+#[cfg(windows)]
+pub fn set_main_webview_visible(app: &AppHandle, visible: bool) {
+    if let Some(state) = shell_state(app) {
+        if state.main_webview_hidden.swap(!visible, Ordering::SeqCst) == !visible {
+            return;
+        }
+    }
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        let _ = win.with_webview(move |p| unsafe {
+            let _ = p.controller().SetIsVisible(visible);
+        });
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_main_webview_visible(_app: &AppHandle, _visible: bool) {}
 
 /// Создать мини-окно скрытым по записи `capture` из tauri.conf.json.
 /// В Windows `build()` виснет в синхронной команде и в обработчиках событий — вызывать только из
@@ -478,8 +503,19 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             if shell_state(window.app_handle()).is_some_and(|s| s.close_to_tray()) {
                 api.prevent_close();
                 let _ = window.hide();
+                set_main_webview_visible(window.app_handle(), false);
             }
         }
+        // Свёрнуто — WebView2 скрыт; развёрнуто обратно — показан (но не из трея: там окно невидимо).
+        (MAIN_LABEL, WindowEvent::Resized(_)) => {
+            if matches!(window.is_minimized(), Ok(true)) {
+                set_main_webview_visible(window.app_handle(), false);
+            } else if matches!(window.is_visible(), Ok(true)) {
+                set_main_webview_visible(window.app_handle(), true);
+            }
+        }
+        // Окно показали в обход show_main (JS: show + setFocus по глобальному сочетанию) — фокус значит видимость.
+        (MAIN_LABEL, WindowEvent::Focused(true)) => set_main_webview_visible(window.app_handle(), true),
         // Tauri завершает процесс, только когда закрыты все окна, а скрытое мини-окно — тоже окно.
         (MAIN_LABEL, WindowEvent::Destroyed) => request_exit(window.app_handle()),
         (CAPTURE_LABEL, WindowEvent::Focused(focused)) => {

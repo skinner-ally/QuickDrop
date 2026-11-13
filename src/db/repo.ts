@@ -25,6 +25,7 @@ import { derivedTitleLine, displayTitle } from '@/lib/itemTitle'
 import {
   categoryNameKey,
   cleanOcrText,
+  freeSearchName,
   hasForeignScheme,
   normalizeTag,
   normalizeTags,
@@ -945,8 +946,9 @@ export async function reorderSavedSearches(ids: string[]): Promise<void> {
 export async function restoreSavedSearch(search: SavedSearch): Promise<void> {
   await db.transaction('rw', db.searches, async () => {
     const all = await db.searches.toArray()
-    let name = search.name
-    for (let n = 2; findSearchByName(all, name, search.id); n++) name = `${search.name} (${n})`
+    const taken = new Set(all.filter((s) => s.id !== search.id).map((s) => searchNameKey(s.name)))
+    // freeSearchName укорачивает основу: имя с суффиксом не длиннее SAVED_SEARCH_NAME_MAX (иначе копия его не примет).
+    const name = taken.has(searchNameKey(search.name)) ? freeSearchName(search.name, taken) : search.name
     await db.searches.put({ ...search, name })
   })
 }
