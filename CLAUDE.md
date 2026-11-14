@@ -66,6 +66,8 @@ src/
     graph/                     граф: геометрия, рисование, подписи, отбор, тема, жесты, контракт слоя фона (ambient.ts)
     ambient/                   живой фон графа: мир, плитки, спрайты, эффекты, планировщик, контроллер
     pixelfx/                   производные от pixelfx (MIT) + LICENSE и README
+    pixelfx-kit/               ядро pixelfx на JS (MIT, LICENSE и NOTICE.md) только для сцены казни ноды: core/index.js,
+                               fx/moves/node-smite.js; типы рядом (*.d.ts); линт его не проверяет (.oxlintrc.json)
   components/
     ui/                        shadcn (base-nova)
     icons/                     Icon (единственный способ показать значок), PixelIcon, реестр, names.ts, gallery
@@ -76,7 +78,8 @@ src/
     items/detail/              части панели деталей: ItemContent, ContentEditor, LinkCard, FileBlock, OcrBlock (+ ocrView.ts),
                                LinkedItems, LinkPicker, TitleField, AiSuggest, autosave.ts, save.ts
     markdown/                  MarkdownView, MarkdownText, ViewModeToggle
-    graph/                     экран графа: GraphCanvas, оверлеи, меню, жесты (useGraphGestures), клавиши (useGraphKeys), useAmbient
+    graph/                     экран графа: GraphCanvas, оверлеи, меню, жесты (useGraphGestures), клавиши (useGraphKeys), useAmbient,
+                               GraphSmite (сцена казни поверх графа), swarmDriver (покадровый ход стаи)
     palette/                   CommandPalette
   views/                       InboxView, LibraryView, FavoritesView, ArchiveView, TrashView, GraphView (+ ItemsView — общий список),
                                SettingsView и views/settings/* (секции)
@@ -99,7 +102,8 @@ mockup/                        справочный образец пиксел�
 
 ## Модель данных
 
-См. `src/types.ts` и `src/db/db.ts`. Схема Dexie — версия 2 (версии только добавляются, существующие не правятся).
+См. `src/types.ts` и `src/db/db.ts`. Схема Dexie — версия 3 (версии только добавляются, существующие не правятся;
+v3 схему не меняет, её upgrade переносит `positions` со старой сетки графа 32 на 48, ×1,5 — `lib/legacyGrid.ts`).
 Таблицы: `items`, `files`, `categories`, `meta`, `positions`, `searches`.
 
 - `Item.status`: `inbox` → `library` (обработано) ; `archive` — убрано, `prevStatus` хранит откуда.
@@ -138,7 +142,8 @@ mockup/                        справочный образец пиксел�
   `backupDir`, `backupLastAt`, `backupEvery`, `backupKeep`, `mdExportDir`, `extEnabled`, `extPort`, `extToken`.
   «Удалить все данные» стирает вместе с записями (`CLEARED_SETTINGS`): ключ, адрес и модели ИИ, `aiEnabled`,
   `aiAutoOcr`, `aiAutoOcrSince`, `linkProxyUrl`, `extEnabled`, `extToken`; `backupLastAt` не сбрасывается.
-- Формат резервной копии — JSON, `BACKUP_VERSION = 2` (читаются версии 1–2): настройки (кроме закрытых), категории,
+- Формат резервной копии — JSON, `BACKUP_VERSION = 3` (читаются версии 1–3; у копий 1–2 положения при импорте
+  переносятся на сетку 48 — `upgradeLegacyRawPosition`): настройки (кроме закрытых), категории,
   записи (`deletedAt`, `ocrText`, `ocrAt`, `ocrVisionAt`, `ocrClearedAt`; `ocrAutoSkipAt` не выгружается), `positions`, `searches`, файлы в base64.
 
 ## Контракты модулей
@@ -329,7 +334,7 @@ actDelete(ids)                                            // в корзину, 
 actRestoreFromTrash(ids) / actPurge(ids) / actEmptyTrash() / actPurgeAsk(ids) / actEmptyTrashAsk()   // *Ask — с вопросом (store/confirm)
 actSaveSearch(name, query) / actSaveCurrentSearch(name?) / actApplySearch(search) / actDeleteSearch(search) / actRenameSearch(id, name) / actMoveSearch(id, delta)
 actApplyWikiLinks(...) / applyWikiLinks(itemId, content, items) / findDuplicateLinkNow(url) / openItemInSection(...)
-actMoveNode(id, point) / actLinkItems(a, b) / actUnlinkItems(a, b) / actRelayoutGraph()
+actMoveNode(id, point) / actMoveGroup(moves, prev) / actLinkItems(a, b) / actUnlinkItems(a, b) / actRelayoutGraph()
 actRecognize(item) / actCancelRecognize(id) / actSaveOcrText(id, text) / actClearOcrText(item)     // распознанный текст
 ```
 Ошибки в UI — `toast.error(describeError(e, запасной текст))`.
@@ -350,9 +355,12 @@ actRecognize(item) / actCancelRecognize(id) / actSaveOcrText(id, text) / actClea
 - `markdown.ts`: `remarkWikiLinks`, `remarkSoftBreaks`, `mdUrlTransform`, `openableLinkUrl`, `toggleTaskAt`, `isMarkdownFile`, `MD_RENDER_MAX`.
   `wikiLinks.ts`: `parseWikiLinks`, `findWikiSyntax`, `buildTitleIndex`, `resolveWikiLink`, `wikiLinkTargets`. `plainText.ts`: `stripMarkdown`.
   Просмотр Markdown — без `<img>` и без исполнения HTML (react-markdown, urlTransform).
-- `graphLayout.ts`: `computeLayout`, `toLayoutNodes`, `snapToGrid`, `findFreeSpot`, `GRAPH_*` (раскладка зон по категориям).
-  `graph/*`: `geometry` (камера, ступени масштаба 12,5–200 %, хит-тест), `draw` (рисование нод и связей), `labels`, `match`
-  (приглушение по отбору), `scene` (`buildGraphScene`), `theme` (`readGraphTheme` из CSS-переменных), `interaction`, `types`;
+- `graphLayout.ts`: `computeLayout`, `toLayoutNodes`, `snapToGrid`, `findFreeSpot`, `createSpotFinder`, `GRAPH_*` (раскладка зон
+  по категориям; `GRAPH_NODE_SIZE = 24`, `GRAPH_CELL = 48`). `legacyGrid.ts` — перенос положений со старой сетки 32.
+  `graph/*`: `geometry` (камера, ступени масштаба 12,5–200 %, хит-тест), `draw` (рисование нод и связей, `drawSwarmTrails`), `labels`, `match`
+  (приглушение по отбору), `scene` (`buildGraphScene`), `theme` (`readGraphTheme` из CSS-переменных; `linkThin` — тонкая связь),
+  `swarm` (стая при перетаскивании: пружины, задержка по расстоянию, `planSwarmDrop`, текст тоста), `smite` (сцена казни при удалении:
+  стор `useSmite`, `smiteStruck`, `smiteFinished`, `smiteAbortAll`), `interaction`, `types`;
   `graph/ambient.ts` — контракт слоя живого фона (см. ниже).
 - `ambient/*` — живой фон: `world` (лес и пруды по координатам, детерминированно), `clearing` (поляны вокруг нод), `tileRender`/`tileStore`
   (плитки с кэшем), `sprites/*` (своя графика сцен), `effects/*` (листопад, лучи, снег, бабочки, светлячки), `scheduler`
@@ -372,7 +380,8 @@ actRecognize(item) / actCancelRecognize(id) / actSaveOcrText(id, text) / actClea
   `extensionCapture.ts` — разбор сообщения расширения (`parseExtensionMessage`, `extensionMessageToInput`, пределы).
 - Прочее: `platform.ts` (`isTauri`, `isCaptureWindow`, `isMac`, `modKey`), `errors.ts` (`describeError`, `isQuotaError`, `readableError`),
   `clipboard.ts` (`pastedFiles`), `swReload.ts` (`createReloadGate`, `isUserBusy`), `id.ts` (`newId` вместо `crypto.randomUUID`: работа по http в
-  локальной сети), `keys.ts` (`matchKey` — клавиши по `e.code`), `hotkeyGuards.ts`, `backupUi.ts`, `utils.ts` (`cn`).
+  локальной сети), `keys.ts` (`matchKey` — клавиши по `e.code`), `hotkeyGuards.ts`, `backupUi.ts`, `utils.ts` (`cn`), `devStress.ts` (только dev:
+  `window.__qdStress.seed(n)` / `.remove()` — ноды с тегом «стресс» для проверки нагрузки).
 
 ### Состояние и хуки
 - `store/ui.ts` — `useUi`, единственное состояние интерфейса: `view` (`inbox|library|favorites|archive|graph|trash|settings`),
@@ -433,6 +442,10 @@ src/views/*View.tsx                    без пропсов (ItemsView — об
 - На графе: стрелки — переход между записями, `Tab` — по связям, `Enter` — открыть, `E` — категория, `L` — связать,
   `A` — архив, `F` — избранное, `Del` — в корзину или убрать выбранную связь, `Esc` — снять курсор, `+`/`−` — масштаб,
   `0` — весь граф, `Shift`+стрелки — сдвиг; колесо — масштаб, перетаскивание фона — сдвиг.
+- Перетаскивание ноды тянет за ней всю её категорию («медуза»); с `Alt` — только одну ноду, запись без категории — одна;
+  `Esc` во время переноса возвращает стаю. `Del` и «Удалить» в меню ноды — сцена казни (латник рубит ноду, в 35 % случаев
+  нода уклоняется от первого удара); запись уходит в корзину в момент удара. При `prefers-reduced-motion` и больше трёх нод
+  за раз — без сцены.
 - Глобальное сочетание (Tauri, настройка `globalShortcut`, по умолчанию `Ctrl/⌘+Shift+Space`): при `captureWindow` показывает/прячет
   мини-окно быстрой записи (поверх всех окон), иначе поднимает главное окно и открывает в нём добавление.
 - Расширение Chrome: `Alt+Shift+Q` — сохранить страницу (меняется в `chrome://extensions/shortcuts`).

@@ -20,8 +20,8 @@
   (обзор без рамки/тени/метки) и «Классика» на обзоре (зазор в пиксель); мёртвый halo убран. ОСТАЛОСЬ: неровная сетка
   на 12,5 % при dpr 1.25/1.75 (it.fails в geometry.test), draw.ts тянет actions через smite.ts (архитектура), тесты
   нагрузки связей чувствительны к загрузке машины (пределы подняты), «Весь граф» вписывает мельче (крупные ноды).
-- Версия 0.2.2 (package.json, lock, tauri.conf.json, Cargo.toml, Cargo.lock, AboutSection). Предложения по CLAUDE.md —
-  .progress/CLAUDE.proposed.md (ждут подтверждения пользователя).
+- Версия 0.2.2 (package.json, lock, tauri.conf.json, Cargo.toml, Cargo.lock, AboutSection). Предложения из
+  .progress/CLAUDE.proposed.md внесены в CLAUDE.md с подтверждения пользователя (2026-11-14), сверены с кодом.
 - Ревью (opus): исправлены удаление казнью при уходе с графа до удара (smiteAbortAll при размонтировании GraphSmite),
   цвета oklch в «Классике» (toHex через холст), снятие выбора/курсора/меню с казнимой ноды, камера после переноса
   сетки (takeLegacyGridUpgraded → fitAll), бросок стаи (createSpotFinder). НЕ исправлено, решение пользователя:
