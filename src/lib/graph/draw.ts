@@ -8,6 +8,7 @@
 
 import { GRAPH_CELL, GRAPH_NODE_SIZE } from '@/lib/graphLayout'
 import { deviceTransform, queryBounds, visibleBounds } from './geometry'
+import { useSmite } from './smite'
 import { GRAPH_ALPHA_ARCHIVED, GRAPH_ALPHA_DIM } from './types'
 import type { DeviceTransform, DrawState, GraphNode, GraphScene, GraphTheme, GraphViewport } from './types'
 
@@ -36,11 +37,17 @@ const DRAG_GHOST_ALPHA = 0.3
 /** Запас видимой области для нод, CSS-пиксели: рамки выделения и тень не обрываются у края. */
 const NODE_MARGIN_PX = 32
 
-/** Сторона «пикселя» связи в пикселях устройства: max(1, round(2 · zoom · dpr)). */
+/**
+ * Сторона «пикселя» связи в пикселях устройства. Не растёт вместе с масштабом: на 200 % прежняя связь
+ * (2·zoom «пикселя» с кромкой) занимала четверть ноды. Теперь от 150 % — 2 px экрана, ниже — 1 px.
+ */
 export function linkUnit(zoom: number, dpr: number): number {
-  const u = Math.round(2 * zoom * dpr)
+  const u = Math.round((zoom >= 1.5 ? 2 : 1) * dpr)
   return Number.isFinite(u) && u > 1 ? u : 1
 }
+
+/** Ниже 50 % нода не меньше этого размера (CSS-пиксели) и обведена: иначе на обзоре она теряется в лесу. */
+const OVERVIEW_NODE_PX = 12
 
 /** Множитель альфы обычных и приглушённых связей на самой мелкой ступени (12,5 %). */
 export const LINK_ZOOM_ALPHA_MIN = 0.35
@@ -380,9 +387,12 @@ export function drawLinksPixel(
   // вместе с кромкой). При u = 1 (одна точка экрана на «пиксель» связи) кромки у них нет: второй проход по всем
   // связям вдвое замедлял кадр на мелком масштабе (12,5–50 % при dpr 1), поэтому сердцевина там рисуется цветом
   // кромки — иначе тонкая линия пропадает на дневной земле. У горячих связей кромка остаётся.
+  // От 100 % кромка есть и при u = 1: связь — тонкая верёвка 3 px (кромка, сердцевина, кромка). Ниже 100 % при
+  // u = 1 кромки нет (цена кадра на обзоре), сердцевина рисуется цветом кромки.
+  const edgeAtUnit = v.camera.zoom >= 1
   const plain = (list: number[], c0: number, c1: number, edge: number): void => {
     if (list.length === 0) return
-    if (!direct && alphaByte(edge) > 0) {
+    if ((!direct || edgeAtUnit) && alphaByte(edge) > 0) {
       for (const li of list) {
         const l = links[li]
         const a = nodes[l.a]
@@ -398,19 +408,21 @@ export function drawLinksPixel(
     }
   }
   const fDim = GRAPH_ALPHA_DIM * zf
-  const edgeCore = direct && alphaByte(theme.linkEdge) > 0
+  const edgeCore = direct && !edgeAtUnit && alphaByte(theme.linkEdge) > 0
   const dimEdge = scaleAlpha(theme.linkEdge, fDim)
   const normalEdge = scaleAlpha(theme.linkEdge, zf)
+  const dimThin = scaleAlpha(theme.linkThin, fDim)
+  const normalThin = scaleAlpha(theme.linkThin, zf)
   plain(
     dim,
-    edgeCore ? dimEdge : scaleAlpha(theme.link, fDim),
-    edgeCore ? dimEdge : scaleAlpha(theme.linkAlt, fDim),
+    edgeCore ? dimThin : scaleAlpha(theme.link, fDim),
+    edgeCore ? dimThin : scaleAlpha(theme.linkAlt, fDim),
     dimEdge,
   )
   plain(
     normal,
-    edgeCore ? normalEdge : scaleAlpha(theme.link, zf),
-    edgeCore ? normalEdge : scaleAlpha(theme.linkAlt, zf),
+    edgeCore ? normalThin : scaleAlpha(theme.link, zf),
+    edgeCore ? normalThin : scaleAlpha(theme.linkAlt, zf),
     normalEdge,
   )
 
@@ -603,7 +615,7 @@ function nodeAlpha(n: GraphNode): number {
  * Ноды, выделение, перетаскиваемая нода, цель протяжки. Возвращает число нарисованных нод (видимых; нода, которую
  * тянут, считается один раз).
  *
- * Ноды сцены не перекрываются (сетка 32, квадрат 16), поэтому рисуются проходами — тень, рамка, заливка, метка, —
+ * Ноды сцены не перекрываются (сетка 48, квадрат 24), поэтому рисуются проходами — тень, рамка, заливка, метка, —
  * и fillStyle меняется редко: сцена уже упорядочена (приглушённые, затем по цвету). Хост рисует ноды после связей —
  * поверх них.
  *
@@ -617,16 +629,22 @@ export function drawNodes(
   const nodes = scene.nodes
   const t: DeviceTransform = deviceTransform(v)
   const k = t.k
-  const s = Math.max(2, Math.round(GRAPH_NODE_SIZE * k))
+  const overview = v.camera.zoom < 0.5
+  // Обзор (ниже 50 %) определяется масштабом, а не плотностью экрана: на 25 % при dpr 2 (k = 0.5) нода тоже рисуется
+  // по-обзорному — без рамки, тени и метки, иначе полупрозрачная нода вышла бы меньше непрозрачной.
+  const b = theme.nodeEdge !== null && !overview && k >= 0.5 ? Math.max(1, Math.round(2 * k)) : 0
+  // Ниже 50 % — тёмный контур снаружи, и нода растёт до OVERVIEW_NODE_PX, но не больше, чем позволяет шаг сетки:
+  // соседние ноды не склеиваются в одно пятно: в плотной зоне они встают сеткой цветных клеток, контур к контуру.
+  const o = theme.nodeEdge !== null && overview ? Math.max(1, Math.round(v.dpr)) : 0
+  const sBase = Math.max(2, Math.round(GRAPH_NODE_SIZE * k))
+  const cellPx = Math.round(GRAPH_CELL * k)
+  // Без контура («Классика») между соседями остаётся хотя бы пиксель земли.
+  const gap = o > 0 ? 2 * o : Math.max(1, Math.round(v.dpr))
+  const s = overview ? Math.max(sBase, Math.min(Math.round(OVERVIEW_NODE_PX * v.dpr), cellPx - gap)) : sBase
   const half = Math.floor(s / 2)
-  const b = theme.nodeEdge !== null && k >= 0.5 ? Math.max(1, Math.round(2 * k)) : 0
-  // Ниже 50 % рамки нет (съела бы 2–4 px цвета), и заливка многих категорий днём сливается с землёй — вместо рамки
-  // контур 1 px снаружи. Только пока между нодами остаётся не меньше 3 px земли: на 12,5 % при dpr 1 (нода 2 px,
-  // шаг 4 px) контуры сомкнулись бы в сплошное тёмное поле.
-  const o = theme.nodeEdge !== null && k < 0.5 && Math.round(GRAPH_CELL * k) - s >= 3 ? 1 : 0
   const w = Math.max(1, Math.round(2 * k))
-  const withShadow = theme.shadow !== null && k >= 0.5
-  const withInbox = k >= 0.5
+  const withShadow = theme.shadow !== null && !overview && k >= 0.5
+  const withInbox = !overview && k >= 0.5
   const m = Math.max(2, Math.round(6 * k))
   const mPad = Math.max(1, b)
   const mInner = m - 2 * mPad
@@ -635,7 +653,10 @@ export function drawNodes(
   const top = (wy: number): number => t.oy + Math.round(wy * k) - half
 
   const vb = visibleBounds(v, NODE_MARGIN_PX)
-  const visible = queryBounds(scene.index, nodes, vb)
+  // ноды, которые сейчас рисует сцена казни (lib/graph/smite), холст графа не рисует
+  const hidden = useSmite.getState().hidden
+  const found = queryBounds(scene.index, nodes, vb)
+  const visible = hidden.size ? found.filter((i) => !hidden.has(nodes[i].id)) : found
   const count = visible.length
   const xs = new Array<number>(count)
   const ys = new Array<number>(count)
@@ -862,4 +883,67 @@ export function drawNodes(
   }
   setAlpha(1)
   return count
+}
+
+// ───────────────────────── стая: шлейф ─────────────────────────
+
+/** Шлейф ведомой ноды: отпечатки на местах, где она была столько секунд назад, и их альфа. */
+const SWARM_TRAIL: ReadonlyArray<readonly [number, number]> = [
+  [0.07, 0.16],
+  [0.035, 0.32],
+]
+/** Медленнее этого (пиксели устройства в секунду) шлейфа нет: стоящая и доплывающая нода — без следа. */
+const SWARM_TRAIL_MIN_SPEED = 90
+/** Отпечаток не отстаёт от ноды дальше, чем на столько её размеров. */
+const SWARM_TRAIL_MAX = 1.5
+
+/**
+ * Шлейф плывущих нод стаи (lib/graph/swarm): два уменьшающихся квадрата цвета категории позади ноды, ступенями
+ * альфы — без градиентов и свечений. Рисуется после связей и до нод. Размер квадрата — как у drawNodes.
+ */
+export function drawSwarmTrails(
+  ctx: CanvasRenderingContext2D,
+  scene: GraphScene,
+  v: GraphViewport,
+  theme: GraphTheme,
+  members: ReadonlyArray<{ id: string; x: number; y: number; vx: number; vy: number }>,
+): void {
+  const t: DeviceTransform = deviceTransform(v)
+  const k = t.k
+  const overview = v.camera.zoom < 0.5
+  const o = theme.nodeEdge !== null && overview ? Math.max(1, Math.round(v.dpr)) : 0
+  const sBase = Math.max(2, Math.round(GRAPH_NODE_SIZE * k))
+  const cellPx = Math.round(GRAPH_CELL * k)
+  const s = overview ? Math.max(sBase, Math.min(Math.round(OVERVIEW_NODE_PX * v.dpr), cellPx - 2 * o)) : sBase
+  const half = Math.floor(s / 2)
+  const shrink = Math.max(1, Math.round(s / 6))
+  const vb = visibleBounds(v, NODE_MARGIN_PX)
+  const hidden = useSmite.getState().hidden
+  let fill: string | null = null
+  for (let pass = 0; pass < SWARM_TRAIL.length; pass++) {
+    const [lag, alpha] = SWARM_TRAIL[pass]
+    const size = s - 2 * shrink * (SWARM_TRAIL.length - pass)
+    if (size < 1) continue
+    const inset = (s - size) >> 1
+    for (const m of members) {
+      const speed = Math.hypot(m.vx, m.vy) * k
+      if (!(speed >= SWARM_TRAIL_MIN_SPEED)) continue
+      if (m.x < vb.minX || m.x > vb.maxX || m.y < vb.minY || m.y > vb.maxY) continue
+      const i = scene.byId.get(m.id)
+      if (i === undefined || hidden.has(m.id)) continue
+      const n = scene.nodes[i]
+      // Отставание ограничено: на рывке отпечаток не отрывается от ноды.
+      const f = Math.min(lag, (SWARM_TRAIL_MAX * s * (lag / SWARM_TRAIL[0][0])) / speed)
+      const x = t.ox + Math.round((m.x - m.vx * f) * k) - half + inset
+      const y = t.oy + Math.round((m.y - m.vy * f) * k) - half + inset
+      const color = theme.cat[n.color] ?? theme.cat.none
+      if (color !== fill) {
+        ctx.fillStyle = color
+        fill = color
+      }
+      ctx.globalAlpha = alpha * nodeAlpha(n)
+      ctx.fillRect(x, y, size, size)
+    }
+  }
+  ctx.globalAlpha = 1
 }

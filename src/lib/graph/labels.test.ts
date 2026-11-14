@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GraphPoint, Item } from '@/types'
 import { GRAPH_CELL, GRAPH_NODE_SIZE } from '@/lib/graphLayout'
-import { GRAPH_LABEL_GAP, GRAPH_LABEL_HEIGHT, GRAPH_LABEL_LIMIT, GRAPH_LABEL_MAX_WIDTH, pickLabels } from './labels'
+import { GRAPH_LABEL_GAP, GRAPH_LABEL_HEIGHT, GRAPH_LABEL_LIMIT, GRAPH_LABEL_MAX_WIDTH, labelHeight, pickLabels } from './labels'
 import type { GraphLabel } from './labels'
 import { buildGraphScene } from './scene'
 import type { Bounds, GraphScene } from './types'
@@ -28,11 +28,24 @@ function grid(size: number, title = 'abc'): GraphScene {
 
 const EVERYWHERE: Bounds = { minX: -1e6, minY: -1e6, maxX: 1e6, maxY: 1e6 }
 
+/**
+ * Плашка подписи: от края ноды с заходом GAP под её рамку, ширина — текст + 8, высота — labelHeight(zoom).
+ * Заход под свою ноду (2 px) в проверку не входит — как в pickLabels.
+ */
 function rectOf(l: GraphLabel, zoom: number, width: number) {
   const left = l.x * zoom + (GRAPH_NODE_SIZE / 2) * zoom + GRAPH_LABEL_GAP
-  const top = l.y * zoom - GRAPH_LABEL_HEIGHT / 2
-  return { left, top, right: left + width, bottom: top + GRAPH_LABEL_HEIGHT }
+  const h = labelHeight(zoom)
+  const top = l.y * zoom - h / 2
+  return { left: left - GRAPH_LABEL_GAP, top, right: left + Math.min(GRAPH_LABEL_MAX_WIDTH, width + 8), bottom: top + h }
 }
+
+describe('labelHeight', () => {
+  it('вровень с нодой, но не ниже GRAPH_LABEL_HEIGHT', () => {
+    expect(labelHeight(1)).toBe(Math.max(GRAPH_LABEL_HEIGHT, GRAPH_NODE_SIZE))
+    expect(labelHeight(2)).toBe(Math.max(GRAPH_LABEL_HEIGHT, 2 * GRAPH_NODE_SIZE))
+    for (const zoom of [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2]) expect(labelHeight(zoom)).toBeGreaterThanOrEqual(GRAPH_LABEL_HEIGHT)
+  })
+})
 
 describe('pickLabels', () => {
   it('ниже 100 % — пусто', () => {
@@ -51,7 +64,7 @@ describe('pickLabels', () => {
   })
 
   it('при 200 % короткие подписи помещаются между нодами', () => {
-    // Ширина «abc» — 25 px: от 22 до 47, квадрат соседа начинается с 48.
+    // Плашка «abc» — 25 + 8 px: от 24 (край ноды) до 55, квадрат соседа начинается с 72.
     expect(pickLabels(grid(4), EVERYWHERE, 2, [])).toHaveLength(16)
   })
 
@@ -105,8 +118,8 @@ describe('pickLabels', () => {
   })
 
   it('приглушённые ноды подписей не получают, но подписи их квадраты не накрывают', () => {
-    // a — приглушена; подпись b (слева от a) накрыла бы квадрат a.
-    const s = scene([['a', 0, 0], ['b', -32, 0]], new Set(['b']))
+    // a — приглушена; подпись b (на клетку левее a) на 100 % накрыла бы квадрат a, на 200 % — помещается.
+    const s = scene([['a', 0, 0], ['b', -GRAPH_CELL, 0]], new Set(['b']))
     expect(pickLabels(s, EVERYWHERE, 2, [])).toHaveLength(1)
     expect(pickLabels(s, EVERYWHERE, 1, [])).toEqual([])
   })
@@ -120,7 +133,7 @@ describe('pickLabels', () => {
 
   it('ширина — по measure, но не больше предела', () => {
     const s = scene([['a', 0, 0, 'x'], ['b', 100, 0, 'y']])
-    // Узкая подпись a помещается до квадрата b (92..108): 14 + 70 = 84.
+    // Узкая подпись a помещается до квадрата b (88..112): плашка от 10 до 10 + 70 + 8 = 88.
     expect(pickLabels(s, EVERYWHERE, 1, [], { measure: () => 70 })).toHaveLength(2)
     // Широкая (ограничена 160) — накрывает b.
     expect(pickLabels(s, EVERYWHERE, 1, [], { measure: () => 1000 }).map((l) => l.id)).toEqual(['b'])
@@ -142,7 +155,7 @@ describe('pickLabels', () => {
     for (const zoom of [1, 1.5, 2]) {
       const labels = pickLabels(s, EVERYWHERE, zoom, [])
       expect(labels.length).toBeGreaterThan(10)
-      const rects = labels.map((l) => rectOf(l, zoom, Math.min(GRAPH_LABEL_MAX_WIDTH, l.text.length * 7 + 4)))
+      const rects = labels.map((l) => rectOf(l, zoom, l.text.length * 7 + 4))
       for (let i = 0; i < rects.length; i++) {
         for (let j = i + 1; j < rects.length; j++) {
           const a = rects[i]

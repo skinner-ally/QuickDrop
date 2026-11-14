@@ -1,0 +1,38 @@
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/nunito/wght.css";
+@import "@fontsource-variable/handjet/wght.css";
+@import "@fontsource/tiny5/latin-400.css";
+@import "@fontsource/tiny5/cyrillic-400.css";
+
+/* Шрифт текста действует только в пиксельных сценах. По умолчанию — «Округлый» (Nunito). */
+:root.pixel {
+  --font-body: 'Nunito Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-head: 'Tiny5', ui-monospace, monospace;
+  --fw: 600; --fw-m: 700; --fw-b: 800; --fw-head: 400;
+  --font-weight-normal: var(--fw);  --font-weight-medium: var(--fw-m);
+  --font-weight-semibold: var(--fw-b);  --font-weight-bold: var(--fw-b);
+  --text-2sm: 14px;
+}
+:root.pixel.ft-plain {
+  --font-body: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --fw: 450; --fw-m: 550; --fw-b: 650;
+}
+/* Handjet узкий: крупнее, жирнее и с разрядкой (значения мокапа) */
+:root.pixel.ft-soft {
+  --font-body: 'Handjet Variable', 'Tiny5', ui-monospace, monospace;
+  --font-head: 'Handjet Variable', 'Tiny5', ui-monospace, monospace;
+  --fw: 600; --fw-m: 600; --fw-b: 700; --fw-head: 700;
+  --text-2xs: 15px; --text-xs: 15px; --text-2sm: 17px; --text-sm: 17px; --text-md: 18px; --text-base: 18px;
+  --text-lg: 22px; --text-xl: 22px; --text-2xl: 26px; --text-3xl: 30px;
+  --text-xs--line-height: 1.25; --text-sm--line-height: 1.25; --text-base--line-height: 1.25;
+  --text-lg--line-height: 1.2; --text-xl--line-height: 1.2; --text-2xl--line-height: 1.1; --text-3xl--line-height: 1.1;
+}
+/* Tiny5 чёткий только на 8/16/24/32px и только в одном весе */
+:root.pixel.ft-pixel {
+  --font-body: 'Tiny5', ui-monospace, monospace;
+  --fw: 400; --fw-m: 400; --fw-b: 400;
+  --text-2xs: 16px; --text-xs: 16px; --text-2sm: 16px; --text-sm: 16px; --text-md: 16px; --text-base: 16px;
+  --text-lg: 24px; --text-xl: 24px; --text-2xl: 24px; --text-3xl: 32px;
+  --text-xs--line-height: 1.25; --text-sm--line-height: 1.25; --text-base--line-height: 1.25;
+  --text-lg--line-height: 1.17; --text-xl--line-height: 1.17; --text-2xl--line-height: 1.17; --text-3xl--line-height: 1.125;
+}

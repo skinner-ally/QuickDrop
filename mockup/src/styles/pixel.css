@@ -1,0 +1,292 @@
+/* Пиксельные сцены. Всё под .pixel и вне @layer: сильнее утилит Tailwind. В «Классике» файл не действует. */
+
+/* ───────── 1. Общие правила ───────── */
+:root.pixel {
+  --px-hi: rgb(255 255 255 / .35);   /* светлая грань скоса */
+  --px-lo: var(--paper-line);        /* тёмная грань скоса */
+  --px-corners: polygon(0 4px, 2px 4px, 2px 2px, 4px 2px, 4px 0, calc(100% - 4px) 0, calc(100% - 4px) 2px,
+    calc(100% - 2px) 2px, calc(100% - 2px) 4px, 100% 4px, 100% calc(100% - 4px), calc(100% - 2px) calc(100% - 4px),
+    calc(100% - 2px) calc(100% - 2px), calc(100% - 4px) calc(100% - 2px), calc(100% - 4px) 100%, 4px 100%,
+    4px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 4px), 0 calc(100% - 4px));
+  --default-transition-duration: 0ms;
+  --default-transition-timing-function: steps(3, end);
+  scrollbar-color: var(--paper-line) transparent;
+}
+.pixel *, .pixel *::before, .pixel *::after {
+  border-radius: 0;
+  --tw-shadow: 0 0 #0000; --tw-inset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000; --tw-inset-ring-shadow: 0 0 #0000; --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-enter-scale: 1; --tw-exit-scale: 1;
+}
+.pixel body { font-weight: var(--fw); }
+.pixel:not(.ft-plain) body { font-feature-settings: normal; }
+.pixel.ft-soft body { letter-spacing: .07em; line-height: 1.25; }
+.pixel.ft-pixel body { line-height: 1.25; -webkit-font-smoothing: none; font-smooth: never; font-synthesis: none; }
+.pixel .font-heading { font-weight: var(--fw-head); letter-spacing: 0; font-synthesis: none; }
+.pixel .font-mono { letter-spacing: 0; }
+.pixel .px-icon.animate-spin { animation-timing-function: steps(4, end); animation-duration: .6s; }
+
+/* ───────── 2. Фокус: обводка brand вместо колец ───────── */
+.pixel :is(a, button, input, textarea, select, summary, [role="button"], [role="radio"], [role="switch"],
+    [role="checkbox"], [role="tab"], [role="listitem"], [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--brand); outline-offset: 2px;
+}
+
+/* ───────── 3. Компоненты shadcn по data-slot ───────── */
+/* button: вариант определяется по классу фона (у ui/button нет data-variant, а менять файл нельзя) */
+.pixel [data-slot="button"] { border-width: 2px; font-size: var(--text-2sm); }
+.pixel [data-slot="button"]:active:not([aria-haspopup]) { translate: 0 2px; }
+.pixel [data-slot="button"]:is([class~="bg-primary"], [class~="bg-background"], [class~="bg-secondary"],
+    [class~="bg-destructive/10"], [class~="bg-brand"], [aria-pressed="true"]) {
+  border-color: var(--wood-dark);
+  box-shadow: inset 2px 2px 0 var(--px-hi), inset -2px -2px 0 var(--px-lo);
+}
+.pixel [data-slot="button"]:is([class~="bg-primary"], [class~="bg-background"], [class~="bg-secondary"],
+    [class~="bg-destructive/10"], [class~="bg-brand"]):hover { filter: brightness(1.06); }
+.pixel [data-slot="button"]:is([class~="bg-background"], [class~="bg-secondary"], [class~="bg-destructive/10"]) {
+  background-color: var(--paper-2);
+}
+.pixel [data-slot="button"][class~="bg-primary"] {
+  background-color: var(--primary); --px-hi: rgb(255 255 255 / .22); --px-lo: rgb(0 0 0 / .3);
+}
+.pixel [data-slot="button"][class~="bg-brand"] {
+  background-color: var(--brand); --px-hi: var(--brand-hi); --px-lo: var(--brand-lo);
+}
+.pixel [data-slot="button"][aria-pressed="true"] {
+  background-color: var(--gold); color: var(--gold-ink); --px-hi: rgb(255 255 255 / .5); --px-lo: var(--gold-lo);
+}
+
+/* значок во «включённой» кнопке наследует цвет кнопки: свой text-gold (звезда) на золотом фоне давал 1:1.
+   Правило вне @layer, поэтому сильнее утилит независимо от специфичности */
+.pixel :is([data-slot="button"][aria-pressed="true"],
+    .px-btn:is([aria-pressed="true"], [aria-checked="true"], [data-on="true"]),
+    .px-chip:is([aria-pressed="true"], [data-on="true"]),
+    [data-slot="tabs-trigger"]:is([data-active], [aria-selected="true"])) .px-icon { color: inherit; }
+
+/* поля (кроме намеренно безрамочных). Между :is() и :not() пробела быть не должно — иначе это потомок */
+.pixel :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="input-group"]):not([class~="border-0"], [class~="border-transparent"]) {
+  background-color: var(--paper-2); border: 2px solid var(--wood-dark); box-shadow: inset 2px 2px 0 var(--paper-line);
+}
+.pixel :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"])[aria-invalid="true"],
+.pixel [data-slot="input-group"]:has([aria-invalid="true"]) { border-color: var(--danger); }
+/* command-input — поле палитры: оно лежит в input-group, но своего input-group-control не имеет */
+.pixel :is([data-slot="input-group-control"], [data-slot="command-input"]):focus-visible { outline: none; }
+.pixel [data-slot="input-group"]:has(:is([data-slot="input-group-control"], [data-slot="command-input"]):focus-visible) {
+  outline: 2px solid var(--brand); outline-offset: 2px;
+}
+
+/* switch: 40×22, бегунок 14×14 (мокап .tg) */
+.pixel [data-slot="switch"] { width: 40px; height: 22px; background-color: var(--paper-line); border: 2px solid var(--wood-dark); }
+.pixel [data-slot="switch"][data-checked] { background-color: var(--leaf); }
+.pixel [data-slot="switch-thumb"] {
+  width: 14px; height: 14px; background-color: var(--paper); border: 2px solid var(--wood-dark); translate: 2px 0;
+}
+.pixel [data-slot="switch-thumb"][data-checked] { translate: 20px 0; }
+
+/* checkbox */
+.pixel [data-slot="checkbox"] { border: 2px solid var(--wood-dark); background-color: var(--paper-2); }
+/* ночью paper-2 = фон карточки, а wood-dark к нему 1.2:1: пустому флажку нужна видимая кромка */
+.pixel.dark [data-slot="checkbox"]:not([data-checked]) { border-color: var(--ink-dim); }
+.pixel [data-slot="checkbox"][data-checked] { background-color: var(--primary); color: var(--primary-foreground); }
+
+/* затемнение под диалогом и листом */
+.pixel :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"]) { background-color: var(--scrim); backdrop-filter: none; }
+
+/* всплывающие поверхности: рама наружу, жёсткая тень, прямые углы (= .px-pop).
+   data-skin у диалога: "panel" — рама-панель (ниже), "none" — без кожи (лайтбокс изображения остаётся тёмным) */
+.pixel :is([data-slot="dialog-content"]:not([data-skin]), [data-slot="popover-content"], [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"]) {
+  background-color: var(--paper); color: var(--ink); border: 2px solid var(--wood-lo);
+  box-shadow: 0 0 0 2px var(--wood-hi), 0 0 0 4px var(--wood-dark), 4px 4px 0 4px var(--shadow);
+  animation-timing-function: steps(3, end);
+}
+/* диалог-панель (быстрая запись, палитра команд): рама со ступенчатыми углами, как .panel.dialog мокапа */
+.pixel [data-slot="dialog-content"]:is([data-skin="panel"], :has(> [data-slot="command"])) {
+  background-color: var(--paper); color: var(--ink); border: 2px solid var(--wood-dark);
+  box-shadow: inset 0 0 0 2px var(--wood-hi), inset 0 0 0 6px var(--wood), inset 0 0 0 8px var(--wood-lo);
+  padding: var(--px-pad, 14px); clip-path: var(--px-corners); animation-timing-function: steps(3, end);
+}
+.pixel [data-slot="sheet-content"] {
+  background-color: var(--paper); border: 0 solid var(--wood-dark); box-shadow: none;
+  transition-duration: 160ms; transition-timing-function: steps(4, end);
+}
+.pixel [data-slot="sheet-content"][data-side="left"] { border-right-width: 2px; box-shadow: 4px 0 0 var(--shadow); }
+.pixel [data-slot="sheet-content"][data-side="right"] { border-left-width: 2px; box-shadow: -4px 0 0 var(--shadow); }
+.pixel [data-slot="sheet-content"][data-side="top"] { border-bottom-width: 2px; box-shadow: 0 4px 0 var(--shadow); }
+.pixel [data-slot="sheet-content"][data-side="bottom"] { border-top-width: 2px; box-shadow: 0 -4px 0 var(--shadow); }
+
+/* пункты меню, списка выбора и палитры: подсвеченный — как активный пункт навигации мокапа */
+.pixel :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"],
+    [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"]):is([data-highlighted], [data-popup-open]),
+.pixel [data-slot="command-item"][data-selected="true"] {
+  background-color: var(--paper-2);
+  outline: 2px solid var(--wood-dark); outline-offset: -2px;
+  box-shadow: inset -4px -4px 0 var(--paper-line);
+}
+.pixel :is([data-slot="dropdown-menu-separator"], [data-slot="select-separator"], [data-slot="command-separator"]) { height: 2px; }
+.pixel [data-slot="separator"][data-orientation="horizontal"] { height: 2px; }
+.pixel [data-slot="separator"][data-orientation="vertical"] { width: 2px; }
+
+/* tabs: кнопки-сегменты, активная — золото */
+.pixel [data-slot="tabs-list"] { background-color: transparent; padding: 0; gap: 4px; }
+.pixel [data-slot="tabs-trigger"] {
+  background-color: var(--paper-2); color: var(--ink); border: 2px solid var(--wood-dark);
+  box-shadow: inset 2px 2px 0 var(--px-hi), inset -2px -2px 0 var(--px-lo);
+}
+.pixel [data-slot="tabs-trigger"]:is([data-active], [aria-selected="true"]) {
+  background-color: var(--gold); color: var(--gold-ink); --px-hi: rgb(255 255 255 / .5); --px-lo: var(--gold-lo);
+}
+.pixel [data-slot="tabs-trigger"]::after { content: none; }
+
+/* tooltip: чернильная плашка, без стрелки */
+.pixel [data-slot="tooltip-content"] {
+  background-color: var(--ink); color: var(--paper); box-shadow: 2px 2px 0 var(--shadow); animation-timing-function: steps(3, end);
+}
+.pixel [data-slot="tooltip-content"] > [class*="rotate-45"] { display: none; }
+
+/* kbd (и ui/kbd, и «сырые» <kbd> в компонентах) */
+.pixel kbd { background-color: var(--paper-line); color: var(--ink); border-color: transparent; font-family: inherit; font-size: var(--text-2xs); opacity: 1; }
+.pixel :is([data-slot="button"][class~="bg-brand"], .px-btn-brand) kbd { background-color: var(--brand-lo); color: var(--brand-foreground); }
+/* ночью brand-foreground тёмный: на brand-lo выходило 3.07:1 */
+.pixel.dark :is([data-slot="button"][class~="bg-brand"], .px-btn-brand) kbd { background-color: var(--brand-hi); }
+
+/* прочее */
+.pixel [data-slot="badge"] { background-color: var(--paper-2); color: var(--ink); border: 2px solid var(--paper-line); }
+.pixel [data-slot="scroll-area-thumb"] { background-color: var(--paper-line); }
+
+/* ───────── 4. sonner ───────── */
+.pixel [data-sonner-toast][data-styled="true"] {
+  background: var(--paper); color: var(--ink); border: 2px solid var(--wood-lo); border-radius: 0;
+  box-shadow: 0 0 0 2px var(--wood-hi), 0 0 0 4px var(--wood-dark), 4px 4px 0 4px var(--shadow);
+  font-family: var(--font-body); font-size: var(--text-sm); font-weight: var(--fw);
+}
+.pixel [data-sonner-toast][data-styled="true"] [data-description] { color: var(--ink-dim); }
+.pixel [data-sonner-toast][data-styled="true"] :is([data-button], [data-close-button]) {
+  background: var(--paper-2); color: var(--ink); border: 2px solid var(--wood-dark); border-radius: 0;
+  box-shadow: inset 2px 2px 0 var(--px-hi), inset -2px -2px 0 var(--px-lo); font-weight: var(--fw-m);
+}
+
+/* ───────── 5. Примитивы px-* ───────── */
+.pixel .px-panel {
+  background: var(--paper); color: var(--ink); border: 2px solid var(--wood-dark);
+  box-shadow: inset 0 0 0 2px var(--wood-hi), inset 0 0 0 6px var(--wood), inset 0 0 0 8px var(--wood-lo);
+  padding: var(--px-pad, 14px); clip-path: var(--px-corners);
+}
+.pixel .px-panel-thin {
+  background: var(--paper); color: var(--ink); border: 2px solid var(--wood-dark);
+  box-shadow: inset 0 0 0 2px var(--wood-hi), inset 0 0 0 4px var(--wood-lo);
+  padding: var(--px-pad, 10px); clip-path: var(--px-corners);
+}
+.pixel .px-pop {
+  background: var(--paper); color: var(--ink); border: 2px solid var(--wood-lo);
+  box-shadow: 0 0 0 2px var(--wood-hi), 0 0 0 4px var(--wood-dark), 4px 4px 0 4px var(--shadow);
+}
+
+.pixel .px-btn {
+  background: var(--paper-2); color: var(--ink); border: 2px solid var(--wood-dark);
+  box-shadow: inset 2px 2px 0 var(--px-hi), inset -2px -2px 0 var(--px-lo);
+}
+.pixel .px-btn:hover { filter: brightness(1.06); }
+.pixel .px-btn:active { translate: 0 2px; box-shadow: inset 2px 2px 0 var(--px-lo); }
+.pixel .px-btn:is(:disabled, [aria-disabled="true"]) { opacity: .5; filter: none; translate: none; }
+.pixel .px-btn-brand { background: var(--brand); color: var(--brand-foreground); --px-hi: var(--brand-hi); --px-lo: var(--brand-lo); }
+.pixel .px-btn:is([aria-pressed="true"], [aria-checked="true"], [data-on="true"]) {
+  background: var(--gold); color: var(--gold-ink); --px-hi: rgb(255 255 255 / .5); --px-lo: var(--gold-lo);
+}
+.pixel .px-btn-ghost { background: transparent; border-color: transparent; box-shadow: none; }
+.pixel .px-btn-ghost:hover { background: var(--paper-2); border-color: var(--wood-dark); filter: none; }
+/* плавающая кнопка «Добавить»: скос brand + жёсткая тень (m: #fab) */
+.pixel [data-slot="button"].px-fab {
+  box-shadow: inset 2px 2px 0 var(--brand-hi), inset -2px -2px 0 var(--brand-lo), 4px 4px 0 var(--shadow);
+}
+
+.pixel .px-chip { background: var(--paper-2); color: var(--ink); border: 2px solid var(--paper-line); }
+.pixel :is(button, a, [role="button"]).px-chip:hover { border-color: var(--wood-dark); }
+.pixel .px-chip:is([aria-pressed="true"], [data-on="true"]) { background: var(--gold); color: var(--gold-ink); border-color: var(--wood-dark); }
+
+.pixel .px-field { background: var(--paper-2); color: var(--ink); border: 2px solid var(--wood-dark); box-shadow: inset 2px 2px 0 var(--paper-line); }
+.pixel .px-field::placeholder, .pixel .px-field ::placeholder { color: var(--ink-dim); }
+/* Обводка на всё поле — только когда фокус в самом вводе: у кнопок внутри (убрать тег) остаётся своя. */
+.pixel .px-field:has(:is(input, textarea, select):focus-visible) { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pixel .px-field :is(input, textarea, select):focus-visible { outline: none; }
+
+.pixel .px-toggle { position: relative; width: 40px; height: 22px; background: var(--paper-line); border: 2px solid var(--wood-dark); }
+.pixel .px-toggle::after { content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; background: var(--paper); border: 2px solid var(--wood-dark); }
+.pixel .px-toggle[aria-checked="true"] { background: var(--leaf); }
+.pixel .px-toggle[aria-checked="true"]::after { left: 20px; }
+
+.pixel .px-row { background: var(--paper-2); color: var(--ink); border: 2px solid var(--wood-dark); }
+.pixel .px-row::before { content: none; }
+.pixel .px-row:hover, .pixel .px-row[aria-current="true"] { background: var(--paper); }
+.pixel .px-row[data-checked="true"] { background: var(--brand-soft); }
+/* золото на бумаге — 1.1–1.5:1, поэтому с тёмной кромкой: wood-dark / золото / wood-dark, вылет те же 4px */
+.pixel .px-row[data-cursor="true"] {
+  background: var(--paper); box-shadow: 0 0 0 2px var(--gold); outline: 2px solid var(--wood-dark); outline-offset: 2px;
+}
+
+.pixel .px-flag { background: var(--paper-line); }
+.pixel .px-flag-l { border-right: 2px solid var(--wood-dark); }
+.pixel .px-flag-r { border-left: 2px solid var(--wood-dark); }
+.pixel .px-flag[data-flag="fav"] { background: var(--gold); }
+.pixel .px-flag[data-flag="inbox"] { background: var(--brand); }
+.pixel .px-flag[data-flag="library"] { background: var(--leaf); }
+.pixel .px-flag[data-flag="archive"] { background: var(--ink-faint); }
+.pixel .px-flag[data-flag="trash"] { background: var(--danger); }
+.pixel .px-catbar { box-shadow: inset 0 4px 0 var(--c, var(--cat-none)); }
+
+.pixel .px-nav { border: 2px solid transparent; color: var(--ink); }
+.pixel .px-nav:hover { background: var(--paper-2); }
+.pixel .px-nav:is([aria-current="page"], [aria-current="true"], [aria-selected="true"], [data-on="true"]) {
+  background: var(--paper-2); border-color: var(--wood-dark); box-shadow: inset -2px -2px 0 var(--paper-line);
+}
+
+.pixel .px-sw { border: 2px solid var(--wood-dark); }
+.pixel .px-count { background: var(--brand); color: var(--brand-foreground); }
+.pixel .px-well { background: var(--paper-2); border: 2px solid var(--paper-line); }
+.pixel .px-divider { border-top: 2px solid var(--paper-line); }
+.pixel .px-scrim { background: var(--scrim); backdrop-filter: none; }
+.pixel .px-shadow { box-shadow: 4px 4px 0 var(--shadow); }
+.pixel .px-corners { clip-path: var(--px-corners); }
+/* box-shadow перезаписывается: не вешать на px-btn со скосом */
+.pixel .px-sel { box-shadow: 0 0 0 2px var(--gold); outline: 2px solid var(--wood-dark); outline-offset: 2px; }
+.pixel .px-pop-in { animation: px-pop-in .18s steps(3, end); }
+@keyframes px-pop-in { from { transform: scale(.4); } }
+
+/* ───────── 6. Граф ───────── */
+/* Слои сцены снизу вверх: земля — этот фон (--graph-bg); canvas живого фона «back» (мелочь земли, пруды, лес,
+   листопад); canvas графа (связи и ноды); canvas «front» (лучи, снег, бабочки, светлячки); DOM-подписи. Canvas фона
+   прозрачные и сами землю не красят: на месте нод ничего не нарисовано, поэтому подписи и ноды лежат на ровной
+   --ground, а контур подписи 2px (ниже) читается и на лесу, отдельного правила для подписи не нужно. Все canvas —
+   image-rendering: pixelated; фон рисуется в целой решётке устройства (lib/ambient/lattice.ts). В «Классике» фона нет. */
+.pixel .px-graph-stage { background-color: var(--graph-bg); border: 2px solid var(--wood-dark); }
+/* Сцена обрезает содержимое, поэтому обводка фокуса — внутрь: золото вплотную к рамке сцены и тёмная кромка изнутри
+   (правило про золото). Обводка brand на земле дневных сцен — 1.5–3:1. Слой ::after — поверх canvas и подписей. */
+.pixel .px-graph-stage:focus-visible { outline: none; }
+.pixel .px-graph-stage:focus-visible::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 0 4px var(--wood-dark);
+}
+.pixel .px-graph-stage canvas { image-rendering: pixelated; }
+/* подпись ноды — плашка-продолжение ноды: заходит под её правую рамку, высота вровень с нодой, связи уходят под
+   неё. Рамка 2px wood-dark без левого края (там рамка самой ноды) и жёсткая тень, как у ноды. */
+.pixel .px-graph-label {
+  box-sizing: border-box; background: var(--paper); color: var(--ink); font-weight: var(--fw-m);
+  border: 2px solid var(--wood-dark); border-left-width: 0; padding: 0 6px 0 6px;
+  box-shadow: 2px 2px 0 var(--graph-shadow);
+}
+/* выбранная нода и её соседи — плашка с золотой полосой снизу (правило про золото: на тёмной рамке) */
+.pixel .px-graph-label[data-plate="true"] {
+  background: var(--paper); color: var(--ink); box-shadow: inset 0 -2px 0 var(--gold), 2px 2px 0 var(--graph-shadow);
+}
+
+/* ───────── 7. Телефон ───────── */
+@media (max-width: 767px) {
+  /* лист на весь экран: без среза углов, отступ с учётом безопасной зоны */
+  .pixel .px-sheet {
+    clip-path: none;
+    --px-pad: calc(var(--px-sheet-pad, 8px) + env(safe-area-inset-top)) calc(var(--px-sheet-pad, 8px) + env(safe-area-inset-right))
+      calc(var(--px-sheet-pad, 8px) + env(safe-area-inset-bottom)) calc(var(--px-sheet-pad, 8px) + env(safe-area-inset-left));
+  }
+  /* выезжающее меню: раму рисует вложенная панель, собственная кромка листа не нужна */
+  .pixel [data-slot="sheet-content"]:has(> .px-panel) { border-width: 0; background-color: transparent; }
+}

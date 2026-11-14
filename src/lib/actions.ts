@@ -35,6 +35,7 @@ import { getAllItemsSnapshot, getTrashedItemsSnapshot } from '@/hooks/useItems'
 import { visionAvailability } from '@/lib/ai'
 import { findDuplicateLinkIn } from '@/lib/dedupe'
 import { describeError } from '@/lib/errors'
+import { movedCountText } from '@/lib/graph/swarm'
 import { displayTitle } from '@/lib/itemTitle'
 import { fetchLinkMeta } from '@/lib/linkMeta'
 import { cleanOcrText, hasLinkContent, safeLinkUrl, settleLinkMeta } from '@/lib/normalize'
@@ -631,6 +632,26 @@ export function openItemInSection(
 /** Сохраняет положение ноды после перетаскивания (updatedAt записи не меняется). Успех — молча. */
 export async function actMoveNode(id: string, point: GraphPoint): Promise<void> {
   await safe(() => setPositions({ [id]: point }))
+}
+
+/**
+ * Сохраняет положения группы нод одной пачкой (перенос ноды вместе с её категорией). prev — прежние положения:
+ * «Отменить» возвращает их так же, одной пачкой.
+ */
+export async function actMoveGroup(moves: Record<string, GraphPoint>, prev: Record<string, GraphPoint>): Promise<void> {
+  const count = Object.keys(moves).length
+  if (count === 0) return
+  await safe(async () => {
+    await setPositions(moves)
+    toast(movedCountText(count), {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          void safe(() => setPositions(prev))
+        },
+      },
+    })
+  })
 }
 
 const isLinked = (a: Item | undefined, b: Item | undefined): boolean =>

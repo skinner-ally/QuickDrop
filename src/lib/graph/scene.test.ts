@@ -170,7 +170,8 @@ describe('buildGraphScene: границы и индекс', () => {
       ['b', { x: 100, y: -5 }],
     ])
     const scene = buildGraphScene({ items, positions, categories: [], match: null, showArchive: true })
-    expect(scene.bounds).toEqual({ minX: -40, minY: -13, maxX: 108, maxY: 72 })
+    // Половина ноды — 12.
+    expect(scene.bounds).toEqual({ minX: -44, minY: -17, maxX: 112, maxY: 76 })
     const empty = buildGraphScene({ items: [], positions: new Map(), categories: [], match: null, showArchive: true })
     expect(empty.bounds).toBeNull()
     expect(empty.nodes).toEqual([])

@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 import type { GraphLive } from '@/components/graph/GraphCanvas'
 import { actLinkItems } from '@/lib/actions'
 import { buttonsReleased, deferSelect, movePx, underDetailPanel } from '@/components/graph/gestureLogic'
-import { findFreeSpot } from '@/lib/graphLayout'
+import { cancelSwarm, dropSwarm, getSwarm, moveSwarmLead, shownScene, startSwarm, stopSwarm } from '@/components/graph/swarmDriver'
+import { findFreeSpot, GRAPH_NONE_ZONE } from '@/lib/graphLayout'
 import {
   GRAPH_TOUCH_HIT_PX,
   hitLink,
@@ -12,6 +13,7 @@ import {
   screenToWorld,
   wheelSteps,
 } from '@/lib/graph/geometry'
+import { createSwarm, planSwarmDrop, takenWithoutSwarm } from '@/lib/graph/swarm'
 import { DETAIL_ASIDE_PX, GRAPH_SELECT_DEFER_MS, secondClickNode, type NodeClickMemo } from '@/lib/graph/interaction'
 import type { GraphScene, GraphViewport } from '@/lib/graph/types'
 import { useGraph } from '@/store/graph'
@@ -28,6 +30,8 @@ export interface GraphGestureOptions {
   takenRef: RefObject<ReadonlyMap<string, GraphPoint>>
   /** Нода брошена в свободную клетку. */
   onMoved: (id: string, point: GraphPoint) => void
+  /** Группа (нода и её категория) брошена: новые положения всех сдвинувшихся нод. */
+  onGroupMoved: (moves: Record<string, GraphPoint>) => void
 }
 
 const LONG_PRESS_MS = 500
@@ -56,11 +60,13 @@ interface Press {
   /** Сцена на момент первого клика, если это второй клик двойного клика: память о ноде не должна «забыть» сдвиг. */
   memoView: { camera: unknown; viewSize: unknown } | null
   shift: boolean
+  /** Alt — перенос одной ноды, без её категории. */
+  alt: boolean
 }
 
 type Active =
   | { kind: 'pan'; pointerId: number; x: number; y: number }
-  | { kind: 'node'; pointerId: number; id: string; offX: number; offY: number; taken: Record<string, GraphPoint> }
+  | { kind: 'node'; pointerId: number; id: string; offX: number; offY: number; taken: Record<string, GraphPoint>; swarm: boolean }
   | { kind: 'link'; pointerId: number; fromId: string }
   | { kind: 'pinch'; dist: number }
   // Щипок закончился, пока на сцене ещё палец: ждём, пока поднимут все.
@@ -109,7 +115,10 @@ export function useGraphGestures(options: GraphGestureOptions): void {
     let keyMenuAt = -Infinity
     const touches = new Map<number, Pt>()
 
-    const scene = () => opts.current.sceneRef.current
+    // Сцена, какой её видно: пока стая доплывает, указатель попадает в ноды там, где они нарисованы.
+    const scene = () => shownScene(opts.current.sceneRef.current)
+    const reducedMotion = () =>
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const viewport = (): GraphViewport => {
       const { camera, viewSize } = useGraph.getState()
       return { width: viewSize.width, height: viewSize.height, dpr: 1, camera }
@@ -177,6 +186,8 @@ export function useGraphGestures(options: GraphGestureOptions): void {
       if (dropRaf) cancelAnimationFrame(dropRaf)
       dropRaf = 0
       if (was && 'pointerId' in was) release(was.pointerId)
+      // Жест прерван до отпускания: стая возвращается на места (после обычного отпускания она уже отпущена).
+      cancelSwarm()
       live.drag = null
       live.tempLink = null
       useGraph.getState().setDrag(null)
@@ -302,13 +313,27 @@ export function useGraphGestures(options: GraphGestureOptions): void {
         return
       }
       if (!pr.touch && pr.dragId) {
-        const sc = scene()
+        // Прежняя стая ещё доплывает — сразу на места: новый перенос отсчитывается от положений сцены.
+        stopSwarm()
+        const sc = opts.current.sceneRef.current
         const node = sc.nodes[sc.byId.get(pr.dragId) ?? -1]
         if (node) {
           const w0 = world({ x: pr.x0, y: pr.y0 })
-          const taken: Record<string, GraphPoint> = {}
-          for (const [id, pt] of opts.current.takenRef.current) taken[id] = pt
-          active = { kind: 'node', pointerId: pr.pointerId, id: node.id, offX: w0.x - node.x, offY: w0.y - node.y, taken }
+          // Ноды той же категории плывут следом; без категории и с Alt — только сама нода.
+          const mates =
+            pr.alt || node.zone === GRAPH_NONE_ZONE ? [] : sc.nodes.filter((n) => n.zone === node.zone && n.id !== node.id)
+          const swarm = mates.length > 0 ? createSwarm(node, mates, reducedMotion()) : null
+          const taken = takenWithoutSwarm(opts.current.takenRef.current, swarm)
+          active = {
+            kind: 'node',
+            pointerId: pr.pointerId,
+            id: node.id,
+            offX: w0.x - node.x,
+            offY: w0.y - node.y,
+            taken,
+            swarm: swarm !== null,
+          }
+          if (swarm) startSwarm(swarm)
           capture(pr.pointerId)
           g.setHovered(null)
           g.setDrag('node')
@@ -340,6 +365,7 @@ export function useGraphGestures(options: GraphGestureOptions): void {
       if (!active || active.kind !== 'node' || !live.drag) return
       const w = world(p)
       live.drag = { ...live.drag, x: w.x - active.offX, y: w.y - active.offY }
+      if (active.swarm) moveSwarmLead({ x: live.drag.x, y: live.drag.y })
       scheduleDrop()
       live.invalidate()
     }
@@ -398,6 +424,7 @@ export function useGraphGestures(options: GraphGestureOptions): void {
         swallowHandle,
         memoView: again !== null && lastClick ? { camera: lastClick.camera, viewSize: lastClick.viewSize } : null,
         shift: e.shiftKey,
+        alt: e.altKey,
       }
       clearLong()
       if (touch && nodeId) {
@@ -477,9 +504,20 @@ export function useGraphGestures(options: GraphGestureOptions): void {
       if (done.kind === 'node') {
         updateDrop()
         const drag = live.drag
-        const sc = scene()
+        const sc = opts.current.sceneRef.current
         const node = sc.nodes[sc.byId.get(done.id) ?? -1]
-        if (drag?.drop && !(node && node.x === drag.drop.x && node.y === drag.drop.y)) {
+        const swarm = done.swarm ? getSwarm() : null
+        if (swarm && !swarm.released && drag?.drop) {
+          // Стая: итоговые клетки всей группы; сохраняются только сдвинувшиеся.
+          const finals = planSwarmDrop(swarm, drag.drop, done.taken)
+          const moves: Record<string, GraphPoint> = {}
+          for (const id of Object.keys(finals)) {
+            const n = sc.nodes[sc.byId.get(id) ?? -1]
+            if (n && (n.x !== finals[id].x || n.y !== finals[id].y)) moves[id] = finals[id]
+          }
+          dropSwarm(drag.drop, finals)
+          if (Object.keys(moves).length > 0) opts.current.onGroupMoved(moves)
+        } else if (drag?.drop && !(node && node.x === drag.drop.x && node.y === drag.drop.y)) {
           opts.current.onMoved(done.id, drag.drop)
         }
       } else if (done.kind === 'link') {
@@ -627,6 +665,7 @@ export function useGraphGestures(options: GraphGestureOptions): void {
       clearLong()
       if (dropRaf) cancelAnimationFrame(dropRaf)
       live.cancel = () => false
+      stopSwarm()
       live.drag = null
       live.tempLink = null
       live.hoverLink = null

@@ -12,6 +12,7 @@ import { tabRingNext } from '@/components/graph/gestureLogic'
 import { detailSheetOpen, graphKeyTarget, isEditableTarget, overlayOpen } from '@/lib/hotkeyGuards'
 import { matchKey } from '@/lib/keys'
 import { ensureVisible, nearestInDirection, screenToWorld, sortByAngle, worldToScreen } from '@/lib/graph/geometry'
+import { smiteFromScene } from '@/lib/graph/smite'
 import type { GraphScene, GraphViewport } from '@/lib/graph/types'
 import { useGraph } from '@/store/graph'
 import { useUi } from '@/store/ui'
@@ -235,7 +236,10 @@ export function useGraphKeys(options: GraphKeyOptions): void {
         if (e.repeat) return
         if (g.cursorId === target) g.setCursor(null)
         if (ui.selectedId === target) ui.select(null)
-        void actDelete(target)
+        // на графе — сцена казни (lib/graph/smite); без сцены — обычное удаление
+        const sc = scene()
+        if (sc) smiteFromScene([target], sc)
+        else void actDelete(target)
         return
       }
 

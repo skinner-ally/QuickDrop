@@ -4,6 +4,7 @@ import { createGraphLive, GraphCanvas } from '@/components/graph/GraphCanvas'
 import { GraphHeader } from '@/components/graph/GraphHeader'
 import { GraphHint } from '@/components/graph/GraphHint'
 import { GraphOverlay } from '@/components/graph/GraphOverlay'
+import { GraphSmite } from '@/components/graph/GraphSmite'
 import { GraphToolbar } from '@/components/graph/GraphToolbar'
 import { useAmbient } from '@/components/graph/useAmbient'
 import { useGraphGestures } from '@/components/graph/useGraphGestures'
@@ -13,9 +14,10 @@ import { FilterBar } from '@/components/items/FilterBar'
 import { Button } from '@/components/ui/button'
 import { addPositions, setPositions } from '@/db/repo'
 import { useAllItems, useCategoryList, useDayKey, useItemsWithTrash, usePositions } from '@/hooks/useItems'
-import { actMoveNode } from '@/lib/actions'
+import { actMoveGroup, actMoveNode } from '@/lib/actions'
 import { describeError } from '@/lib/errors'
 import { computeLayout, toLayoutNodes, type LayoutResult } from '@/lib/graphLayout'
+import { takeLegacyGridUpgraded } from '@/lib/legacyGrid'
 import { ensureVisible } from '@/lib/graph/geometry'
 import { revealDecision, type RevealMemo } from '@/lib/graph/interaction'
 import { computeGraphMatch } from '@/lib/graph/match'
@@ -178,6 +180,24 @@ export function GraphView() {
     void actMoveNode(id, point)
   }
 
+  /** Перенос группы (нода и её категория): все положения — одной пачкой, с «Отменить». */
+  const onGroupMoved = (moves: Record<string, GraphPoint>) => {
+    const prev: Record<string, GraphPoint> = {}
+    for (const id of Object.keys(moves)) {
+      const p = positions.get(id)
+      if (p) prev[id] = p
+    }
+    setPendingMoves((before) => {
+      const next = new Map(before)
+      for (const id of Object.keys(moves)) next.set(id, moves[id])
+      return next
+    })
+    window.setTimeout(() => {
+      for (const id of Object.keys(moves)) dropPending(id, moves[id])
+    }, PENDING_MOVE_MS)
+    void actMoveGroup(moves, prev)
+  }
+
   const positions = useMemo(() => {
     if (pendingMoves.size === 0) return layout.positions
     const m = new Map(layout.positions)
@@ -217,7 +237,7 @@ export function GraphView() {
     itemsRef.current = itemsById
   }, [scene, positions, itemsById])
 
-  useGraphGestures({ stage: stageEl, live: graphLive, sceneRef, takenRef, onMoved })
+  useGraphGestures({ stage: stageEl, live: graphLive, sceneRef, takenRef, onMoved, onGroupMoved })
   useAmbient(loaded ? stageEl : null)
   useGraphKeys({ stageRef, live: graphLive, sceneRef, itemsRef })
 
@@ -233,7 +253,8 @@ export function GraphView() {
     if (fittedOnce || scene.nodes.length === 0 || !(viewW > 0) || !(viewH > 0)) return
     fittedOnce = true
     const g = useGraph.getState()
-    if (!g.cameraRestored) g.fitAll()
+    // После переноса положений на новую сетку сохранённая камера смотрит не туда — вписать граф целиком.
+    if (!g.cameraRestored || takeLegacyGridUpgraded()) g.fitAll()
   }, [scene.nodes.length, viewW, viewH])
 
   // Выбранная нода показывается: камера сдвигается, если нода вне экрана. Повод — новый выбор (палитра, связанные
@@ -344,6 +365,7 @@ export function GraphView() {
         >
           <GraphCanvas scene={scene} stageRef={stageRef} live={graphLive} />
           <GraphOverlay scene={scene} items={itemsById} categories={categories} />
+          <GraphSmite />
         </div>
         {/* Панель графа и подсказка — вне role="application": в режиме приложения диктор не дал бы прочитать их
             обычным образом. Слой повторяет внутренний край рамки сцены, поэтому их места прежние. */}

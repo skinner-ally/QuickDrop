@@ -25,9 +25,9 @@ import type { Bounds } from './graph/types'
 import { MAX_GRAPH_COORD } from './normalize'
 
 /** Сторона квадрата ноды, px при 100 %. */
-export const GRAPH_NODE_SIZE = 16
+export const GRAPH_NODE_SIZE = 24
 /** Шаг сетки, px; центр ноды — в узле сетки. */
-export const GRAPH_CELL = 32
+export const GRAPH_CELL = 48
 /** Зазор между зонами, клеток. */
 export const GRAPH_ZONE_GAP = 3
 /** Ключ зоны записей без категории. */
@@ -683,6 +683,24 @@ export function computeLayout(
     displaced,
     zones: zones.map((zone) => ({ key: zone.key, x: zone.x, y: zone.y, r: zone.r, count: zone.members.length })),
     bounds,
+  }
+}
+
+/**
+ * Поиск свободных узлов для многих нод подряд (бросок стаи): занятые клетки собираются один раз, найденная клетка
+ * сразу становится занятой. Результат тот же, что у findFreeSpot с пополняемым taken, без пересборки на каждую ноду.
+ */
+export function createSpotFinder(taken: Readonly<Record<string, GraphPoint>>): (target: GraphPoint) => GraphPoint {
+  const clamp = (v: number) => (Number.isFinite(v) ? Math.max(-MAX_GRAPH_COORD, Math.min(MAX_GRAPH_COORD, v)) : 0)
+  const occupied = new Set<number>()
+  for (const id of Object.keys(taken)) {
+    const p = taken[id]
+    if (isPoint(p)) occupied.add(cellKey(toCell(p.x), toCell(p.y)))
+  }
+  return (target) => {
+    const [cx, cy] = nearestFreeCell(clamp(target.x), clamp(target.y), (x, y) => occupied.has(cellKey(x, y)))
+    occupied.add(cellKey(cx, cy))
+    return { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
   }
 }
 

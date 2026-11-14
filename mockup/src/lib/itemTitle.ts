@@ -1,0 +1,165 @@
+import { titleFromUrl } from '@/lib/linkMeta'
+import { stripMarkdown } from '@/lib/plainText'
+import type { Item, ItemType } from '@/types'
+
+export const TYPE_LABEL: Record<ItemType, string> = {
+  text: 'Текст',
+  link: 'Ссылка',
+  code: 'Код',
+  idea: 'Идея',
+  file: 'Файл',
+  image: 'Изображение',
+}
+
+export const TYPE_LABEL_PLURAL: Record<ItemType, string> = {
+  text: 'Тексты',
+  link: 'Ссылки',
+  code: 'Код',
+  idea: 'Идеи',
+  file: 'Файлы',
+  image: 'Изображения',
+}
+
+const MAX_TITLE = 80
+/** Сколько строк content просматривается в поисках производного заголовка. */
+const TITLE_SCAN_LINES = 50
+/**
+ * Сколько символов строки разбирается. Заголовок не длиннее MAX_TITLE, а снятие разметки со строки
+ * в десятки тысяч символов на каждую карточку и на каждый индекс вики-ссылок обходилось бы дорого.
+ */
+const TITLE_SCAN_CHARS = 1000
+
+type TitleSource = Pick<Item, 'title' | 'content'> &
+  Partial<Pick<Item, 'linkMeta' | 'fileName' | 'url' | 'type'>>
+
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s
+}
+
+/** Строка из одних маркеров разметки: разделитель, подчёркивание заголовка, разметка таблицы. */
+const MARKUP_ONLY_RE = /^[-*_=#>|\s]*$/
+
+/** Строка content, из которой берётся производный заголовок: её номер и текст без разметки; null — такой нет. */
+export function derivedTitleLine(
+  item: Pick<Item, 'content'> & Partial<Pick<Item, 'type'>>,
+): { index: number; text: string } | null {
+  const content = typeof item.content === 'string' ? item.content : ''
+  const code = item.type === 'code'
+  let pos = 0
+  for (let index = 0; index < TITLE_SCAN_LINES && pos <= content.length; index++) {
+    const nl = content.indexOf('\n', pos)
+    const end = nl === -1 ? content.length : nl
+    // Как split(/\r?\n/): «\r» перед переводом строки к строке не относится.
+    const lineEnd = end > pos && content[end - 1] === '\r' ? end - 1 : end
+    const raw = content.slice(pos, Math.min(lineEnd, pos + TITLE_SCAN_CHARS))
+    // У кода «# комментарий» и «__init__» — не разметка. Строку-ограду (```js) stripMarkdown обращает
+    // в пустую, и заголовком становится следующая строка.
+    const text = code ? raw.trim() : stripMarkdown(raw).trim()
+    if (text && (code || !MARKUP_ONLY_RE.test(text))) return { index, text }
+    if (nl === -1) break
+    pos = nl + 1
+  }
+  return null
+}
+
+/** Заголовок для показа: явный → из страницы → имя файла → первая строка текста → читаемый вид url. */
+export function displayTitle(item: TitleSource): string {
+  const own = item.title?.trim()
+  if (own) return own
+  const meta = item.linkMeta?.title?.trim()
+  if (meta) return meta
+  const file = item.fileName?.trim()
+  if (file) return file
+  const line = derivedTitleLine(item)?.text
+  if (line) return clip(line, MAX_TITLE)
+  if (item.url?.trim()) return titleFromUrl(item.url) || item.url.trim()
+  return 'Без названия'
+}
+
+/** Заглушка для даты, которую нельзя показать. */
+export const NO_DATE = '—'
+
+/**
+ * Отметка, которую понимает Date. Intl.DateTimeFormat.format бросает RangeError на
+ * |ts| > 8.64e15 и NaN: одна такая запись (из старой копии) роняла бы весь список.
+ */
+function isValidTs(ts: number): boolean {
+  return typeof ts === 'number' && !Number.isNaN(new Date(ts).getTime())
+}
+
+function dayStart(ts: number): number {
+  const d = new Date(ts)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** Короткая дата: «12 мар» (год добавляется для другого года). */
+function formatShortDate(ts: number, now: number): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear()
+  const fmt = new Intl.DateTimeFormat('ru', {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })
+  // В разных версиях ICU после месяца стоит точка, а после года — « г.»
+  return fmt.format(ts).replace(/\s?г\.$/, '').replace('.', '')
+}
+
+export function formatRelative(ts: number, now: number = Date.now()): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
+  const diff = now - ts
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return 'только что'
+  if (min < 60) return `${min} мин назад`
+  const hours = Math.floor(diff / 3_600_000)
+  if (hours < 24) return `${hours} ч назад`
+  const days = Math.round((dayStart(now) - dayStart(ts)) / 86_400_000)
+  if (days <= 1) return 'вчера'
+  if (days <= 7) return `${days} дн назад`
+  return formatShortDate(ts, now)
+}
+
+/** Подпись дня для разделителей списка: «Сегодня», «Вчера», «12 ноября», «12 ноября 2025» (год — если не текущий). */
+export function formatDayLabel(ts: number, now: number = Date.now()): string {
+  if (!isValidTs(ts) || !isValidTs(now)) return NO_DATE
+  // round: сутки при переводе часов длятся 23 или 25 часов.
+  const days = Math.round((dayStart(now) - dayStart(ts)) / 86_400_000)
+  if (days === 0) return 'Сегодня'
+  if (days === 1) return 'Вчера'
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear()
+  return new Intl.DateTimeFormat('ru', {
+    day: 'numeric',
+    month: 'long',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })
+    .format(ts)
+    .replace(/\s?г\.$/, '')
+}
+
+export function formatDateTime(ts: number): string {
+  if (!isValidTs(ts)) return NO_DATE
+  return new Intl.DateTimeFormat('ru', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+    .format(ts)
+    .replace(/\s?г\.,?/, ',')
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 Б'
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']
+  let i = 0
+  let v = bytes
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  if (i === 0) return `${Math.round(v)} Б`
+  const s = (Math.round(v * 10) / 10).toString().replace('.', ',')
+  return `${s} ${units[i]}`
+}

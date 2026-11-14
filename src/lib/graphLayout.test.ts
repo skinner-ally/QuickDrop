@@ -9,6 +9,7 @@ import {
   GRAPH_NONE_ZONE,
   GRAPH_ZONE_GAP,
   computeLayout as rawComputeLayout,
+  createSpotFinder,
   findFreeSpot,
   snapToGrid,
   toLayoutNodes,
@@ -83,6 +84,8 @@ function makeGraph(count: number, categoryCount: number, linkCount: number, seed
   return { nodes, categories }
 }
 
+/** Шаг сетки: ожидаемые клетки в тестах — кратные C. */
+const C = GRAPH_CELL
 const cellOf = (p: GraphPoint) => `${Math.round(p.x / GRAPH_CELL)},${Math.round(p.y / GRAPH_CELL)}`
 const dist = (a: GraphPoint, b: GraphPoint) => Math.hypot(a.x - b.x, a.y - b.y)
 /** Расстояние в клетках по большей из осей: 1 — соседние клетки (в т.ч. по диагонали). */
@@ -247,8 +250,8 @@ describe('computeLayout: сохранённые положения', () => {
     const nodes = [node('a', null, [], 1), node('b', null, [], 2), node('c', null, [], 3)]
     const result = computeLayout(nodes, [], fixed)
     expect(result.positions.get('a')).toEqual({ x: 0, y: 0 })
-    // Ближайшая к (5, −3) свободная клетка — справа: 27² + 3² против 5² + 29² у клетки сверху.
-    expect(result.positions.get('b')).toEqual({ x: 32, y: 0 })
+    // Ближайшая к (5, −3) свободная клетка — справа: (C − 5)² + 3² против 5² + (C − 3)² у клетки сверху.
+    expect(result.positions.get('b')).toEqual({ x: C, y: 0 })
     expect(result.displaced).toEqual(['b'])
     expect(result.placed).toEqual(['b', 'c'])
     expect(cellOf(result.positions.get('c')!)).not.toBe(cellOf({ x: 0, y: 0 }))
@@ -264,24 +267,24 @@ describe('computeLayout: сохранённые положения', () => {
     expect(result.positions.get('b')).toEqual({ x: 0, y: 0 })
     expect(result.displaced).toEqual(['a'])
     // Ничья по расстоянию — меньший y, затем меньший x.
-    expect(result.positions.get('a')).toEqual({ x: 0, y: -32 })
+    expect(result.positions.get('a')).toEqual({ x: 0, y: -C })
   })
 
   it('три ноды в одной клетке разводятся по порядку в ближайшие клетки', () => {
     const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, c: { x: 0, y: 0 } }
     const result = computeLayout([node('c', null, [], 3), node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
     expect(result.positions.get('a')).toEqual({ x: 0, y: 0 })
-    expect(result.positions.get('b')).toEqual({ x: 0, y: -32 })
-    expect(result.positions.get('c')).toEqual({ x: -32, y: 0 })
+    expect(result.positions.get('b')).toEqual({ x: 0, y: -C })
+    expect(result.positions.get('c')).toEqual({ x: -C, y: 0 })
     expect(result.displaced).toEqual(['b', 'c'])
     expect(result.placed).toEqual(['b', 'c'])
   })
 
   it('сохранённая точка не по сетке занимает свою клетку и остаётся как есть', () => {
-    // (20, 3) и (30, 0) — обе в клетке (1, 0).
-    const fixed = { a: { x: 20, y: 3 }, b: { x: 30, y: 0 } }
+    // (35, 3) и (45, 0) — обе в клетке (1, 0); ближайшая к (45, 0) свободная — (0, 0).
+    const fixed = { a: { x: 35, y: 3 }, b: { x: 45, y: 0 } }
     const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
-    expect(result.positions.get('a')).toEqual({ x: 20, y: 3 })
+    expect(result.positions.get('a')).toEqual({ x: 35, y: 3 })
     expect(result.positions.get('b')).toEqual({ x: 0, y: 0 })
     expect(result.displaced).toEqual(['b'])
   })
@@ -298,20 +301,20 @@ describe('computeLayout: сохранённые положения', () => {
 
   it('разведённая нода не попадает в клетку скрытой записи', () => {
     // Ближайшая к (0, 0) клетка сверху занята скрытой записью — разведённая нода встаёт слева.
-    const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, ghost: { x: 0, y: -32 } }
+    const fixed = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, ghost: { x: 0, y: -C } }
     const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2)], [], fixed)
-    expect(result.positions.get('b')).toEqual({ x: -32, y: 0 })
+    expect(result.positions.get('b')).toEqual({ x: -C, y: 0 })
   })
 
   it('связанная нода тянется и к соседу, и к центру зоны', () => {
     // Центр зоны — (0, 0) (медиана сохранённых), сосед далеко в своей зоне — в клетке (10, 0).
     // Только по связи нода встала бы вплотную, в (9, 0); с притяжением к центру — на клетку ближе к нему.
-    const fixed = { s1: { x: 0, y: 0 }, s2: { x: 0, y: 32 }, far: { x: 320, y: 0 } }
+    const fixed = { s1: { x: 0, y: 0 }, s2: { x: 0, y: C }, far: { x: 10 * C, y: 0 } }
     const nodes = [node('s1', null, [], 1), node('s2', null, [], 2), node('far', null, [], 3), node('new', null, ['far'], 4)]
     const result = computeLayout(nodes, [], fixed)
     expect(result.zones[0]).toMatchObject({ x: 0, y: 0 })
     expect(result.placed).toEqual(['new'])
-    expect(result.positions.get('new')).toEqual({ x: 256, y: 0 })
+    expect(result.positions.get('new')).toEqual({ x: 8 * C, y: 0 })
   })
 
   it('негодные сохранённые положения не считаются: нода размещается заново', () => {
@@ -380,8 +383,8 @@ describe('computeLayout: сохранённые положения', () => {
     const nodes = [node('a', 'c1', [], 1), node('b', 'c1', [], 2), node('c', 'c1', [], 3), node('d', 'c1', [], 4)]
     const fixed = { a: { x: 1000, y: -40 }, b: { x: 10, y: 700 }, c: { x: 330, y: 90 }, d: { x: 650, y: 100 } }
     const [zone] = computeLayout(nodes, ['c1'], fixed).zones
-    // x: 10, 330, 650, 1000 → 330 → 320; y: −40, 90, 100, 700 → 90 → 96
-    expect(zone).toEqual({ key: 'c1', x: 320, y: 96, r: 96, count: 4 })
+    // x: 10, 330, 650, 1000 → 330 → клетка 7; y: −40, 90, 100, 700 → 90 → клетка 2. Радиус зоны из 4 нод — 3 клетки.
+    expect(zone).toEqual({ key: 'c1', x: 7 * C, y: 2 * C, r: 3 * C, count: 4 })
   })
 })
 
@@ -578,16 +581,17 @@ describe('computeLayout: граничные случаи', () => {
     const result = computeLayout([node('a')], [], {})
     expect([...result.positions]).toEqual([['a', { x: 0, y: 0 }]])
     expect(result.placed).toEqual(['a'])
-    expect(result.zones).toEqual([{ key: GRAPH_NONE_ZONE, x: 0, y: 0, r: 96, count: 1 }])
+    expect(result.zones).toEqual([{ key: GRAPH_NONE_ZONE, x: 0, y: 0, r: 3 * C, count: 1 }])
     const half = GRAPH_NODE_SIZE / 2
     expect(result.bounds).toEqual({ minX: -half, minY: -half, maxX: half, maxY: half })
   })
 
   it('границы охватывают все ноды, включая сохранённые', () => {
-    // Центр зоны — у сохранённой ноды (её клетка 992, −512 занята), новая встаёт в соседнюю клетку выше.
+    // Центр зоны — у сохранённой ноды (её клетка (21, −10) занята), новая встаёт в соседнюю клетку выше.
     const result = computeLayout([node('a', null, [], 1), node('b', null, [], 2)], [], { b: { x: 1000, y: -500 } })
-    expect(result.positions.get('a')).toEqual({ x: 992, y: -544 })
-    expect(result.bounds).toEqual({ minX: 984, minY: -552, maxX: 1008, maxY: -492 })
+    expect(result.positions.get('a')).toEqual({ x: 21 * C, y: -11 * C })
+    const half = GRAPH_NODE_SIZE / 2
+    expect(result.bounds).toEqual({ minX: 1000 - half, minY: -11 * C - half, maxX: 21 * C + half, maxY: -500 + half })
   })
 
   it('дубли id: остаётся одна нода, результат не зависит от порядка', () => {
@@ -665,7 +669,7 @@ describe('computeLayout: ров между зонами', () => {
     expect(result.placed).toEqual(fresh.map((n) => n.id))
     expect(moatViolations(result.positions, zoneOf, new Set(result.placed))).toEqual([])
     // Ров не выкидывает ноды далеко: первая встаёт вплотную к сохранённой ноде своей зоны, с дальней от B стороны.
-    expect(result.positions.get('a00')).toEqual({ x: -32, y: 0 })
+    expect(result.positions.get('a00')).toEqual({ x: -C, y: 0 })
   })
 
   it('связь с нодой чужой зоны тянет, но не ближе рва', () => {
@@ -679,18 +683,18 @@ describe('computeLayout: ров между зонами', () => {
     expect(moatViolations(linked.positions, zoneOf, new Set(['x']))).toEqual([])
     expect(dist(spot, t)).toBeLessThanOrEqual(dist(alone.positions.get('x')!, t))
     // Без связи — (−1, 0); со связью к (2, 2) — (−1, 2): на одной строке с соседом, ровно за рвом.
-    expect(alone.positions.get('x')).toEqual({ x: -32, y: 0 })
-    expect(spot).toEqual({ x: -32, y: 64 })
+    expect(alone.positions.get('x')).toEqual({ x: -C, y: 0 })
+    expect(spot).toEqual({ x: -C, y: 2 * C })
   })
 
   it('сохранённые ноды ров не сдвигает, разведённые встают в ближайшую клетку без рва', () => {
     // Нода зоны A сохранена вплотную к B — остаётся; нода A в клетке ноды B разводится рядом, пусть и во рву.
-    const fixed = { ...bFixed, near: { x: 32, y: 0 }, clash: { x: 64, y: 0 } }
+    const fixed = { ...bFixed, near: { x: C, y: 0 }, clash: { x: 2 * C, y: 0 } }
     const nodes = [...bNodes, node('near', 'A', [], 1), node('clash', 'A', [], 2)]
     const result = computeLayout(nodes, ['A', 'B'], fixed)
-    expect(result.positions.get('near')).toEqual({ x: 32, y: 0 })
+    expect(result.positions.get('near')).toEqual({ x: C, y: 0 })
     expect(result.displaced).toEqual(['clash'])
-    expect(cellGap(result.positions.get('clash')!, { x: 64, y: 0 })).toBeLessThanOrEqual(3)
+    expect(cellGap(result.positions.get('clash')!, { x: 2 * C, y: 0 })).toBeLessThanOrEqual(3)
   })
 })
 
@@ -837,8 +841,13 @@ describe('computeLayout: рост с пустого графа', () => {
     expect(dist(fresh.zones[0], fresh.zones[1])).toBeLessThan(2 * reserve)
   })
 
+  // Компактность раскладки меряется в клетках: окно 920×640 при прежней клетке 32 px, то есть 920·C/32 × 640·C/32.
+  // На настоящем окне 920×640 при клетке 48 тот же граф вписывается в 25 %, а не 50 %: клетка на экране 12 px
+  // вместо 16 (следствие крупных нод, в отчёте graph-redesign-tests).
+  const cellView = { width: (920 * GRAPH_CELL) / 32, height: (640 * GRAPH_CELL) / 32 }
+
   it('рост по одной записи на малой базе не разбрасывает граф: «Весь граф» вписывает не мельче 50 %', () => {
-    const view = { width: 920, height: 640 }
+    const view = cellView
     const grow = (total: number, cats: number): number => {
       const categories = Array.from({ length: cats }, (_, i) => `c${i}`)
       const nodes: LayoutNode[] = []
@@ -857,7 +866,7 @@ describe('computeLayout: рост с пустого графа', () => {
   })
 
   it('демоданные (30 записей свежей раскладкой) и три новые категории по две записи: масштаб не мельче 50 %', () => {
-    const view = { width: 920, height: 640 }
+    const view = cellView
     const cats = Array.from({ length: 6 }, (_, i) => `c${i}`)
     const base: LayoutNode[] = Array.from({ length: 30 }, (_, i) => node(`d${String(i).padStart(2, '0')}`, cats[i % 6], [], i))
     const fresh = computeLayout(base, cats, {})
@@ -940,9 +949,9 @@ describe('computeLayout: производительность', () => {
 
 describe('snapToGrid', () => {
   it('привязывает к ближайшему узлу сетки', () => {
-    expect(snapToGrid({ x: 15, y: 17 })).toEqual({ x: 0, y: 32 })
-    expect(snapToGrid({ x: 100, y: -100 })).toEqual({ x: 96, y: -96 })
-    expect(snapToGrid({ x: 64, y: -320 })).toEqual({ x: 64, y: -320 })
+    expect(snapToGrid({ x: C / 2 - 1, y: C / 2 + 1 })).toEqual({ x: 0, y: C })
+    expect(snapToGrid({ x: 2 * C + 4, y: -2 * C - 4 })).toEqual({ x: 2 * C, y: -2 * C })
+    expect(snapToGrid({ x: 2 * C, y: -10 * C })).toEqual({ x: 2 * C, y: -10 * C })
   })
 
   it('не выдаёт −0', () => {
@@ -954,35 +963,38 @@ describe('snapToGrid', () => {
 
 describe('findFreeSpot', () => {
   it('свободно — привязка к сетке', () => {
-    expect(findFreeSpot({ x: 37, y: -50 }, {})).toEqual({ x: 32, y: -64 })
-    expect(findFreeSpot({ x: 37, y: -50 }, { other: { x: 320, y: 320 } })).toEqual({ x: 32, y: -64 })
+    expect(findFreeSpot({ x: C + 5, y: -2 * C + 14 }, {})).toEqual({ x: C, y: -2 * C })
+    expect(findFreeSpot({ x: C + 5, y: -2 * C + 14 }, { other: { x: 10 * C, y: 10 * C } })).toEqual({ x: C, y: -2 * C })
   })
 
   it('занято — ближайшая к цели свободная клетка', () => {
     // Цель чуть правее и ниже занятого узла: ближе всего клетка справа.
-    expect(findFreeSpot({ x: 3, y: 2 }, { a: { x: 0, y: 0 } })).toEqual({ x: 32, y: 0 })
-    expect(findFreeSpot({ x: -2, y: 5 }, { a: { x: 0, y: 0 } })).toEqual({ x: 0, y: 32 })
+    expect(findFreeSpot({ x: 3, y: 2 }, { a: { x: 0, y: 0 } })).toEqual({ x: C, y: 0 })
+    expect(findFreeSpot({ x: -2, y: 5 }, { a: { x: 0, y: 0 } })).toEqual({ x: 0, y: C })
     // Справа тоже занято.
-    expect(findFreeSpot({ x: 3, y: 2 }, { a: { x: 0, y: 0 }, b: { x: 32, y: 0 } })).toEqual({ x: 0, y: 32 })
+    expect(findFreeSpot({ x: 3, y: 2 }, { a: { x: 0, y: 0 }, b: { x: C, y: 0 } })).toEqual({ x: 0, y: C })
   })
 
   it('при равном расстоянии выбор однозначен: сначала меньший y, потом меньший x', () => {
-    expect(findFreeSpot({ x: 0, y: 0 }, { a: { x: 0, y: 0 } })).toEqual({ x: 0, y: -32 })
-    expect(findFreeSpot({ x: 0, y: 0 }, { a: { x: 0, y: 0 }, b: { x: 0, y: -32 } })).toEqual({ x: -32, y: 0 })
+    expect(findFreeSpot({ x: 0, y: 0 }, { a: { x: 0, y: 0 } })).toEqual({ x: 0, y: -C })
+    expect(findFreeSpot({ x: 0, y: 0 }, { a: { x: 0, y: 0 }, b: { x: 0, y: -C } })).toEqual({ x: -C, y: 0 })
   })
 
   it('ignoreId: собственное место ноды не считается занятым', () => {
-    const taken = { a: { x: 0, y: 0 }, b: { x: 32, y: 0 } }
-    expect(findFreeSpot({ x: 5, y: 5 }, taken, 'a')).toEqual({ x: 0, y: 0 })
-    expect(findFreeSpot({ x: 30, y: 5 }, taken, 'b')).toEqual({ x: 32, y: 0 })
+    // Координаты целей — в долях клетки (0,94·C; 0,16·C и т.п.): расклад расстояний не зависит от шага сетки.
+    const taken = { a: { x: 0, y: 0 }, b: { x: C, y: 0 } }
+    const at = (fx: number, fy: number) => ({ x: fx * C, y: fy * C })
+    expect(findFreeSpot(at(0.16, 0.16), taken, 'a')).toEqual({ x: 0, y: 0 })
+    expect(findFreeSpot(at(0.94, 0.16), taken, 'b')).toEqual({ x: C, y: 0 })
     // Клетка цели занята другой нодой: своё прежнее место — такой же кандидат, как любая свободная клетка.
-    expect(findFreeSpot({ x: 20, y: 0 }, taken, 'a')).toEqual({ x: 0, y: 0 })
-    expect(findFreeSpot({ x: 30, y: 5 }, taken, 'a')).toEqual({ x: 32, y: 32 })
-    expect(findFreeSpot({ x: 20, y: 0 }, taken)).toEqual({ x: 32, y: -32 })
+    expect(findFreeSpot(at(0.625, 0), taken, 'a')).toEqual({ x: 0, y: 0 })
+    expect(findFreeSpot(at(0.94, 0.16), taken, 'a')).toEqual({ x: C, y: C })
+    expect(findFreeSpot(at(0.625, 0), taken)).toEqual({ x: C, y: -C })
   })
 
   it('занятое положение не по сетке занимает свою клетку', () => {
-    expect(findFreeSpot({ x: 30, y: 0 }, { a: { x: 20, y: 3 } })).toEqual({ x: 0, y: 0 })
+    // a — в клетке (1, 0), хотя не в её узле; цель — тоже в ней: ближе всего (0, 0).
+    expect(findFreeSpot({ x: 0.94 * C, y: 0 }, { a: { x: 0.625 * C, y: 3 } })).toEqual({ x: 0, y: 0 })
   })
 
   it('выбирается из сплошного занятого блока к ближайшему краю', () => {
@@ -990,8 +1002,8 @@ describe('findFreeSpot', () => {
     for (let cy = -3; cy <= 3; cy++) {
       for (let cx = -3; cx <= 3; cx++) taken[`${cx}:${cy}`] = { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
     }
-    expect(findFreeSpot({ x: 0, y: 0 }, taken)).toEqual({ x: 0, y: -128 })
-    expect(findFreeSpot({ x: 70, y: 10 }, taken)).toEqual({ x: 128, y: 0 })
+    expect(findFreeSpot({ x: 0, y: 0 }, taken)).toEqual({ x: 0, y: -4 * C })
+    expect(findFreeSpot({ x: 2.2 * C, y: 0.3 * C }, taken)).toEqual({ x: 4 * C, y: 0 })
   })
 
   it('совпадает с полным перебором на случайных данных', () => {
@@ -1022,13 +1034,13 @@ describe('findFreeSpot', () => {
   })
 
   it('ближайшая свободная клетка может быть во втором кольце, хотя в первом свободная есть', () => {
-    // Цель на 15 px правее занятого узла (0, 0); в первом кольце свободна только (−1, −1) — ≈57 px,
-    // во втором (2, 0) — 49 px. Остановка после первого же кольца со свободной клеткой выбрала бы дальнюю.
+    // Цель на 0,47 клетки правее занятого узла (0, 0); в первом кольце свободна только (−1, −1) — ≈1,78 клетки,
+    // во втором (2, 0) — 1,53. Остановка после первого же кольца со свободной клеткой выбрала бы дальнюю.
     const taken: Record<string, GraphPoint> = { c: { x: 0, y: 0 } }
     for (const [cx, cy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1], [1, -1], [-1, 1]]) {
       taken[`${cx}:${cy}`] = { x: cx * GRAPH_CELL, y: cy * GRAPH_CELL }
     }
-    expect(findFreeSpot({ x: 15, y: 0 }, taken)).toEqual({ x: 64, y: 0 })
+    expect(findFreeSpot({ x: 0.47 * C, y: 0 }, taken)).toEqual({ x: 2 * C, y: 0 })
   })
 
   it('негодная цель и негодные занятые положения не ломают поиск', () => {
@@ -1037,7 +1049,9 @@ describe('findFreeSpot', () => {
   })
 
   it('цель за пределом координат подтягивается к пределу', () => {
-    expect(findFreeSpot({ x: 5e9, y: -5e9 }, {})).toEqual({ x: 1_000_000, y: -1_000_000 })
+    // Предел 1 000 000 — не узел сетки при любом шаге; берётся ближайший к нему узел, не выходящий за предел.
+    const edge = Math.floor(1_000_000 / C) * C
+    expect(findFreeSpot({ x: 5e9, y: -5e9 }, {})).toEqual({ x: edge, y: -edge })
   })
 })
 
@@ -1097,5 +1111,19 @@ describe('toLayoutNodes', () => {
   it('пустой список', () => {
     expect(toLayoutNodes([])).toEqual([])
     expect(toLayoutNodes([], { a: { x: 0, y: 0 } })).toEqual([])
+  })
+})
+
+describe('createSpotFinder', () => {
+  it('то же, что findFreeSpot с пополняемым taken', () => {
+    const taken: Record<string, { x: number; y: number }> = { a: { x: 0, y: 0 }, b: { x: GRAPH_CELL, y: 0 } }
+    const find = createSpotFinder(taken)
+    const ref: Record<string, { x: number; y: number }> = { ...taken }
+    const targets = [{ x: 0, y: 0 }, { x: 5, y: -3 }, { x: GRAPH_CELL, y: 0 }, { x: 400, y: 410 }, { x: 0, y: 0 }]
+    targets.forEach((t, i) => {
+      const expected = findFreeSpot(t, ref)
+      ref[`n${i}`] = expected
+      expect(find(t)).toEqual(expected)
+    })
   })
 })

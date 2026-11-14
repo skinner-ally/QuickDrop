@@ -1,7 +1,9 @@
 import { useEffect, useRef, type RefObject } from 'react'
+import { getSwarm, shownScene, subscribeSwarm } from '@/components/graph/swarmDriver'
 import { bitmapSize, clearRect32, resizeKeep, type StageRect } from '@/components/graph/gestureLogic'
 import { getAmbientLayer, subscribeAmbient } from '@/lib/graph/ambient'
-import { drawLinksClassic, drawLinksPixel, drawNodes, type DirtyRect, type LinkBuffer } from '@/lib/graph/draw'
+import { useSmite } from '@/lib/graph/smite'
+import { drawLinksClassic, drawLinksPixel, drawNodes, drawSwarmTrails, type DirtyRect, type LinkBuffer } from '@/lib/graph/draw'
 import { deviceTransform, queryBounds, screenToWorld } from '@/lib/graph/geometry'
 import { readGraphTheme, subscribeGraphTheme } from '@/lib/graph/theme'
 import type { DrawState, GraphScene, GraphTheme, GraphViewport } from '@/lib/graph/types'
@@ -160,7 +162,8 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
       if (graphDirty) {
         graphDirty = false
         lastV = v
-        drawGraph(sc, v, g, W, H)
+        // Ноды стаи рисуются в текущих положениях; слой фона видит сцену как есть (поляны не перестраиваются на кадр).
+        drawGraph(shownScene(sc), v, g, W, H)
         stage.dataset.drawMs = (performance.now() - t0).toFixed(2)
       }
 
@@ -242,6 +245,8 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
         ctx.clearRect(0, 0, W, H)
         drawLinksClassic(ctx, sc, v, theme, state)
       }
+      const swarm = getSwarm()
+      if (swarm && !swarm.rigid) drawSwarmTrails(ctx, sc, v, theme, swarm.members)
       drawNodes(ctx, sc, v, theme, state)
     }
 
@@ -310,6 +315,11 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
         invalidate()
       }
     })
+    // сцена казни прячет и возвращает ноды
+    const offSmite = useSmite.subscribe((s, p) => {
+      if (s.hidden !== p.hidden) invalidate()
+    })
+    const offSwarm = subscribeSwarm(() => invalidate())
     const offUi = useUi.subscribe((s, p) => {
       if (s.selectedId !== p.selectedId) invalidate()
     })
@@ -325,6 +335,8 @@ export function GraphCanvas({ scene, stageRef, live }: GraphCanvasProps) {
       offAmbient()
       offGraph()
       offUi()
+      offSmite()
+      offSwarm()
       live.invalidate = () => {}
       invalidateRef.current = () => {}
       delete stage.dataset.drawMs

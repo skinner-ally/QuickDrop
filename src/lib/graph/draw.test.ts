@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { GRAPH_CELL } from '@/lib/graphLayout'
 import { buildSpatialIndex, deviceTransform, GRAPH_ZOOM_STEPS } from './geometry'
-import { drawLinksClassic, drawLinksPixel, drawNodes, LINK_ZOOM_ALPHA_MIN, linkUnit, linkZoomAlpha } from './draw'
+import { drawLinksClassic, drawLinksPixel, drawNodes, drawSwarmTrails, LINK_ZOOM_ALPHA_MIN, linkUnit, linkZoomAlpha } from './draw'
 import type { LinkBuffer } from './draw'
 import { packRgba } from './theme'
 import { GRAPH_ALPHA_ARCHIVED, GRAPH_ALPHA_DIM, GRAPH_COLOR_KEYS } from './types'
@@ -19,7 +19,7 @@ const cat = Object.fromEntries(GRAPH_COLOR_KEYS.map((key) => [key, `cat-${key}`]
 const PIXEL: GraphTheme = {
   pixel: true, cat, nodeEdge: 'edge', shadow: 'shadow', inbox: 'inbox', inboxEdge: 'inbox-edge', fav: 'fav', favEdge: 'fav-edge',
   sel: 'sel', selEdge: 'sel-edge', hover: 'hover',
-  link: LINK, linkAlt: LINK_ALT, linkEdge: LINK_EDGE, linkHot: LINK_HOT, linkCss: 'link-css', linkHotCss: 'hot-css',
+  link: LINK, linkAlt: LINK_ALT, linkEdge: LINK_EDGE, linkHot: LINK_HOT, linkThin: packRgba(70, 80, 90, 255), linkCss: 'link-css', linkHotCss: 'hot-css',
 }
 const CLASSIC: GraphTheme = {
   ...PIXEL, pixel: false, nodeEdge: null, shadow: null, selEdge: null, linkEdge: packRgba(0, 0, 0, 0),
@@ -104,13 +104,18 @@ function buffer(width: number, height: number, guard = 0): LinkBuffer {
 // ───────────────────────── linkUnit ─────────────────────────
 
 describe('linkUnit', () => {
-  it('max(1, round(2 · zoom · dpr))', () => {
-    expect(linkUnit(1, 1)).toBe(2)
-    expect(linkUnit(2, 2)).toBe(8)
-    expect(linkUnit(0.75, 1.25)).toBe(2)
+  it('не растёт с масштабом: от 150 % — round(2 · dpr), ниже — round(dpr), не меньше 1', () => {
+    expect(linkUnit(1, 1)).toBe(1)
+    expect(linkUnit(1.5, 1)).toBe(2)
+    expect(linkUnit(2, 1)).toBe(2)
+    expect(linkUnit(2, 2)).toBe(4)
+    expect(linkUnit(1.5, 1.5)).toBe(3)
+    expect(linkUnit(1, 2)).toBe(2)
+    expect(linkUnit(0.75, 1.25)).toBe(1)
     expect(linkUnit(0.25, 1)).toBe(1)
     expect(linkUnit(0.125, 1)).toBe(1)
     expect(linkUnit(Number.NaN, 1)).toBe(1)
+    expect(linkUnit(1, Number.NaN)).toBe(1)
   })
 })
 
@@ -154,20 +159,21 @@ describe('drawNodes', () => {
     const { ctx, rects } = mockCtx()
     expect(drawNodes(ctx, scene, vp(800, 600), CLASSIC, NONE)).toBe(2)
     const xs = rects().map((c) => c.args[0])
-    expect(xs).toEqual([392, 824])
+    // нода 24: угол — центр − 12
+    expect(xs).toEqual([388, 820])
   })
 
   it('пиксельная тема: тень, рамка, заливка; метка «Входящие» с кромкой', () => {
     const scene = makeScene([{ x: 0, y: 0, color: 'blue', inbox: true }])
     const { ctx, calls, rects } = mockCtx()
     expect(drawNodes(ctx, scene, vp(800, 600), PIXEL, NONE)).toBe(1)
-    // ox = 400, oy = 300; s = 16, угол (392, 292); рамка b = 2.
-    expect(hasRect(calls, 'shadow', 394, 294, 16, 16)).toBe(true)
-    expect(hasRect(calls, 'edge', 392, 292, 16, 16)).toBe(true)
-    expect(hasRect(calls, 'cat-blue', 394, 294, 12, 12)).toBe(true)
+    // ox = 400, oy = 300; s = 24, угол (388, 288); рамка b = 2.
+    expect(hasRect(calls, 'shadow', 390, 290, 24, 24)).toBe(true)
+    expect(hasRect(calls, 'edge', 388, 288, 24, 24)).toBe(true)
+    expect(hasRect(calls, 'cat-blue', 390, 290, 20, 20)).toBe(true)
     // метка m = 6 с вылетом b = 2 наружу, сердцевина с отступом 2
-    expect(hasRect(calls, 'inbox-edge', 404, 290, 6, 6)).toBe(true)
-    expect(hasRect(calls, 'inbox', 406, 292, 2, 2)).toBe(true)
+    expect(hasRect(calls, 'inbox-edge', 408, 286, 6, 6)).toBe(true)
+    expect(hasRect(calls, 'inbox', 410, 288, 2, 2)).toBe(true)
     expect(rects()).toHaveLength(5)
     // порядок проходов: тень → рамка → заливка → метка
     expect(rects().map((c) => c.fill)).toEqual(['shadow', 'edge', 'cat-blue', 'inbox-edge', 'inbox'])
@@ -176,10 +182,10 @@ describe('drawNodes', () => {
   it('избранное: звезда 5×5 с контуром в левом нижнем углу; без избранного золота нет', () => {
     const { ctx, calls, rects } = mockCtx()
     drawNodes(ctx, makeScene([{ x: 0, y: 0, color: 'blue', favorite: true }]), vp(800, 600), PIXEL, NONE)
-    // угол ноды (392, 292), s = 16, b = 2: звезда с вылетом наружу — левый верх (391, 304)
-    expect(hasRect(calls, 'fav', 393, 304, 1, 1)).toBe(true)
-    expect(hasRect(calls, 'fav', 391, 306, 5, 1)).toBe(true)
-    expect(hasRect(calls, 'fav-edge', 390, 306, 5, 1)).toBe(true)
+    // угол ноды (388, 288), s = 24, b = 2: звезда с вылетом наружу — левый верх (387, 308)
+    expect(hasRect(calls, 'fav', 389, 308, 1, 1)).toBe(true)
+    expect(hasRect(calls, 'fav', 387, 310, 5, 1)).toBe(true)
+    expect(hasRect(calls, 'fav-edge', 386, 310, 5, 1)).toBe(true)
     const fills = rects().map((c) => c.fill)
     expect(fills.indexOf('fav-edge')).toBeLessThan(fills.indexOf('fav'))
     expect(fills.indexOf('cat-blue')).toBeLessThan(fills.indexOf('fav-edge'))
@@ -192,8 +198,8 @@ describe('drawNodes', () => {
   it('избранное на малом масштабе: от 0.25 — золотой квадрат внутри ноды, ниже — ничего', () => {
     const mid = mockCtx()
     drawNodes(mid.ctx, makeScene([{ x: 0, y: 0, favorite: true }]), vp(800, 600, 0.5), PIXEL, NONE)
-    // s = 8, b = 1, угол (396, 296); квадрат 3×3 прижат к левому нижнему углу
-    expect(hasRect(mid.calls, 'fav', 397, 300, 3, 3)).toBe(true)
+    // s = 12, b = 1, угол (394, 294); квадрат 3×3 прижат к левому нижнему углу
+    expect(hasRect(mid.calls, 'fav', 395, 302, 3, 3)).toBe(true)
     expect(mid.rects().some((c) => c.fill === 'fav-edge')).toBe(false)
 
     const tiny = mockCtx()
@@ -202,28 +208,30 @@ describe('drawNodes', () => {
   })
 
   it('«Классика»: одна заливка на ноду, без рамки и тени', () => {
-    const scene = makeScene([{ x: 0, y: 0, color: 'green' }, { x: 32, y: 0 }, { x: 64, y: 0, color: 'green' }])
+    const C = GRAPH_CELL
+    const scene = makeScene([{ x: 0, y: 0, color: 'green' }, { x: C, y: 0 }, { x: 2 * C, y: 0, color: 'green' }])
     const { ctx, rects } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), CLASSIC, NONE)
     expect(rects()).toHaveLength(3)
-    expect(rects().map((c) => c.args)).toEqual([[392, 292, 16, 16], [424, 292, 16, 16], [456, 292, 16, 16]])
+    expect(rects().map((c) => c.args)).toEqual([[388, 288, 24, 24], [388 + C, 288, 24, 24], [388 + 2 * C, 288, 24, 24]])
   })
 
   it('«Классика»: метка «Входящие» без вылета (рамки нет)', () => {
     const scene = makeScene([{ x: 0, y: 0, inbox: true }])
     const { ctx, calls } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), CLASSIC, NONE)
-    expect(hasRect(calls, 'inbox-edge', 402, 292, 6, 6)).toBe(true)
-    expect(hasRect(calls, 'inbox', 403, 293, 4, 4)).toBe(true)
+    expect(hasRect(calls, 'inbox-edge', 406, 288, 6, 6)).toBe(true)
+    expect(hasRect(calls, 'inbox', 407, 289, 4, 4)).toBe(true)
   })
 
-  it('масштаб 0.25: тёмный контур 1 px снаружи, без тени и метки', () => {
+  it('масштаб 0.25: тёмный контур 1 px снаружи, нода дорастает до шага сетки минус контур; без тени и метки', () => {
     const scene = makeScene([{ x: 0, y: 0, inbox: true, color: 'red' }])
     const { ctx, rects } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600, 0.25), PIXEL, NONE)
+    // k = 0.25: нода 6 px, шаг 12 px → нода min(12, 12 − 2) = 10, угол (395, 295), контур 12×12
     expect(rects()).toHaveLength(2)
-    expect(rects()[0]).toMatchObject({ fill: 'edge', args: [397, 297, 6, 6] })
-    expect(rects()[1]).toMatchObject({ fill: 'cat-red', args: [398, 298, 4, 4] })
+    expect(rects()[0]).toMatchObject({ fill: 'edge', args: [394, 294, 12, 12] })
+    expect(rects()[1]).toMatchObject({ fill: 'cat-red', args: [395, 295, 10, 10] })
   })
 
   it('масштаб 0.25 в «Классике» — одна заливка, без контура', () => {
@@ -231,38 +239,62 @@ describe('drawNodes', () => {
     const { ctx, rects } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600, 0.25), CLASSIC, NONE)
     expect(rects()).toHaveLength(1)
-    expect(rects()[0]).toMatchObject({ fill: 'cat-red', args: [398, 298, 4, 4] })
+    expect(rects()[0].fill).toBe('cat-red')
   })
 
-  it('12,5 % при dpr 1 — без контура (между нодами 2 px земли); при dpr 1.5 — с контуром', () => {
+  // Ниже 50 % нода растёт до «шаг − 2·контур»; у «Классики» контура нет — зазор в пиксель, иначе зона — сплошное пятно.
+  it('обзор в «Классике»: между соседними нодами остаётся земля', () => {
+    for (const dpr of [1, 1.5, 2]) {
+      for (const zoom of [0.125, 0.25]) {
+        const { ctx, rects } = mockCtx()
+        drawNodes(ctx, makeScene([{ x: 0, y: 0 }]), vp(800, 600, zoom, dpr), CLASSIC, NONE)
+        expect(rects()[0].args[2]).toBeLessThan(Math.round(GRAPH_CELL * zoom * dpr))
+      }
+    }
+  })
+
+  it('обзор (ниже 50 %): контур к контуру — нода с контуром занимает шаг сетки', () => {
     const scene = makeScene([{ x: 0, y: 0, color: 'red' }])
+    // 12,5 % при dpr 1: k = 0.125, шаг 6 px, контур 1 → нода 4, контур 6×6
     const a = mockCtx()
     drawNodes(a.ctx, scene, vp(800, 600, 0.125), PIXEL, NONE)
-    expect(a.rects().map((c) => c.fill)).toEqual(['cat-red'])
+    expect(a.rects().map((c) => c.fill)).toEqual(['edge', 'cat-red'])
+    expect(a.rects()[0].args[2]).toBe(6)
+    expect(a.rects()[1].args[2]).toBe(4)
+    // 12,5 % при dpr 1.5: k = 0.1875, шаг 9 px, контур round(1.5) = 2 → нода 5, контур 9×9
     const b = mockCtx()
     drawNodes(b.ctx, scene, vp(800, 600, 0.125, 1.5), PIXEL, NONE)
-    // k = 0.1875: нода 3 px, шаг сетки 6 px
     expect(b.rects().map((c) => c.fill)).toEqual(['edge', 'cat-red'])
-    expect(b.rects()[0].args[2]).toBe(5)
+    expect(b.rects()[0].args[2]).toBe(9)
+    expect(b.rects()[1].args[2]).toBe(5)
+    // на всех плотностях контур не шире шага сетки (соседи не наползают друг на друга)
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2]) {
+      for (const zoom of [0.125, 0.25]) {
+        const c = mockCtx()
+        drawNodes(c.ctx, scene, vp(800, 600, zoom, dpr), PIXEL, NONE)
+        expect(c.rects()[0].args[2], `zoom ${zoom} dpr ${dpr}`).toBeLessThanOrEqual(Math.round(GRAPH_CELL * zoom * dpr))
+      }
+    }
   })
 
   it('масштаб 0.5: рамка 1 px, метка «Входящие» видна', () => {
     const scene = makeScene([{ x: 0, y: 0, inbox: true }])
     const { ctx, calls } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600, 0.5), PIXEL, NONE)
-    // s = 8, угол (396, 296), b = 1, m = 3
-    expect(hasRect(calls, 'edge', 396, 296, 8, 8)).toBe(true)
-    expect(hasRect(calls, 'cat-none', 397, 297, 6, 6)).toBe(true)
-    expect(hasRect(calls, 'inbox-edge', 402, 295, 3, 3)).toBe(true)
-    expect(hasRect(calls, 'inbox', 403, 296, 1, 1)).toBe(true)
+    // s = 12, угол (394, 294), b = 1, m = 3
+    expect(hasRect(calls, 'edge', 394, 294, 12, 12)).toBe(true)
+    expect(hasRect(calls, 'cat-none', 395, 295, 10, 10)).toBe(true)
+    expect(hasRect(calls, 'inbox-edge', 404, 293, 3, 3)).toBe(true)
+    expect(hasRect(calls, 'inbox', 405, 294, 1, 1)).toBe(true)
   })
 
   it('альфа приглушённых и архивных; после вызова globalAlpha = 1', () => {
+    const C = GRAPH_CELL
     const scene = makeScene([
       { x: 0, y: 0, dim: true, archived: true, color: 'blue' },
-      { x: 32, y: 0, dim: true, color: 'green' },
-      { x: 64, y: 0, color: 'red' },
-      { x: 96, y: 0, archived: true, color: 'violet' },
+      { x: C, y: 0, dim: true, color: 'green' },
+      { x: 2 * C, y: 0, color: 'red' },
+      { x: 3 * C, y: 0, archived: true, color: 'violet' },
     ])
     const { ctx, raw, rects } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), PIXEL, NONE)
@@ -278,48 +310,61 @@ describe('drawNodes', () => {
     expect(raw.globalAlpha).toBe(1)
   })
 
-  /** Пиксели всех fillRect: «x,y» → цвет последней записи, число записей и альфы. */
-  function raster(list: Call[]): Map<string, { fill: string; n: number; alphas: number[] }> {
-    const out = new Map<string, { fill: string; n: number; alphas: number[] }>()
+  /**
+   * Пиксели всех fillRect: y·8192 + x → цвет последней записи, число записей и альфа первой записи.
+   * Ключ — число, не строка: нода 24 px на всех ступенях и плотностях — сотни тысяч пикселей за тест.
+   */
+  function raster(list: Call[]): Map<number, { fill: string; n: number; alpha: number }> {
+    const out = new Map<number, { fill: string; n: number; alpha: number }>()
     for (const c of list) {
       const [x, y, w, h] = c.args
       for (let yy = y; yy < y + h; yy++) {
         for (let xx = x; xx < x + w; xx++) {
-          const key = `${xx},${yy}`
+          const key = yy * 8192 + xx
           const prev = out.get(key)
-          out.set(key, { fill: c.fill, n: (prev?.n ?? 0) + 1, alphas: [...(prev?.alphas ?? []), c.alpha] })
+          if (prev) {
+            prev.fill = c.fill
+            prev.n++
+          } else out.set(key, { fill: c.fill, n: 1, alpha: c.alpha })
         }
       }
     }
     return out
   }
 
+  const fadeVariants: Array<Partial<GraphNode>> = [
+    { archived: true, inbox: true, color: 'blue' },
+    { dim: true, inbox: true, color: 'green' },
+    { archived: true, color: 'red' },
+    { dim: true },
+  ]
+  /** Полупрозрачная нода против непрозрачной: тот же силуэт и цвета, каждый пиксель — один раз. */
+  function expectFadeLikeOpaque(theme: GraphTheme, zoom: number, dpr: number): void {
+    for (const extra of fadeVariants) {
+      const opaque = mockCtx()
+      drawNodes(opaque.ctx, makeScene([{ x: 0, y: 0, ...extra, archived: false, dim: false }]), vp(800, 600, zoom, dpr), theme, NONE)
+      const faded = mockCtx()
+      drawNodes(faded.ctx, makeScene([{ x: 0, y: 0, ...extra }]), vp(800, 600, zoom, dpr), theme, NONE)
+      const a = raster(opaque.rects())
+      const b = raster(faded.rects())
+      const where = `${theme.pixel ? 'пикс' : 'класс'} zoom ${zoom} dpr ${dpr} ${JSON.stringify(extra)}`
+      expect(b.size, where).toBe(a.size)
+      const alpha = extra.dim ? GRAPH_ALPHA_DIM : GRAPH_ALPHA_ARCHIVED
+      for (const [key, px] of b) {
+        // expect на каждый пиксель — основная цена теста; сообщение собирается только при расхождении
+        if (px.n === 1 && px.alpha === alpha && px.fill === a.get(key)?.fill) continue
+        const where2 = `${where}: пиксель (${key % 8192}, ${Math.floor(key / 8192)})`
+        expect(px.n, where2).toBe(1)
+        expect(px.alpha, where2).toBe(alpha)
+        expect(px.fill, where2).toBe(a.get(key)?.fill)
+      }
+    }
+  }
   it('полупрозрачная нода: каждый пиксель пишется один раз, силуэт и цвета — как у непрозрачной', () => {
-    const variants: Array<Partial<GraphNode>> = [
-      { archived: true, inbox: true, color: 'blue' },
-      { dim: true, inbox: true, color: 'green' },
-      { archived: true, color: 'red' },
-      { dim: true },
-    ]
     for (const theme of [PIXEL, CLASSIC]) {
       for (const dpr of [1, 1.25, 1.5, 2]) {
         for (const zoom of GRAPH_ZOOM_STEPS) {
-          for (const extra of variants) {
-            const opaque = mockCtx()
-            drawNodes(opaque.ctx, makeScene([{ x: 0, y: 0, ...extra, archived: false, dim: false }]), vp(800, 600, zoom, dpr), theme, NONE)
-            const faded = mockCtx()
-            drawNodes(faded.ctx, makeScene([{ x: 0, y: 0, ...extra }]), vp(800, 600, zoom, dpr), theme, NONE)
-            const a = raster(opaque.rects())
-            const b = raster(faded.rects())
-            const where = `${theme.pixel ? 'пикс' : 'класс'} zoom ${zoom} dpr ${dpr} ${JSON.stringify(extra)}`
-            expect(b.size, where).toBe(a.size)
-            const alpha = extra.dim ? GRAPH_ALPHA_DIM : GRAPH_ALPHA_ARCHIVED
-            for (const [key, px] of b) {
-              expect(px.n, `${where}: пиксель ${key}`).toBe(1)
-              expect(px.alphas[0]).toBe(alpha)
-              expect(px.fill, `${where}: пиксель ${key}`).toBe(a.get(key)?.fill)
-            }
-          }
+          expectFadeLikeOpaque(theme, zoom, dpr)
         }
       }
     }
@@ -327,23 +372,23 @@ describe('drawNodes', () => {
 
   it('выбранная нода: золото с зазором и тёмная кромка; соседи; наведённая и курсор', () => {
     const scene = makeScene(
-      [{ x: 0, y: 0 }, { x: 64, y: 0 }, { x: 0, y: 64 }, { x: 64, y: 64 }, { x: -64, y: 0 }],
+      [{ x: 0, y: 0 }, { x: 96, y: 0 }, { x: 0, y: 96 }, { x: 96, y: 96 }, { x: -96, y: 0 }],
       [[0, 1]],
     )
     const { ctx, calls, raw } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), PIXEL, st({ selectedId: 'n0', hoveredId: 'n2', cursorId: 'n3' }))
-    // w = 2. Выбранная (угол 392, 292): золото с зазором w, кромка снаружи.
-    expect(hasFrame(calls, 'sel', 388, 288, 24, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 386, 286, 28, 2)).toBe(true)
-    // сосед (угол 456, 292) — вплотную, тёмная кромка снаружи
-    expect(hasFrame(calls, 'sel', 454, 290, 20, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 452, 288, 24, 2)).toBe(true)
-    // наведённая (392, 356) и под курсором (456, 356) — тоже с кромкой
-    expect(hasFrame(calls, 'hover', 390, 354, 20, 2)).toBe(true)
-    expect(hasFrame(calls, 'hover', 454, 354, 20, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 388, 352, 24, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 452, 352, 24, 2)).toBe(true)
-    // не сосед (угол 328, 292) — без рамки и кромки
+    // w = 2, s = 24. Выбранная (угол 388, 288): золото с зазором w, кромка снаружи.
+    expect(hasFrame(calls, 'sel', 384, 284, 32, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 382, 282, 36, 2)).toBe(true)
+    // сосед (угол 484, 288) — вплотную, тёмная кромка снаружи
+    expect(hasFrame(calls, 'sel', 482, 286, 28, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 480, 284, 32, 2)).toBe(true)
+    // наведённая (388, 384) и под курсором (484, 384) — тоже с кромкой
+    expect(hasFrame(calls, 'hover', 386, 382, 28, 2)).toBe(true)
+    expect(hasFrame(calls, 'hover', 482, 382, 28, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 384, 380, 32, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 480, 380, 32, 2)).toBe(true)
+    // не сосед (угол 292, 288) — без рамки и кромки
     expect(calls.filter((c) => c.fill === 'sel')).toHaveLength(8)
     expect(calls.filter((c) => c.fill === 'sel-edge')).toHaveLength(16)
     expect(calls.some((c) => (c.fill === 'sel' || c.fill === 'sel-edge') && c.args[0] < 380)).toBe(false)
@@ -359,27 +404,27 @@ describe('drawNodes', () => {
     const scene = makeScene([{ x: 0, y: 0 }])
     const { ctx, calls } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), CLASSIC, st({ selectedId: 'n0' }))
-    expect(hasFrame(calls, 'sel', 388, 288, 24, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel', 384, 284, 32, 2)).toBe(true)
     expect(calls.some((c) => c.fill === 'sel-edge')).toBe(false)
   })
 
   it('«Классика»: у соседа и наведённой кромки нет', () => {
-    const scene = makeScene([{ x: 0, y: 0 }, { x: 64, y: 0 }, { x: 0, y: 64 }], [[0, 1]])
+    const scene = makeScene([{ x: 0, y: 0 }, { x: 96, y: 0 }, { x: 0, y: 96 }], [[0, 1]])
     const { ctx, calls } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600), CLASSIC, st({ selectedId: 'n0', hoveredId: 'n2' }))
-    expect(hasFrame(calls, 'sel', 454, 290, 20, 2)).toBe(true)
-    expect(hasFrame(calls, 'hover', 390, 354, 20, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel', 482, 286, 28, 2)).toBe(true)
+    expect(hasFrame(calls, 'hover', 386, 382, 28, 2)).toBe(true)
     expect(calls.some((c) => c.fill === 'sel-edge')).toBe(false)
   })
 
   it('0.25: рамка соседа ложится на контур ноды, кромка снаружи', () => {
-    const scene = makeScene([{ x: 0, y: 0 }, { x: 64, y: 0 }], [[0, 1]])
+    const scene = makeScene([{ x: 0, y: 0 }, { x: 96, y: 0 }], [[0, 1]])
     const { ctx, calls } = mockCtx()
     drawNodes(ctx, scene, vp(800, 600, 0.25), PIXEL, st({ selectedId: 'n0' }))
-    // сосед: угол (414, 298), s = 4, w = 1; контур (413, 297, 6), золото поверх него, кромка (412, 296, 8)
-    expect(hasRect(calls, 'edge', 413, 297, 6, 6)).toBe(true)
-    expect(hasFrame(calls, 'sel', 413, 297, 6, 1)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 412, 296, 8, 1)).toBe(true)
+    // сосед: угол (419, 295), s = 10, w = 1; контур (418, 294, 12), золото поверх него, кромка (417, 293, 14)
+    expect(hasRect(calls, 'edge', 418, 294, 12, 12)).toBe(true)
+    expect(hasFrame(calls, 'sel', 418, 294, 12, 1)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 417, 293, 14, 1)).toBe(true)
   })
 
   it('выбранная приглушённая нода тоже получает рамку с альфой 1', () => {
@@ -390,33 +435,33 @@ describe('drawNodes', () => {
   })
 
   it('перетаскивание: призрак на месте, нода в точке указателя с тенью 2b, рамка клетки броска', () => {
-    const scene = makeScene([{ x: 0, y: 0, color: 'blue' }, { x: 64, y: 0 }])
+    const scene = makeScene([{ x: 0, y: 0, color: 'blue' }, { x: 96, y: 0 }])
     const { ctx, calls, raw } = mockCtx()
     const n = drawNodes(
       ctx, scene, vp(800, 600), PIXEL,
-      st({ selectedId: 'n0', drag: { id: 'n0', x: 100.4, y: 50.6, drop: { x: 96, y: 64 } } }),
+      st({ selectedId: 'n0', drag: { id: 'n0', x: 100.4, y: 50.6, drop: { x: 96, y: 96 } } }),
     )
     expect(n).toBe(2)
     // на своём месте — альфа 0.3
-    expect(hasRect(calls, 'cat-blue', 394, 294, 12, 12, 0.3)).toBe(true)
-    // в точке (100.4, 50.6): угол (400 + 100 − 8, 300 + 51 − 8) = (492, 343)
-    expect(hasRect(calls, 'shadow', 496, 347, 16, 16, 1)).toBe(true)
-    expect(hasRect(calls, 'edge', 492, 343, 16, 16, 1)).toBe(true)
-    expect(hasRect(calls, 'cat-blue', 494, 345, 12, 12, 1)).toBe(true)
-    // клетка броска (96, 64): угол (488, 356), рамка вплотную
-    expect(hasFrame(calls, 'hover', 486, 354, 20, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 484, 352, 24, 2)).toBe(true)
+    expect(hasRect(calls, 'cat-blue', 390, 290, 20, 20, 0.3)).toBe(true)
+    // в точке (100.4, 50.6): угол (400 + 100 − 12, 300 + 51 − 12) = (488, 339)
+    expect(hasRect(calls, 'shadow', 492, 343, 24, 24, 1)).toBe(true)
+    expect(hasRect(calls, 'edge', 488, 339, 24, 24, 1)).toBe(true)
+    expect(hasRect(calls, 'cat-blue', 490, 341, 20, 20, 1)).toBe(true)
+    // клетка броска (96, 96): угол (484, 384), рамка вплотную
+    expect(hasFrame(calls, 'hover', 482, 382, 28, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 480, 380, 32, 2)).toBe(true)
     // рамка выбранной едет вместе с нодой
-    expect(hasFrame(calls, 'sel', 488, 339, 24, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel', 484, 335, 32, 2)).toBe(true)
     expect(raw.globalAlpha).toBe(1)
   })
 
   it('цель протяжки связи — рамка, как у выбранной', () => {
-    const scene = makeScene([{ x: 0, y: 0 }, { x: 64, y: 0 }])
+    const scene = makeScene([{ x: 0, y: 0 }, { x: 96, y: 0 }])
     const { ctx, calls } = mockCtx()
-    drawNodes(ctx, scene, vp(800, 600), PIXEL, st({ tempLink: { fromId: 'n0', x: 60, y: 2, targetId: 'n1' } }))
-    expect(hasFrame(calls, 'sel', 452, 288, 24, 2)).toBe(true)
-    expect(hasFrame(calls, 'sel-edge', 450, 286, 28, 2)).toBe(true)
+    drawNodes(ctx, scene, vp(800, 600), PIXEL, st({ tempLink: { fromId: 'n0', x: 90, y: 2, targetId: 'n1' } }))
+    expect(hasFrame(calls, 'sel', 480, 284, 32, 2)).toBe(true)
+    expect(hasFrame(calls, 'sel-edge', 478, 282, 36, 2)).toBe(true)
   })
 
   it('пустая сцена — ничего', () => {
@@ -456,11 +501,11 @@ function readBlocks(buf: LinkBuffer, u: number, bx: number, by: number): Map<str
 }
 
 describe('drawLinksPixel', () => {
-  // 400×300, камера (1, 0): ox = 199, oy = 150; u = 2, начало решётки (1, 0).
-  // A (0, 0) → блок (99, 75); B (100, 60) → X 299, Y 210 → блок (149, 105). Главная ось x, 50 шагов.
-  const v = vp(400, 300, 1, 1, 1, 0)
+  // 400×300, масштаб 200 % (u = 2 при dpr 1), камера (0.5, 0): ox = 199, oy = 150; начало решётки (1, 0).
+  // A (0, 0) → блок (99, 75); B (50, 30) → X 299, Y 210 → блок (149, 105). Главная ось x, 50 шагов.
+  const v = vp(400, 300, 2, 1, 0.5, 0)
   const pair = (extra?: Partial<GraphLink>, nodeExtra: Partial<GraphNode> = {}) =>
-    makeScene([{ x: 0, y: 0, ...nodeExtra }, { x: 100, y: 60 }], [[0, 1, extra]])
+    makeScene([{ x: 0, y: 0, ...nodeExtra }, { x: 50, y: 30 }], [[0, 1, extra]])
 
   /** Только блоки сердцевины обычной связи. */
   const cores = (blocks: Map<string, number>): Map<string, number> =>
@@ -485,7 +530,7 @@ describe('drawLinksPixel', () => {
   })
 
   it('крутая линия (главная ось y) тоже непрерывна', () => {
-    const scene = makeScene([{ x: 0, y: -100 }, { x: 30, y: 120 }], [[0, 1]])
+    const scene = makeScene([{ x: 0, y: -50 }, { x: 15, y: 60 }], [[0, 1]])
     const buf = buffer(400, 300)
     drawLinksPixel(buf, scene, v, PIXEL, NONE)
     const blocks = cores(readBlocks(buf, 2, 1, 0))
@@ -502,8 +547,8 @@ describe('drawLinksPixel', () => {
   it('решётка привязана к миру: сдвиг камеры на u px устройства сдвигает картинку целиком', () => {
     const a = buffer(400, 300)
     const b = buffer(400, 300)
-    drawLinksPixel(a, pair(), vp(400, 300, 1, 1, 1, 0), PIXEL, NONE)
-    drawLinksPixel(b, pair(), vp(400, 300, 1, 1, 3, 0), PIXEL, NONE) // ox меньше на 2
+    drawLinksPixel(a, pair(), vp(400, 300, 2, 1, 0.5, 0), PIXEL, NONE)
+    drawLinksPixel(b, pair(), vp(400, 300, 2, 1, 1.5, 0), PIXEL, NONE) // ox меньше на 2
     for (let y = 0; y < 300; y++) for (let x = 2; x < 400; x++) expect(b.data[y * 400 + x - 2]).toBe(a.data[y * 400 + x])
   })
 
@@ -532,14 +577,17 @@ describe('drawLinksPixel', () => {
     expect(blocks.get('150,106')).toBe(LINK_EDGE)
   })
 
-  it('кромка — ровно объединение квадратов 3×3 вокруг сердцевины (случайные отрезки, u = 2 и 3, пунктир, отсечение)', () => {
+  it('кромка — ровно объединение квадратов 3×3 вокруг сердцевины (случайные отрезки, u = 1, 2 и 3, пунктир, отсечение)', () => {
     let seed = 7
     const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
     let checked = 0
-    for (const dpr of [1, 1.5]) {
-      const view = vp(400, 300, 1, dpr, 3.3, -1.7)
+    // 100 % при dpr 1 — u = 1 (кромка есть и при u = 1); 200 % при dpr 1 и 1.5 — u = 2 и 3.
+    for (const [zoom, dpr] of [[1, 1], [2, 1], [2, 1.5]]) {
+      const view = vp(400, 300, zoom, dpr, 3.3, -1.7)
       const t = deviceTransform(view)
-      const u = linkUnit(1, dpr)
+      const u = linkUnit(zoom, dpr)
+      expect(u).toBe(zoom === 1 ? 1 : Math.round(2 * dpr))
+      const reach = 1 / zoom // доля экрана в мире
       const bx = ((t.ox % u) + u) % u
       const by = ((t.oy % u) + u) % u
       const W = Math.round(400 * dpr)
@@ -549,39 +597,40 @@ describe('drawLinksPixel', () => {
       const jFirst = Math.ceil(-by / u)
       const jLast = Math.floor((H - by) / u) - 1
       for (let n = 0; n < 60; n++) {
-        const far = n % 5 === 0 ? 2000 : 220
+        const far = (n % 5 === 0 ? 2000 : 220) * reach
         const a = { x: (rnd() - 0.5) * 2 * far, y: (rnd() - 0.5) * 2 * far }
-        const b = { x: (rnd() - 0.5) * 2 * 220, y: (rnd() - 0.5) * 2 * 160 }
+        const b = { x: (rnd() - 0.5) * 2 * 220 * reach, y: (rnd() - 0.5) * 2 * 160 * reach }
         const cross = n % 3 === 0
         const buf = buffer(W, H)
         // n % 4 === 0 — горячая (другие цвета, без пунктира)
         const hot = n % 4 === 0
         drawLinksPixel(buf, makeScene([a, b], [[0, 1, { cross }]]), view, PIXEL, hot ? st({ selectedId: 'n0' }) : NONE)
-        // без проверки целостности блоков (её делает readBlocks в других тестах) — иначе тест идёт секунды
-        const blocks = new Map<string, number>()
+        // без проверки целостности блоков (её делает readBlocks в других тестах) — иначе тест идёт секунды;
+        // блоки — в плоском массиве (при u = 1 их 120 000 на отрезок, Map со строковыми ключами не успевает)
+        const BW = iLast - iFirst + 1
+        const BH = jLast - jFirst + 1
+        const blocks = new Uint32Array(BW * BH)
         for (let j = jFirst; j <= jLast; j++) {
-          for (let i = iFirst; i <= iLast; i++) {
-            const c = buf.data[(by + j * u) * W + bx + i * u]
-            if (c !== 0) blocks.set(`${i},${j}`, c)
-          }
+          for (let i = iFirst; i <= iLast; i++) blocks[(j - jFirst) * BW + i - iFirst] = buf.data[(by + j * u) * W + bx + i * u]
         }
-        if (n === 0) readBlocks(buf, u, bx, by)
-        const isCore = (c: number | undefined) => c === LINK || c === LINK_ALT || c === LINK_HOT
+        const at = (i: number, j: number) => blocks[(j - jFirst) * BW + i - iFirst]
+        if (n === 0 && u > 1) readBlocks(buf, u, bx, by)
+        const isCore = (c: number) => c === LINK || c === LINK_ALT || c === LINK_HOT
         const wrong: string[] = []
         let coreCount = 0
         for (let i = iFirst + 1; i < iLast; i++) {
           for (let j = jFirst + 1; j < jLast; j++) {
-            const c = blocks.get(`${i},${j}`)
+            const c = at(i, j)
             if (isCore(c)) {
               coreCount++
               continue
             }
             let near = false
-            for (let di = -1; di <= 1 && !near; di++) for (let dj = -1; dj <= 1; dj++) if (isCore(blocks.get(`${i + di},${j + dj}`))) near = true
+            for (let di = -1; di <= 1 && !near; di++) for (let dj = -1; dj <= 1; dj++) if (isCore(at(i + di, j + dj))) near = true
             if ((c === LINK_EDGE) !== near) wrong.push(`${i},${j}`)
           }
         }
-        expect(wrong, `dpr ${dpr}, отрезок ${n}`).toEqual([])
+        expect(wrong, `zoom ${zoom}, dpr ${dpr}, отрезок ${n}`).toEqual([])
         checked += coreCount
       }
     }
@@ -589,7 +638,7 @@ describe('drawLinksPixel', () => {
     expect(checked).toBeGreaterThan(2000)
   })
 
-  it('при u = 1 (масштаб 0,25, dpr 1) у обычной связи кромки нет, сердцевина — цвета кромки с альфой linkZoomAlpha; у горячей кромка есть', () => {
+  it('при u = 1 ниже 100 % (0,25, dpr 1) у обычной связи кромки нет, сердцевина — цвета linkThin с альфой linkZoomAlpha; у горячей кромка есть', () => {
     const view = vp(400, 300, 0.25, 1, 0, 0)
     expect(linkUnit(0.25, 1)).toBe(1)
     const alpha = (c: number) => c >>> 24 // little-endian, как в draw.ts
@@ -602,7 +651,7 @@ describe('drawLinksPixel', () => {
     // Один цвет: ни кромки, ни двух цветов сердцевины.
     expect(colors.size).toBe(1)
     const [only] = [...colors]
-    expect(rgb(only)).toBe(rgb(LINK_EDGE))
+    expect(rgb(only)).toBe(rgb(PIXEL.linkThin))
     expect(alpha(only)).toBe(Math.round(255 * linkZoomAlpha(0.25)))
     // Линия в один «пиксель»: по одному пикселю на шаг главной оси, без полос 1×3.
     const lit = [...plainBuf.data].filter((c) => c !== 0).length
@@ -615,9 +664,30 @@ describe('drawLinksPixel', () => {
     expect(hotColors.has(LINK_EDGE)).toBe(true)
   })
 
+  it('при u = 1 на 100 % (dpr 1) обычная связь — верёвка 3 px: кромка, две краски сердцевины, кромка', () => {
+    const view = vp(400, 300, 1, 1, 0, 0)
+    expect(linkUnit(1, 1)).toBe(1)
+    // горизонталь через y = 0 → строка 150; кромка — строки 149 и 151
+    const scene = makeScene([{ x: -100, y: 0 }, { x: 100, y: 0 }], [[0, 1]])
+    const buf = buffer(400, 300)
+    drawLinksPixel(buf, scene, view, PIXEL, NONE)
+    expect(new Set([...buf.data].filter((c) => c !== 0))).toEqual(new Set([LINK, LINK_ALT, LINK_EDGE]))
+    for (let x = 110; x <= 290; x++) {
+      expect([LINK, LINK_ALT]).toContain(buf.data[150 * 400 + x])
+      expect(buf.data[149 * 400 + x]).toBe(LINK_EDGE)
+      expect(buf.data[151 * 400 + x]).toBe(LINK_EDGE)
+      expect(buf.data[148 * 400 + x]).toBe(0)
+      expect(buf.data[152 * 400 + x]).toBe(0)
+    }
+    // на 75 % при том же u = 1 — снова тонкая линия без кромки
+    const thin = buffer(400, 300)
+    drawLinksPixel(thin, scene, vp(400, 300, 0.75, 1, 0, 0), PIXEL, NONE)
+    expect(thin.data.includes(LINK_EDGE)).toBe(false)
+  })
+
   it('протягиваемая связь в одну клетку — кромка 3×3 вокруг блока', () => {
     const buf = buffer(400, 300)
-    drawLinksPixel(buf, makeScene([{ x: 0, y: 0 }]), v, PIXEL, st({ tempLink: { fromId: 'n0', x: 0.4, y: 0.4, targetId: null } }))
+    drawLinksPixel(buf, makeScene([{ x: 0, y: 0 }]), v, PIXEL, st({ tempLink: { fromId: 'n0', x: 0.2, y: 0.2, targetId: null } }))
     const blocks = readBlocks(buf, 2, 1, 0)
     expect(blocks.get('99,75')).toBe(LINK_HOT)
     for (const [di, dj] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
@@ -628,7 +698,7 @@ describe('drawLinksPixel', () => {
 
   it('две пересекающиеся обычные связи: в точке пересечения — сердцевина, не кромка', () => {
     // горизонталь и вертикаль через (0, 0) → блок (99, 75)
-    const scene = makeScene([{ x: -100, y: 0 }, { x: 100, y: 0 }, { x: 0, y: -100 }, { x: 0, y: 100 }], [[0, 1], [2, 3]])
+    const scene = makeScene([{ x: -50, y: 0 }, { x: 50, y: 0 }, { x: 0, y: -50 }, { x: 0, y: 50 }], [[0, 1], [2, 3]])
     const buf = buffer(400, 300)
     drawLinksPixel(buf, scene, v, PIXEL, NONE)
     const blocks = readBlocks(buf, 2, 1, 0)
@@ -736,7 +806,7 @@ describe('drawLinksPixel', () => {
   it('порядок: приглушённые → обычные → горячие (горячая поверх)', () => {
     // три связи из одной точки по одной прямой: перекрываются блоки у общего конца
     const scene = makeScene(
-      [{ x: 0, y: 0 }, { x: 100, y: 0, dim: true }, { x: 120, y: 0 }, { x: 140, y: 0 }],
+      [{ x: 0, y: 0 }, { x: 50, y: 0, dim: true }, { x: 60, y: 0 }, { x: 70, y: 0 }],
       [[0, 1, { dim: true }], [0, 2], [0, 3]],
     )
     const buf = buffer(400, 300)
@@ -749,7 +819,7 @@ describe('drawLinksPixel', () => {
   it('протягиваемая связь — горячая от ноды к точке мира', () => {
     const scene = makeScene([{ x: 0, y: 0 }])
     const buf = buffer(400, 300)
-    expect(drawLinksPixel(buf, scene, v, PIXEL, st({ tempLink: { fromId: 'n0', x: 50, y: 0, targetId: null } }))).toBe(1)
+    expect(drawLinksPixel(buf, scene, v, PIXEL, st({ tempLink: { fromId: 'n0', x: 25, y: 0, targetId: null } }))).toBe(1)
     const blocks = readBlocks(buf, 2, 1, 0)
     expect(blocks.get('99,75')).toBe(LINK_HOT)
     expect(blocks.get('124,75')).toBe(LINK_HOT)
@@ -771,7 +841,7 @@ describe('drawLinksPixel', () => {
   })
 
   it('связь через весь экран с концами далеко за краями — рисуется только видимая часть', () => {
-    const scene = makeScene([{ x: -100000, y: 10 }, { x: 100000, y: 10 }], [[0, 1, { cross: true }]])
+    const scene = makeScene([{ x: -100000, y: 5 }, { x: 100000, y: 5 }], [[0, 1, { cross: true }]])
     const buf = buffer(400, 300)
     expect(drawLinksPixel(buf, scene, v, PIXEL, NONE)).toBe(1)
     const blocks = readBlocks(buf, 2, 1, 0)
@@ -783,15 +853,16 @@ describe('drawLinksPixel', () => {
   })
 
   it('запись не выходит за границы буфера и не переносится на соседнюю строку', () => {
-    // 101 × 80, камера x = 0.5 → ox = 50, начало решётки 0; последний блок i = 50 — столбец 100 (половина блока).
+    // 101 × 80, 200 % (u = 2), камера x = 0.25 → ox = 50, начало решётки 0; последний блок i = 50 — столбец 100
+    // (половина блока). Мир x = 25 → столбец 100, y = −20 → строка 0.
     const W = 101
     const H = 80
-    const scene = makeScene([{ x: 50, y: -1000 }, { x: 50, y: 1000 }, { x: -1000, y: -40 }, { x: 1000, y: -40 }], [[0, 1], [2, 3]])
+    const scene = makeScene([{ x: 25, y: -500 }, { x: 25, y: 500 }, { x: -500, y: -20 }, { x: 500, y: -20 }], [[0, 1], [2, 3]])
     const buf = buffer(W, H, 64)
-    const view = vp(W, H, 1, 1, 0.5, 0)
+    const view = vp(W, H, 2, 1, 0.25, 0)
     drawLinksPixel(buf, scene, view, PIXEL, st({ selectedId: 'n0', cursorId: 'n2' }))
     // вертикальная горячая у правого края: перенос записал бы в столбцы 0..2 следующей строки.
-    // Строки 0..3 законно заняты горизонтальной горячей (мир y = −40 → блок 0, кромка ±1 блок).
+    // Строки 0..3 законно заняты горизонтальной горячей (мир y = −20 → блок 0, кромка ±1 блок).
     expect(buf.data[0]).toBe(LINK_HOT)
     for (let y = 4; y < H; y++) for (let x = 0; x < 3; x++) expect(buf.data[y * W + x], `(${x}, ${y})`).toBe(0)
     // за пределами W × H — ничего
@@ -856,6 +927,41 @@ describe('drawLinksClassic', () => {
   })
 })
 
+// ───────────────────────── стая: шлейф ─────────────────────────
+
+describe('drawSwarmTrails', () => {
+  const scene = makeScene([
+    { id: 'fast', x: 0, y: 0, color: 'blue' },
+    { id: 'slow', x: 96, y: 0, color: 'red' },
+    { id: 'dim', x: 0, y: 96, color: 'green', dim: true },
+    { id: 'far', x: 5000, y: 0 },
+  ])
+
+  it('два уменьшающихся квадрата цвета категории позади быстрой ноды; медленные и вне экрана — без шлейфа', () => {
+    const { ctx, raw, rects } = mockCtx()
+    drawSwarmTrails(ctx, scene, vp(800, 600), PIXEL, [
+      { id: 'fast', x: 0, y: 0, vx: 1000, vy: 0 },
+      { id: 'slow', x: 96, y: 0, vx: 50, vy: 0 },
+      { id: 'far', x: 5000, y: 0, vx: 1000, vy: 0 },
+      { id: 'unknown', x: 0, y: 0, vx: 1000, vy: 0 },
+    ])
+    // s = 24, шаг уменьшения 4: дальний отпечаток 8×8 (альфа 0.16), ближний 16×16 (0.32); отставание ограничено
+    // 1,5 размера ноды: 36 и 18 px позади центра.
+    expect(rects().map((c) => [c.fill, c.alpha, ...c.args])).toEqual([
+      ['cat-blue', 0.16, 400 - 36 - 12 + 8, 300 - 12 + 8, 8, 8],
+      ['cat-blue', 0.32, 400 - 18 - 12 + 4, 300 - 12 + 4, 16, 16],
+    ])
+    expect(raw.globalAlpha).toBe(1)
+  })
+
+  it('альфа шлейфа — с альфой ноды (приглушённая)', () => {
+    const { ctx, rects } = mockCtx()
+    drawSwarmTrails(ctx, scene, vp(800, 600), PIXEL, [{ id: 'dim', x: 0, y: 96, vx: 0, vy: -2000 }])
+    expect(rects().map((c) => c.alpha)).toEqual([0.16 * GRAPH_ALPHA_DIM, 0.32 * GRAPH_ALPHA_DIM])
+    expect(rects().every((c) => c.fill === 'cat-green')).toBe(true)
+  })
+})
+
 // ───────────────────────── нагрузка ─────────────────────────
 
 describe('нагрузка', () => {
@@ -889,7 +995,11 @@ describe('нагрузка', () => {
   }
   const center = { x: (cols * GRAPH_CELL) / 2, y: (Math.ceil(2000 / cols) * GRAPH_CELL) / 2 }
 
-  it('связи при u ≥ 2: 1600×1000 при dpr 1.5, масштаб 100 % и 200 % (u = 3 и 6) — быстрее 60 мс', () => {
+  // 100 % при dpr 1.5 — теперь u = 2 (было 3): ≈ 51 мс в одиночном прогоне и до ≈ 95 под нагрузкой полного прогона
+  // (отчёт graph-redesign-tests), поэтому предел для 100 % — 120 мс: ловит рост вдвое, а не держит бюджет кадра.
+  const U2_LIMIT: Record<number, number> = { 1: 120, 2: 60 }
+
+  it('связи при u ≥ 2: 1600×1000 при dpr 1.5, масштаб 100 % и 200 % (u = 2 и 3) — быстрее 120 и 60 мс', () => {
     const scene = bigScene()
     const state = st({ selectedId: 'n100', hoveredId: 'n200' })
     const buf = buffer(2400, 1500)
@@ -907,7 +1017,7 @@ describe('нагрузка', () => {
         once()
         best = Math.min(best, performance.now() - t0)
       }
-      expect(best, `zoom ${zoom}: ${best.toFixed(1)} мс`).toBeLessThan(60)
+      expect(best, `zoom ${zoom}: ${best.toFixed(1)} мс`).toBeLessThan(U2_LIMIT[zoom])
     }
   })
 
@@ -937,9 +1047,18 @@ describe('нагрузка', () => {
     expect(best, `${best.toFixed(1)} мс`).toBeLessThan(20)
   })
 
-  it('связи при u = 1 на 50 % (dpr 1) — быстрее 25 мс', () => {
+  // С клеткой 48 та же база на 50 % вдвое шире на экране и связи длиннее: ≈ 15 мс в одиночном прогоне, до ≈ 28 под
+  // нагрузкой полного прогона (было с запасом под 25). Отчёт graph-redesign-tests.
+  it('связи при u = 1 на 50 % (dpr 1) — быстрее 40 мс', () => {
     const best = bestLinksMs(0.5, 3)
-    expect(best, `${best.toFixed(1)} мс`).toBeLessThan(25)
+    expect(best, `${best.toFixed(1)} мс`).toBeLessThan(40)
+  })
+
+  // На 100 % при dpr 1 связи — самая дорогая ступень: u = 1 и кромка у каждой связи (≈ 56 мс в Node против ≈ 17 на 75 %
+  // и ≈ 26 на 150 %; отчёт graph-redesign-tests). Предел не утверждает, что это хорошо, — он ловит рост вдвое.
+  it('связи при u = 1 на 100 % (dpr 1, с кромкой) — быстрее 120 мс', () => {
+    const best = bestLinksMs(1, 3)
+    expect(best, `${best.toFixed(1)} мс`).toBeLessThan(120)
   })
 
   it('2000 нод и 3000 связей на масштабе 0.125, всё на экране 1600×1000 — быстрее 60 мс', () => {

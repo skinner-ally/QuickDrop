@@ -104,6 +104,11 @@ export interface GraphTheme {
   link: number
   linkAlt: number
   linkEdge: number
+  /**
+   * Тонкая связь без кромки (ниже 100 %): из link и linkEdge — тот, что контрастнее к земле (--graph-bg).
+   * Днём это тёмная кромка, ночью — светлая верёвка: тёмная линия на тёмной земле пропадала.
+   */
+  linkThin: number
   linkHot: number
   /** Цвета связей для stroke («Классика»). */
   linkCss: string

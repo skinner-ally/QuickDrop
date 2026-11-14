@@ -12,8 +12,16 @@ export const GRAPH_LABEL_LIMIT = 150
 /** CSS-пиксели. */
 export const GRAPH_LABEL_MAX_WIDTH = 160
 export const GRAPH_LABEL_HEIGHT = 16
-/** От края ноды до подписи, CSS-пиксели. */
-export const GRAPH_LABEL_GAP = 6
+/**
+ * От края ноды до подписи, CSS-пиксели. Отрицательный — плашка подписи заходит под рамку ноды и продолжает её:
+ * нода и подпись читаются одной карточкой, а связи уходят под плашку и с текстом не пересекаются.
+ */
+export const GRAPH_LABEL_GAP = -2
+
+/** Высота плашки подписи на масштабе zoom: вровень с нодой, но не ниже GRAPH_LABEL_HEIGHT. */
+export function labelHeight(zoom: number): number {
+  return Math.max(GRAPH_LABEL_HEIGHT, Math.round(GRAPH_NODE_SIZE * zoom))
+}
 
 export interface GraphLabel {
   /** Индекс ноды в сцене. */
@@ -65,10 +73,12 @@ export function pickLabels(
   const taken = new Set<number>()
 
   const rectOf = (x: number, y: number, text: string): Rect => {
-    const width = Math.max(0, Math.min(GRAPH_LABEL_MAX_WIDTH, measure(text)))
+    const width = Math.max(0, Math.min(GRAPH_LABEL_MAX_WIDTH, measure(text) + 8))
+    const h = labelHeight(zoom)
+    // Своя нода под плашкой не считается: проверяется часть правее её края.
     const left = x * zoom + half * zoom + GRAPH_LABEL_GAP
-    const top = y * zoom - GRAPH_LABEL_HEIGHT / 2
-    return { left, top, right: left + width, bottom: top + GRAPH_LABEL_HEIGHT }
+    const top = y * zoom - h / 2
+    return { left: left + 2, top, right: left + width, bottom: top + h }
   }
   const accept = (index: number, rect: Rect, plate: boolean) => {
     const n = scene.nodes[index]

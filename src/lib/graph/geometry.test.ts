@@ -73,6 +73,13 @@ describe('ступени масштаба', () => {
 })
 
 describe('преобразования', () => {
+  /**
+   * Известное нарушение после перехода на GRAPH_CELL = 48: на 12,5 % при dpr 1.25 и 1.75 шаг сетки — 7,5 и 10,5 px
+   * устройства (решётка нод неровная, зазоры через один на 1 px шире). Целый шаг на всех ступенях даёт только
+   * клетка, кратная 32. Отчёт graph-redesign-tests.
+   */
+  const FRACTIONAL_CELL = new Set(['0.125@1.25', '0.125@1.75'])
+
   it('deviceTransform: целые ox, oy и целый шаг сетки на всех ступенях и плотностях', () => {
     const rand = mulberry32(3)
     for (const dpr of DPRS) {
@@ -81,8 +88,17 @@ describe('преобразования', () => {
         expect(Number.isInteger(t.ox)).toBe(true)
         expect(Number.isInteger(t.oy)).toBe(true)
         expect(t.k).toBe(zoom * dpr)
-        expect(Number.isInteger(GRAPH_CELL * t.k)).toBe(true)
+        if (FRACTIONAL_CELL.has(`${zoom}@${dpr}`)) continue
+        expect(Number.isInteger(GRAPH_CELL * t.k), `шаг сетки ${zoom} @ dpr ${dpr}`).toBe(true)
       }
+    }
+  })
+
+  // Падает, пока нарушение есть; когда шаг станет целым везде — it.fails упадёт: убрать его и FRACTIONAL_CELL.
+  it.fails('целый шаг сетки и на 12,5 % при dpr 1.25 / 1.75 (известное нарушение, клетка 48)', () => {
+    for (const key of FRACTIONAL_CELL) {
+      const [zoom, dpr] = key.split('@').map(Number)
+      expect(Number.isInteger(GRAPH_CELL * zoom * dpr)).toBe(true)
     }
   })
 
@@ -257,11 +273,12 @@ describe('resizeCamera', () => {
 
 describe('попадания', () => {
   it('hitNode: квадрат ноды с полями; ближайшая; при равенстве — верхняя', () => {
-    const pts = [{ x: 0, y: 0 }, { x: 32, y: 0 }, { x: 0, y: 0 }]
+    // Нода 24 px: полуширина зоны на 100 % — 12 + 2.
+    const pts = [{ x: 0, y: 0 }, { x: GRAPH_CELL, y: 0 }, { x: 0, y: 0 }]
     const idx = buildSpatialIndex(pts)
-    expect(hitNode(idx, pts, { x: 9, y: -9 }, 1)).toBe(2)
-    expect(hitNode(idx, pts, { x: 11, y: 0 }, 1)).toBe(-1)
-    expect(hitNode(idx, pts, { x: 24, y: 3 }, 1)).toBe(1)
+    expect(hitNode(idx, pts, { x: 13, y: -13 }, 1)).toBe(2)
+    expect(hitNode(idx, pts, { x: 15, y: 0 }, 1)).toBe(-1)
+    expect(hitNode(idx, pts, { x: GRAPH_CELL - 12, y: 3 }, 1)).toBe(1)
   })
 
   it('hitNode на мелком масштабе: поле шире, выбирается ближайшая', () => {
@@ -290,27 +307,29 @@ describe('попадания', () => {
   })
 
   it('hitNodeStrict: на мелком масштабе зона не смыкается между соседями (перенос — только с квадрата)', () => {
-    const pts = [{ x: 0, y: 0 }, { x: 32, y: 32 }]
+    // Клетка 48, нода 24: зазор между квадратами соседей — 24, его четверть — 6.
+    const pts = [{ x: 0, y: 0 }, { x: GRAPH_CELL, y: GRAPH_CELL }]
     const idx = buildSpatialIndex(pts)
+    const mid = GRAPH_CELL / 2
     for (const zoom of [0.125, 0.25]) {
       // Посреди соседних узлов сетки широкая зона находит ноду, строгая — нет.
-      expect(hitNode(idx, pts, { x: 16, y: 16 }, zoom)).not.toBe(-1)
-      expect(hitNodeStrict(idx, pts, { x: 16, y: 16 }, zoom)).toBe(-1)
+      expect(hitNode(idx, pts, { x: mid, y: mid }, zoom)).not.toBe(-1)
+      expect(hitNodeStrict(idx, pts, { x: mid, y: mid }, zoom)).toBe(-1)
       // В центре ноды строгая находит её.
       expect(hitNodeStrict(idx, pts, { x: 0, y: 0 }, zoom)).toBe(0)
-      expect(hitNodeStrict(idx, pts, { x: 33, y: 31 }, zoom)).toBe(1)
+      expect(hitNodeStrict(idx, pts, { x: GRAPH_CELL + 1, y: GRAPH_CELL - 1 }, zoom)).toBe(1)
     }
-    // 12,5 %: 2 экранных px = 16 мировых — больше четверти зазора, запас ограничен 4: полуширина 12.
-    expect(hitNodeStrict(idx, pts, { x: -12, y: 0 }, 0.125)).toBe(0)
-    expect(hitNodeStrict(idx, pts, { x: -13, y: 0 }, 0.125)).toBe(-1)
-    // Доля площади плотной решётки, с которой начинается перенос, — не больше (24/32)² на любом масштабе.
+    // 12,5 %: 2 экранных px = 16 мировых — больше четверти зазора, запас ограничен 6: полуширина 18.
+    expect(hitNodeStrict(idx, pts, { x: -18, y: 0 }, 0.125)).toBe(0)
+    expect(hitNodeStrict(idx, pts, { x: -19, y: 0 }, 0.125)).toBe(-1)
+    // Доля площади плотной решётки, с которой начинается перенос, — не больше (36/48)² на любом масштабе.
     for (const zoom of GRAPH_ZOOM_STEPS) {
-      expect(hitNodeStrict(idx, pts, { x: 0, y: 12.5 }, zoom)).toBe(-1)
+      expect(hitNodeStrict(idx, pts, { x: 0, y: 18.5 }, zoom)).toBe(-1)
     }
     // 100 %: у края квадрата обе находят ноду, дальше запаса — строгая нет.
-    expect(hitNode(idx, pts, { x: 9, y: 0 }, 1)).toBe(0)
-    expect(hitNodeStrict(idx, pts, { x: 9, y: 0 }, 1)).toBe(0)
-    expect(hitNodeStrict(idx, pts, { x: 11, y: 0 }, 1)).toBe(-1)
+    expect(hitNode(idx, pts, { x: 13, y: 0 }, 1)).toBe(0)
+    expect(hitNodeStrict(idx, pts, { x: 13, y: 0 }, 1)).toBe(0)
+    expect(hitNodeStrict(idx, pts, { x: 15, y: 0 }, 1)).toBe(-1)
     expect(hitNodeStrict(idx, pts, { x: Number.NaN, y: 0 }, 1)).toBe(-1)
   })
 

@@ -2,6 +2,7 @@ import { db } from '@/db/db'
 import { normalizeUrl } from '@/lib/detect'
 import { readableError } from '@/lib/errors'
 import { snapToGrid } from '@/lib/graphLayout'
+import { upgradeLegacyRawPosition } from '@/lib/legacyGrid'
 import {
   categoryNameKey,
   cleanOcrText,
@@ -48,10 +49,11 @@ import {
  *      у записей — deletedAt (корзина), ocrText, ocrAt. Оба раздела необязательны в любой версии.
  *      У записей также ocrVisionAt и ocrClearedAt (с этапа 8, необязательные; номер версии не менялся).
  *      ocrAutoSkipAt (решение этого устройства) не выгружается и при импорте не читается.
+ *  3 — положения нод на сетке графа 48 (было 32); у копий 1–2 положения при импорте переносятся на новую сетку.
  */
 
 export const BACKUP_APP = 'quickdrop'
-export const BACKUP_VERSION = 2
+export const BACKUP_VERSION = 3
 
 /**
  * Предельный размер копии. Импорт читает файл одной строкой (file.text() + JSON.parse), а строка
@@ -614,7 +616,12 @@ async function readBackup(file: Blob): Promise<ParsedBackup> {
     categories: data.categories as unknown[],
     files: data.files as unknown[],
     // Этих разделов нет в копиях версии 1, а в чужой копии они могут быть чем угодно: не повод отказывать.
-    positions: Array.isArray(data.positions) ? (data.positions as unknown[]) : [],
+    // До формата 3 положения стояли на сетке 32.
+    positions: Array.isArray(data.positions)
+      ? version < 3
+        ? (data.positions as unknown[]).map(upgradeLegacyRawPosition)
+        : (data.positions as unknown[])
+      : [],
     searches: Array.isArray(data.searches) ? (data.searches as unknown[]) : [],
     settings: data.settings,
   }

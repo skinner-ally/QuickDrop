@@ -1,0 +1,19 @@
+/* Мини-окно быстрой записи (capture.html): окно без системной рамки, страница не прокручивается,
+   прокручивается только форма внутри. Фон окна между углами панели — токен сцены:
+   дерево в пиксельных сценах, фон всплывающей поверхности в «Классике». */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--popover);
+}
+
+.pixel body {
+  background: var(--wood-dark);
+}

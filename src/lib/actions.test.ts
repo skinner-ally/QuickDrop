@@ -37,6 +37,7 @@ import {
   actEmptyTrash,
   actEmptyTrashAsk,
   actLinkItems,
+  actMoveGroup,
   actMoveNode,
   actMoveSearch,
   actPurge,
@@ -1164,6 +1165,37 @@ describe('граф: действия', () => {
     await actMoveNode(a.id, { x: Number.NaN, y: 0 })
     await actMoveNode('нет-такой', { x: 1, y: 1 })
     expect(await getPositions()).toEqual({ [a.id]: { x: 64, y: -32 } })
+    expect(mocks.toastError).not.toHaveBeenCalled()
+  })
+
+  it('actMoveGroup: положения группы одной пачкой, toast со склонением; «Отменить» возвращает прежние', async () => {
+    const [a, b] = await pair()
+    const c = await note('C')
+    await setPositions({ [a.id]: { x: 0, y: 0 }, [b.id]: { x: 48, y: 0 }, [c.id]: { x: 480, y: 480 } })
+    const before = await getItem(a.id)
+    await actMoveGroup(
+      { [a.id]: { x: 96, y: 96 }, [b.id]: { x: 144, y: 96 } },
+      { [a.id]: { x: 0, y: 0 }, [b.id]: { x: 48, y: 0 } },
+    )
+    expect(await getPositions()).toEqual({
+      [a.id]: { x: 96, y: 96 }, [b.id]: { x: 144, y: 96 }, [c.id]: { x: 480, y: 480 },
+    })
+    // положения — не правка записи
+    expect(await getItem(a.id)).toEqual(before)
+    const { text, options } = lastToast()
+    expect(text).toBe('Перемещено 2 записи')
+    expect(options?.action?.label).toBe('Отменить')
+
+    options!.action!.onClick()
+    await until(async () => (await getPositions())[a.id]?.x === 0)
+    expect(await getPositions()).toEqual({
+      [a.id]: { x: 0, y: 0 }, [b.id]: { x: 48, y: 0 }, [c.id]: { x: 480, y: 480 },
+    })
+
+    // пустая группа — ничего и без toast
+    mocks.toast.mockClear()
+    await actMoveGroup({}, {})
+    expect(mocks.toast).not.toHaveBeenCalled()
     expect(mocks.toastError).not.toHaveBeenCalled()
   })
 

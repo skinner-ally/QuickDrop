@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { GraphOverlayProps } from '@/components/graph/GraphOverlay'
+import { subscribeSwarm, swarmPoints } from '@/components/graph/swarmDriver'
 import { estimateTextWidth, labelBoxWidth, overlayViewport } from '@/components/graph/overlayGeometry'
 import { GRAPH_NODE_SIZE } from '@/lib/graphLayout'
 import { visibleBounds } from '@/lib/graph/geometry'
-import { GRAPH_LABEL_GAP, pickLabels } from '@/lib/graph/labels'
+import { GRAPH_LABEL_GAP, labelHeight, pickLabels } from '@/lib/graph/labels'
 import { subscribeGraphTheme } from '@/lib/graph/theme'
+import { useSmite } from '@/lib/graph/smite'
 import { useGraph } from '@/store/graph'
 import { useUi } from '@/store/ui'
 
@@ -72,6 +74,7 @@ export function GraphLabels({ scene }: GraphOverlayProps) {
   const width = useGraph((s) => s.viewSize.width)
   const height = useGraph((s) => s.viewSize.height)
   const selectedId = useUi((s) => s.selectedId)
+  const hiddenIds = useSmite((s) => s.hidden)
   // Счётчик пересчёта после сдвига (подписи у новых краёв экрана).
   const [panTick, setPanTick] = useState(0)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -120,6 +123,42 @@ export function GraphLabels({ scene }: GraphOverlayProps) {
     el.style.transform = translateOf(s.camera, s.viewSize)
   })
 
+  // Подписи нод стаи (перенос категории) едут за нодами: сдвиг каждой — её transform, без React. После коммита
+  // сдвиг считается заново: сцена могла получить новые положения, а стая ещё доплывает.
+  const labelsRef = useRef(labels)
+  const swarmShifted = useRef(false)
+  const applySwarm = () => {
+    const el = boxRef.current
+    if (!el) return
+    const points = swarmPoints()
+    if (!points && !swarmShifted.current) return
+    const z = useGraph.getState().camera.zoom
+    const base = new Map(labelsRef.current.map((l) => [l.id, l]))
+    let shifted = false
+    for (const child of el.children) {
+      const span = child as HTMLElement
+      const id = span.dataset.nodeId
+      const p = id !== undefined ? points?.get(id) : undefined
+      const l = id !== undefined ? base.get(id) : undefined
+      const dx = p && l ? Math.round((p.x - l.x) * z) : 0
+      const dy = p && l ? Math.round((p.y - l.y) * z) : 0
+      const tf = dx !== 0 || dy !== 0 ? `translate(${dx}px, ${dy}px)` : ''
+      if (tf) shifted = true
+      if (span.dataset.swarmTf !== tf) {
+        span.dataset.swarmTf = tf
+        span.style.transform = tf
+      }
+    }
+    swarmShifted.current = shifted
+  }
+  const applySwarmRef = useRef(applySwarm)
+  useLayoutEffect(() => {
+    labelsRef.current = labels
+    applySwarmRef.current = applySwarm
+    applySwarm()
+  })
+  useEffect(() => subscribeSwarm(() => applySwarmRef.current()), [])
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
     let lastX = useGraph.getState().camera.x
@@ -150,14 +189,21 @@ export function GraphLabels({ scene }: GraphOverlayProps) {
   }, [])
 
   const half = (GRAPH_NODE_SIZE * zoom) / 2
+  const h = labelHeight(zoom)
   return (
     <div ref={boxRef} aria-hidden className="absolute top-0 left-0 text-xs will-change-transform">
-      {labels.map((l) => (
+      {labels.filter((l) => !hiddenIds.has(l.id)).map((l) => (
         <span
           key={l.id}
+          data-node-id={l.id}
           data-plate={l.plate ? 'true' : undefined}
-          className="px-graph-label absolute block max-w-40 -translate-y-1/2 truncate rounded bg-background/85 px-1 leading-4 whitespace-nowrap pixel:py-0.5 text-foreground data-[plate=true]:bg-popover data-[plate=true]:ring-1 data-[plate=true]:ring-border"
-          style={{ left: Math.round(l.x * zoom + half + GRAPH_LABEL_GAP), top: Math.round(l.y * zoom) }}
+          className="px-graph-label absolute block max-w-40 -translate-y-1/2 truncate rounded bg-background/85 px-1 whitespace-nowrap text-foreground data-[plate=true]:bg-popover data-[plate=true]:ring-1 data-[plate=true]:ring-border"
+          style={{
+            left: Math.round(l.x * zoom + half + GRAPH_LABEL_GAP),
+            top: Math.round(l.y * zoom),
+            height: h,
+            lineHeight: `${h - 4}px`,
+          }}
         >
           {l.text}
         </span>

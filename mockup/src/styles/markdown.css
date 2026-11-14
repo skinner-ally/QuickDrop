@@ -1,0 +1,123 @@
+/* Отрисованный Markdown (MarkdownView, класс qd-md). Базовые правила в @layer components — это вид «Классики»
+   и общая раскладка; утилиты на самом .qd-md (размер шрифта у разбора входящих) их перекрывают.
+   Пиксельные отличия — ниже, под .pixel и вне слоёв. Цвета — только токены, размеры шрифта — только --text-*. */
+
+@layer components {
+  .qd-md {
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    /* break-word, не anywhere: anywhere занижает min-content и таблица никогда не шире контейнера (не прокручивается) */
+    overflow-wrap: break-word;
+  }
+  /* Высоту строки в пиксельных сценах задаёт шрифтовой класс сцены (1.25 на body), а не 1.6 выше. Правило в слое:
+     утилита на самом MarkdownText (leading-relaxed у разбора) его перекрывает. */
+  .pixel .qd-md { line-height: inherit; }
+  /* Внутри пункта, цитаты и ячейки отступ — только у блоков: в плотном списке и ячейке дети строчные,
+     а у вики-ссылки (button, inline-block) и картинки (inline-flex) margin-top раздул бы строку. */
+  .qd-md > * + *,
+  .qd-md :is(li, blockquote, td) > * + :is(p, div, pre, ul, ol, blockquote, table, hr, h1, h2, h3, h4, h5, h6) {
+    margin-top: .5rem;
+  }
+
+  .qd-md :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .qd-md h1 { font-size: var(--text-lg); }
+  .qd-md h2 { font-size: var(--text-base); }
+  .qd-md h3 { font-size: var(--text-md); }
+  .qd-md :is(h4, h5, h6) { font-size: var(--text-sm); }
+  .qd-md > :is(h1, h2, h3, h4, h5, h6) { margin-top: 1rem; }
+  .qd-md > :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+  .qd-md[data-density="compact"] :is(h1, h2, h3, h4, h5, h6) { font-size: var(--text-sm); }
+
+  .qd-md ul { list-style: disc; padding-left: 1.25rem; }
+  .qd-md ol { list-style: decimal; padding-left: 1.25rem; }
+  .qd-md li + li,
+  .qd-md li > :is(ul, ol) { margin-top: 2px; }
+  /* Класс contains-task-list получает весь список, если в нём есть хоть одна задача: маркер снимается только у
+     задач, а отступ списка — только когда задачи в нём все (у обычных пунктов остаются точки). */
+  .qd-md li.task-list-item { list-style: none; position: relative; padding-left: 1.5rem; }
+  .qd-md ul.contains-task-list:not(:has(> li:not(.task-list-item))) { padding-left: 0; }
+
+  .qd-md blockquote {
+    border-left: 2px solid var(--border);
+    padding-left: .75rem;
+    color: var(--muted-foreground);
+  }
+  .qd-md hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 1rem 0;
+  }
+
+  .qd-md .qd-md-table { overflow-x: auto; }
+  .qd-md table { border-collapse: collapse; font-size: var(--text-2sm); }
+  .qd-md :is(th, td) {
+    border: 1px solid var(--border);
+    padding: .25rem .5rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .qd-md th { background: var(--muted); font-weight: 600; }
+
+  .qd-md :not(pre) > code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--muted);
+    padding: 0 .25rem;
+    border-radius: 4px;
+  }
+
+  .qd-md :is(a, .qd-md-img) {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .qd-md .qd-md-img { display: inline-flex; align-items: center; gap: .25rem; }
+
+  .qd-md .qd-md-wiki {
+    border-bottom: 1px dashed currentColor;
+    cursor: pointer;
+    text-decoration: none;
+    font: inherit;
+    text-align: left;
+  }
+  .qd-md .qd-md-wiki[data-missing] { color: var(--muted-foreground); cursor: default; }
+
+  .qd-md del { color: var(--muted-foreground); }
+  .qd-md sup { font-size: var(--text-2xs); }
+  .qd-md .footnotes {
+    border-top: 1px solid var(--border);
+    padding-top: .5rem;
+    font-size: var(--text-2sm);
+  }
+}
+
+/* Флажок задачи — ui/checkbox, у которого утилита relative: правило в слое её не перебило бы, поэтому оно вне слоёв
+   (действует и в «Классике»). */
+.qd-md .qd-md-check { position: absolute; left: 0; top: .2em; cursor: pointer; }
+.qd-md .qd-md-check[aria-readonly="true"] { cursor: default; }
+
+/* Пиксельные сцены: рамки 2px линией бумаги, отступы кратны 2px, заголовки — шрифтом текста (не --font-head). */
+.pixel .qd-md > * + *,
+.pixel .qd-md :is(li, blockquote, td) > * + :is(p, div, pre, ul, ol, blockquote, table, hr, h1, h2, h3, h4, h5, h6) { margin-top: 8px; }
+.pixel .qd-md li > :is(ul, ol) { margin-top: 2px; }
+.pixel .qd-md :is(h1, h2, h3, h4, h5, h6) { font-family: var(--font-body); font-weight: var(--fw-b); }
+/* правило отступа выше вне слоёв и перекрыло бы запас над заголовком из слоя — повторяем его */
+.pixel .qd-md > :is(h1, h2, h3, h4, h5, h6) { margin-top: 16px; }
+.pixel .qd-md > :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+.pixel .qd-md :is(ul, ol) { padding-left: 20px; }
+.pixel .qd-md ul.contains-task-list:not(:has(> li:not(.task-list-item))) { padding-left: 0; }
+.pixel .qd-md li.task-list-item { padding-left: 24px; }
+.pixel .qd-md blockquote { border-left: 4px solid var(--paper-line); padding-left: 10px; }
+.pixel .qd-md hr { border-top: 2px solid var(--paper-line); }
+.pixel .qd-md :is(th, td) { border: 2px solid var(--paper-line); }
+.pixel .qd-md th { background: var(--paper-2); font-weight: var(--fw-b); }
+.pixel .qd-md :not(pre) > code {
+  background: var(--paper-2);
+  outline: 2px solid var(--paper-line);
+  outline-offset: -2px;
+}
+.pixel .qd-md .qd-md-wiki { border-bottom-width: 2px; }
+.pixel .qd-md .footnotes { border-top: 2px solid var(--paper-line); }

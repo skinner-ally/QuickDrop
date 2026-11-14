@@ -267,16 +267,16 @@
   box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 0 4px var(--wood-dark);
 }
 .pixel .px-graph-stage canvas { image-rendering: pixelated; }
-/* подпись ноды прямо на земле сцены (mockup .node .label): текст с контуром 2px; цвета — от сцены (scenes.css) */
+/* подпись ноды — плашка-продолжение ноды: заходит под её правую рамку, высота вровень с нодой, связи уходят под
+   неё. Рамка 2px wood-dark без левого края (там рамка самой ноды) и жёсткая тень, как у ноды. */
 .pixel .px-graph-label {
-  background: transparent; color: var(--graph-label); font-weight: var(--fw-m);
-  text-shadow: 2px 0 0 var(--graph-label-edge), -2px 0 0 var(--graph-label-edge), 0 2px 0 var(--graph-label-edge),
-    0 -2px 0 var(--graph-label-edge), 2px 2px 0 var(--graph-label-edge), -2px 2px 0 var(--graph-label-edge),
-    2px -2px 0 var(--graph-label-edge), -2px -2px 0 var(--graph-label-edge);
+  box-sizing: border-box; background: var(--paper); color: var(--ink); font-weight: var(--fw-m);
+  border: 2px solid var(--wood-dark); border-left-width: 0; padding: 0 6px 0 6px;
+  box-shadow: 2px 2px 0 var(--graph-shadow);
 }
-/* подпись выбранной ноды и её соседей — на плашке */
+/* выбранная нода и её соседи — плашка с золотой полосой снизу (правило про золото: на тёмной рамке) */
 .pixel .px-graph-label[data-plate="true"] {
-  background: var(--paper); color: var(--ink); text-shadow: none; outline: 2px solid var(--wood-dark);
+  background: var(--paper); color: var(--ink); box-shadow: inset 0 -2px 0 var(--gold), 2px 2px 0 var(--graph-shadow);
 }
 
 /* ───────── 7. Телефон ───────── */

@@ -1,6 +1,8 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "quickdrop-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 }
+    { "name": "quickdrop-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 },
+    { "name": "quickdrop-lab", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "../QuickDrop-lab", "run", "dev", "--", "--port", "5176", "--strictPort"], "port": 5176 },
+    { "name": "quickdrop-mockup", "runtimeExecutable": "npm", "runtimeArgs": ["run", "mockup"], "port": 5174 }
   ]
 }

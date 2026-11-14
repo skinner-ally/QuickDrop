@@ -208,7 +208,7 @@ describe('exportBackup / importBackup: полный цикл', () => {
     const { blob, data } = await readExport()
     expect(blob.type).toBe('application/json')
     expect(data.app).toBe('quickdrop')
-    expect(data.version).toBe(2)
+    expect(data.version).toBe(3)
     expect(data.positions).toEqual([])
     expect(data.searches).toEqual([])
     expect(typeof data.exportedAt).toBe('number')
@@ -526,7 +526,7 @@ describe('валидация и починка', () => {
       [backupBlob({ app: 'notion', version: 1, items: [], categories: [], files: [] }), /не резервная копия QuickDrop/],
       [backupBlob([1, 2, 3]), /не резервная копия QuickDrop/],
       [backupBlob(null), /не резервная копия QuickDrop/],
-      [backupBlob(backup({ version: 3 })), /более новой версией/],
+      [backupBlob(backup({ version: 4 })), /более новой версией/],
       [backupBlob(backup({ version: 0 })), /версия формата/],
       [backupBlob(backup({ version: 1.5 })), /версия формата/],
       [backupBlob(backup({ version: '1' as never })), /версия формата/],
@@ -774,7 +774,7 @@ describe('версия 2: корзина, распознанный текст, �
     await db.searches.bulkPut([second, first])
 
     const { blob, text, data } = await readExport()
-    expect(data.version).toBe(2)
+    expect(data.version).toBe(3)
     // Положение без записи в копию не попадает.
     expect(data.positions).toEqual([
       { id: 'scan', x: 96, y: 0 },
@@ -815,7 +815,7 @@ describe('версия 2: корзина, распознанный текст, �
           items: [makeItem('new'), makeItem('trashed-new', { deletedAt: 3_000 })],
           positions: [
             { id: 'new', x: 10, y: 20 },
-            { id: 'trashed-new', x: -10, y: -20 },
+            { id: 'trashed-new', x: -100, y: -200 },
             { id: 'ghost', x: 1, y: 1 },
             { id: 'old', x: 2, y: 2 },
           ],
@@ -833,7 +833,7 @@ describe('версия 2: корзина, распознанный текст, �
     expect(report).toEqual(rep({ items: 2, positions: 2, searches: 3, skipped: 2, trashed: 1 }))
     expect(await db.positions.toArray()).toEqual([
       { id: 'new', x: 10, y: 20 },
-      { id: 'trashed-new', x: -10, y: -20 },
+      { id: 'trashed-new', x: -100, y: -200 },
     ])
     expect((await db.searches.orderBy('order').toArray()).map((s) => [s.id, s.name, s.order])).toEqual([
       ['s1', 'Важное', 0],
@@ -1088,7 +1088,7 @@ describe('версия 2: корзина, распознанный текст, �
           { x: 1, y: 1 },
           'мусор',
           null,
-          { id: 'b', x: 3, y: 4, extra: 'лишнее поле' },
+          { id: 'b', x: 30, y: 40, extra: 'лишнее поле' },
         ],
         searches: [
           { id: 's-ok', name: '  Годный  ', query: '  tag:a  ' },
@@ -1110,7 +1110,7 @@ describe('версия 2: корзина, распознанный текст, �
     expect(report).toEqual(rep({ items: 2, positions: 2, searches: 2, skipped: 16 }))
     expect(await db.positions.toArray()).toEqual([
       { id: 'a', x: 10, y: -21 },
-      { id: 'b', x: 3, y: 4 },
+      { id: 'b', x: 30, y: 40 },
     ])
     const ok = (await db.searches.get('s-ok'))!
     // порядок — индекс в копии, дата создания — сейчас
@@ -1977,5 +1977,21 @@ describe('размер копии', () => {
     await expect(importBackup(huge, 'replace')).rejects.toThrow(/слишком большой/)
     expect(read).toBe(false)
     expect(await db.items.count()).toBe(1)
+  })
+})
+
+describe('сетка графа 48 (формат 3)', () => {
+  it('положения из копий форматов 1–2 переносятся со старой сетки 32, из формата 3 — как есть', async () => {
+    const positions = [
+      { id: 'a', x: 64, y: -32 },
+      { id: 'b', x: 'мусор' as unknown as number, y: 1 },
+    ]
+    const old = await importBackup(backupBlob(backup({ version: 2, items: [makeItem('a'), makeItem('b')], positions })), 'replace')
+    expect(old).toEqual(rep({ items: 2, positions: 1, skipped: 1 }))
+    expect(await db.positions.toArray()).toEqual([{ id: 'a', x: 96, y: -48 }])
+
+    const fresh = await importBackup(backupBlob(backup({ items: [makeItem('a')], positions: [{ id: 'a', x: 96, y: -48 }] })), 'replace')
+    expect(fresh).toEqual(rep({ items: 1, positions: 1 }))
+    expect(await db.positions.toArray()).toEqual([{ id: 'a', x: 96, y: -48 }])
   })
 })

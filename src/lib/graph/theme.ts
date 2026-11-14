@@ -45,6 +45,18 @@ export function composeGraphTheme(pixel: boolean, read: GraphColorReader): Graph
     return packRgba(r, g, b, a)
   }
 
+  // Относительная яркость по WCAG и контраст двух цветов.
+  const lum = (v: string): number => {
+    const [r, g, b] = read.rgba(read.css(v)).map((c) => {
+      const s = c / 255
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const contrast = (a: number, b: number): number => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+  const ground = lum('--graph-bg')
+  const thinVar = contrast(lum('--graph-link'), ground) > contrast(lum('--graph-link-edge'), ground) ? '--graph-link' : '--graph-link-edge'
+
   const cat = {} as Record<GraphColorKey, string>
   for (const key of GRAPH_COLOR_KEYS) cat[key] = css(`--cat-${key}`)
 
@@ -63,6 +75,7 @@ export function composeGraphTheme(pixel: boolean, read: GraphColorReader): Graph
     link: packed('--graph-link'),
     linkAlt: packed('--graph-link-alt'),
     linkEdge: packed('--graph-link-edge'),
+    linkThin: packed(thinVar),
     linkHot: packed('--graph-link-hot'),
     linkCss: css('--graph-link'),
     linkHotCss: css('--graph-link-hot'),

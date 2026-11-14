@@ -10,6 +10,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { smiteFromScene } from '@/lib/graph/smite'
 import { useGraph } from '@/store/graph'
 import { useUi } from '@/store/ui'
 import type { Item } from '@/types'
@@ -93,7 +94,11 @@ export function GraphNodeMenu({ scene, items }: GraphOverlayProps) {
             {actions.map((a) => (
               <Fragment key={a.id}>
                 {a.destructive && <DropdownMenuSeparator />}
-                <DropdownMenuItem variant={a.destructive ? 'destructive' : 'default'} onClick={() => a.run()}>
+                <DropdownMenuItem
+                  variant={a.destructive ? 'destructive' : 'default'}
+                  // «Удалить» на графе — сцена казни ноды (lib/graph/smite)
+                  onClick={() => (a.id === 'delete' ? smiteFromScene([id], scene) : a.run())}
+                >
                   <Icon name={a.icon} />
                   {a.label}
                   {/* В графе «E» — категория: подсказка «E» у «В базу знаний» и «Восстановить» была бы неверной. */}

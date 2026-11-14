@@ -1,10 +1,11 @@
 {
   "name": "quickdrop",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "mockup": "vite --config mockup/vite.config.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",

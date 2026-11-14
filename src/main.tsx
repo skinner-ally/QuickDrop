@@ -25,6 +25,12 @@ window.setTimeout(() => void drainPdfBackfill(), 10_000)
 // включённой настройке, отложенно и при возвращении к окну.
 startVisionAuto()
 
+if (import.meta.env.DEV) {
+  void import('./lib/devStress').then((m) => {
+    ;(window as unknown as Record<string, unknown>).__qdStress = { seed: m.seedStress, remove: m.removeStress }
+  })
+}
+
 createRoot(document.getElementById('root')!, {
   onUncaughtError: (error) => console.error('QuickDrop: необработанная ошибка', error),
 }).render(

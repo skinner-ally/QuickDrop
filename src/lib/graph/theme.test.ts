@@ -71,6 +71,7 @@ describe('composeGraphTheme', () => {
 
   const base = (): Record<string, string> => {
     const v: Record<string, string> = {
+      '--graph-bg': 'bg',
       '--graph-node-edge': 'edge',
       '--graph-shadow': 'shadow',
       '--graph-inbox': 'inbox',
@@ -115,6 +116,26 @@ describe('composeGraphTheme', () => {
     expect(t.linkAlt).toBe(packRgba(40, 50, 60, 255))
     expect(t.linkEdge).toBe(packRgba(70, 80, 90, 255))
     expect(t.linkHot).toBe(packRgba(100, 110, 120, 128))
+    // земля по умолчанию [1, 2, 3] — почти чёрная: контрастнее светлая из двух — кромка (70, 80, 90)
+    expect(t.linkThin).toBe(packRgba(70, 80, 90, 255))
+  })
+
+  it('linkThin — из --graph-link и --graph-link-edge тот, что контрастнее к --graph-bg', () => {
+    const bytes = {
+      link: [200, 180, 140, 255] as [number, number, number, number],
+      'link-edge': [40, 30, 20, 255] as [number, number, number, number],
+    }
+    // День: светлая земля — тёмная кромка.
+    const day = composeGraphTheme(true, reader(base(), { ...bytes, bg: [190, 210, 120, 255] }).r)
+    expect(day.linkThin).toBe(packRgba(40, 30, 20, 255))
+    expect(day.linkThin).toBe(day.linkEdge)
+    // Ночь: тёмная земля — светлая верёвка.
+    const night = composeGraphTheme(true, reader(base(), { ...bytes, bg: [20, 30, 40, 255] }).r)
+    expect(night.linkThin).toBe(packRgba(200, 180, 140, 255))
+    expect(night.linkThin).toBe(night.link)
+    // Равный контраст — кромка (строгое сравнение в пользу --graph-link).
+    const same = composeGraphTheme(true, reader(base(), { link: [9, 9, 9, 255], 'link-edge': [9, 9, 9, 254], bg: [9, 9, 9, 255] }).r)
+    expect(same.linkThin).toBe(packRgba(9, 9, 9, 254))
   })
 
   it('прозрачные рамка, тень и кромка выделения («Классика») дают null', () => {
@@ -148,6 +169,7 @@ describe('composeGraphTheme', () => {
     composeGraphTheme(true, r)
     for (const name of asked) expect(name).toMatch(/^--(graph|cat)-/)
     expect(asked).toContain('--cat-none')
+    expect(asked).toContain('--graph-bg')
   })
 })
 
@@ -219,6 +241,9 @@ describe('scenes.css: граф читается на земле во всех в
       const linkOk = contrast(v('--graph-link-edge'), ground) >= 3 ||
         Math.min(contrast(v('--graph-link'), ground), contrast(v('--graph-link-alt'), ground)) >= 3
       expect(linkOk, 'связь').toBe(true)
+      // тонкая связь без кромки (ниже 100 %): контрастнейший из --graph-link и --graph-link-edge
+      const thin = Math.max(contrast(v('--graph-link'), ground), contrast(v('--graph-link-edge'), ground))
+      expect(thin, 'тонкая связь').toBeGreaterThanOrEqual(3)
       // рамки: золото выбранной и соседей, наведение и курсор — с тёмной кромкой
       expect(edged(v('--graph-sel'), v('--graph-sel-edge'), ground), 'золото').toBe(true)
       expect(edged(v('--graph-hover'), v('--graph-sel-edge'), ground), 'наведение').toBe(true)

@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
+import { markLegacyGridUpgraded, upgradeLegacyPoint } from '@/lib/legacyGrid'
 import { settleLinkMeta } from '@/lib/normalize'
 import { isCaptureWindow } from '@/lib/platform'
 import type { Category, Item, MetaRecord, NodePosition, SavedSearch, StoredFile } from '@/types'
@@ -38,6 +39,7 @@ async function settleStaleLinkMeta(vip: Dexie): Promise<void> {
  * files: бинарники отдельно от записей; itemId — для каскадного удаления.
  * positions (v2): сохранённые положения нод графа, id — id записи.
  * searches (v2): сохранённые поиски, order — порядок в боковой панели.
+ * v3: схема не менялась, положения нод перенесены на сетку 48 (lib/legacyGrid).
  */
 export class QuickDropDB extends Dexie {
   items!: EntityTable<Item, 'id'>
@@ -64,6 +66,21 @@ export class QuickDropDB extends Dexie {
       positions: 'id',
       searches: 'id, order',
     })
+    // v3: шаг сетки графа 32 → 48 (нода 16 → 24 px). Схема та же; сохранённые положения переносятся на новую
+    // сетку, иначе ноды нового размера на старом шаге стояли бы почти вплотную.
+    this.version(3)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table<NodePosition, string>('positions')
+          .toCollection()
+          .modify((p) => {
+            const next = upgradeLegacyPoint(p)
+            p.x = next.x
+            p.y = next.y
+          })
+        markLegacyGridUpgraded()
+      })
     // Мини-окно открывает ту же базу, пока главное окно, возможно, ещё ждёт заголовок ссылки:
     // его 'pending' не прерванный, а живой — завершать его может только главное окно.
     if (!isCaptureWindow()) this.on('ready', (vip) => settleStaleLinkMeta(vip))
