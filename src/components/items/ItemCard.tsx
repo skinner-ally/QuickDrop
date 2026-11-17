@@ -20,6 +20,7 @@ import { useRemoteImagesAllowed } from './remoteImages'
 import { cn } from '@/lib/utils'
 import { makeSnippet } from '@/search'
 import type { SearchHit } from '@/search'
+import { IDEA_STATUS_LABEL, ideaStatusOf } from '@/types'
 import type { Item } from '@/types'
 import { CategoryBadge } from './CategoryBadge'
 import { catBarStyle, catColorVar, useListCategory } from './categoryColor'
@@ -208,6 +209,22 @@ function QuickActions({ item, variant, dense }: { item: Item; variant: ItemVaria
         onClick={() => void actToggleFavorite(item)}
       />
     </>
+  )
+}
+
+/** Статус идеи на карточке; «Новая» — состояние по умолчанию, его не показываем, чтобы не шуметь. */
+function IdeaBadge({ item }: { item: Item }) {
+  const status = ideaStatusOf(item)
+  if (!status || status === 'new') return null
+  return (
+    <span
+      className={cn(
+        'inline-flex h-5 shrink-0 items-center rounded-md bg-muted px-1.5 text-xs px-chip pixel:h-auto pixel:min-h-5',
+        status === 'active' ? 'text-foreground' : 'text-muted-foreground',
+      )}
+    >
+      {IDEA_STATUS_LABEL[status]}
+    </span>
   )
 }
 
@@ -450,6 +467,7 @@ export const ItemRow = memo(function ItemRow({
           </div>
 
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:shrink-0 md:flex-nowrap pixel:gap-1 pixel:md:flex-wrap">
+            <IdeaBadge item={item} />
             <CategoryBadge categoryId={item.categoryId} className="pixel:md:hidden" />
             <TagsLine tags={item.tags} />
             {trashed ? (
@@ -512,6 +530,20 @@ export const ItemRow = memo(function ItemRow({
 
 // ───────────────────────── карточка сетки ─────────────────────────
 
+/**
+ * Полоса над текстом карточки под накладку (галочка выбора слева, действия справа): накладка висит поверх верха
+ * карточки и на картинке ничего не прячет, а на тексте закрывала бы первые строки и заголовок.
+ */
+function ControlsSpace() {
+  // Высота — по накладке: на телефоне и сенсорном экране её кнопки крупнее.
+  return (
+    <div
+      aria-hidden
+      className="h-8 shrink-0 max-md:h-10 pointer-coarse:h-10 pixel:h-9 pixel:max-md:h-11 pixel:pointer-coarse:h-11"
+    />
+  )
+}
+
 function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
   switch (item.type) {
     case 'image':
@@ -520,24 +552,37 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
         <div className="h-32 overflow-hidden border-b border-border pixel:border-b-2">
           <FilePreview item={item} variant="thumb" />
         </div>
-      ) : null
+      ) : (
+        <ControlsSpace />
+      )
     case 'code':
-      return item.content ? (
-        <CodeView
-          code={item.content}
-          language={item.language}
-          maxLines={6}
-          bare
-          className="rounded-none border-0 border-b pixel:border-b-2 pixel:border-[var(--paper-line)] pixel:bg-[var(--paper-2)]"
-        />
-      ) : null
+      return (
+        <>
+          <ControlsSpace />
+          {item.content && (
+            <CodeView
+              code={item.content}
+              language={item.language}
+              maxLines={6}
+              bare
+              className="rounded-none border-0 border-y pixel:border-y-2 pixel:border-[var(--paper-line)] pixel:bg-[var(--paper-2)]"
+            />
+          )}
+        </>
+      )
     case 'link': {
       const desc = item.linkMeta?.description?.trim()
-      const textFallback = desc ? (
-        <p className="line-clamp-4 px-3 pt-2.5 text-2sm text-muted-foreground">
-          <Highlighted text={desc} terms={terms} />
-        </p>
-      ) : null
+      // Картинки нет или она не загрузилась — сверху текст: оставляем место под накладку.
+      const textFallback = (
+        <>
+          <ControlsSpace />
+          {desc && (
+            <p className="line-clamp-4 px-3 pt-2.5 text-2sm text-muted-foreground">
+              <Highlighted text={desc} terms={terms} />
+            </p>
+          )}
+        </>
+      )
       return (
         <SafeImg
           src={item.linkMeta?.image}
@@ -547,12 +592,17 @@ function CardPreview({ item, terms }: { item: Item; terms: string[] }) {
       )
     }
     default:
-      return item.content ? (
-        <p className="line-clamp-6 px-3 pt-2.5 text-2sm break-words whitespace-pre-wrap text-muted-foreground">
-          {/* Превью — без маркеров Markdown; запас 600 символов: снятая разметка укорачивает текст. */}
-          <Highlighted text={stripMarkdown(item.content.slice(0, 600)).slice(0, 400)} terms={terms} />
-        </p>
-      ) : null
+      return (
+        <>
+          <ControlsSpace />
+          {item.content && (
+            <p className="line-clamp-6 px-3 pt-2.5 text-2sm break-words whitespace-pre-wrap text-muted-foreground">
+              {/* Превью — без маркеров Markdown; запас 600 символов: снятая разметка укорачивает текст. */}
+              <Highlighted text={stripMarkdown(item.content.slice(0, 600)).slice(0, 400)} terms={terms} />
+            </p>
+          )}
+        </>
+      )
   }
 }
 
@@ -610,6 +660,7 @@ export const ItemCard = memo(function ItemCard({
         )}
         <div className="mt-auto flex min-w-0 flex-wrap items-center gap-1.5 pt-1">
           <TypeIcon type={item.type} className="text-muted-foreground" />
+          <IdeaBadge item={item} />
           <CategoryBadge categoryId={item.categoryId} />
           <TagsLine tags={item.tags} max={2} />
           <span className="ml-auto flex items-center gap-1.5">

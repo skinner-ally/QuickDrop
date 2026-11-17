@@ -9,6 +9,7 @@ import { tagKey } from './normalize'
  *  - categoryId: null = «без категории», undefined = без ограничения;
  *  - tags: запись содержит все перечисленные; теги фильтра нормализуются, пустые пропускаются,
  *    сравнение по правилу поиска (регистр и ё/е не важны);
+ *  - ideaStatuses: только идеи с любым из статусов (нет поля у идеи = «new»); другие типы не проходят;
  *  - favorite, untagged: галочки — фильтруют только при true;
  *  - from/to: диапазон по createdAt включительно;
  *  - trashed: true — только корзина, иначе — только вне корзины.
@@ -21,7 +22,7 @@ export function matchesFilter(item: Item, filter: ItemFilter): boolean {
 
 /** Все условия фильтра, кроме корзины (для кода, который корзину уже отобрал сам). */
 export function matchesFilterIgnoringTrash(item: Item, filter: ItemFilter): boolean {
-  const { status, types, categoryId, tags, favorite, untagged, from, to } = filter
+  const { status, types, categoryId, tags, favorite, untagged, ideaStatuses, from, to } = filter
 
   if (status !== undefined) {
     if (Array.isArray(status)) {
@@ -30,6 +31,11 @@ export function matchesFilterIgnoringTrash(item: Item, filter: ItemFilter): bool
   }
 
   if (types && types.length > 0 && !types.includes(item.type)) return false
+
+  if (ideaStatuses && ideaStatuses.length > 0) {
+    // Не идея статуса не имеет; у идеи без поля статус — «новая».
+    if (item.type !== 'idea' || !ideaStatuses.includes(item.ideaStatus ?? 'new')) return false
+  }
 
   // ?? — запись из старого импорта или повреждённая правкой могла остаться без поля.
   const itemCategory = item.categoryId ?? null

@@ -15,6 +15,10 @@ import { MAX_FILE_SIZE, listCategories } from '@/db/repo'
 import { useAllItems } from '@/hooks/useItems'
 import { useDebounced } from '@/hooks/useDebounced'
 import { createAndEnrich, findDuplicateLinkNow } from '@/lib/actions'
+import { suggestForItem } from '@/lib/ai'
+import type { SuggestSource } from '@/lib/ai'
+import { fetchLinkMeta } from '@/lib/linkMeta'
+import { useSettings } from '@/db/settings'
 import { pastedFiles } from '@/lib/clipboard'
 import { LANGUAGES, detectFileType, detectInput, isUrl, normalizeUrl } from '@/lib/detect'
 import { findDuplicateLinkIn, linkKey } from '@/lib/dedupe'
@@ -24,7 +28,7 @@ import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import type { CaptureDraft } from '@/store/ui'
 import { ITEM_TYPES } from '@/types'
-import type { Item, ItemSource, ItemType, NewItemInput } from '@/types'
+import type { AiMeta, Item, ItemSource, ItemType, NewItemInput } from '@/types'
 
 const DRAFT_KEY = 'quickdrop:capture-draft'
 /** Пауза ввода, после которой черновик пишется в sessionStorage. */
@@ -40,6 +44,8 @@ interface DraftSnapshot {
   tags: string[]
   categoryId: string | null
   manualType: ItemType | null
+  /** Описание от ИИ (ещё не сохранённое); у старых черновиков поля нет. */
+  aiSummary?: string
 }
 
 interface FileEntry {
@@ -60,6 +66,7 @@ function readDraft(): DraftSnapshot | null {
       tags: Array.isArray(d.tags) ? d.tags.filter((t): t is string => typeof t === 'string') : [],
       categoryId: typeof d.categoryId === 'string' ? d.categoryId : null,
       manualType: ITEM_TYPES.includes(d.manualType as ItemType) ? (d.manualType as ItemType) : null,
+      aiSummary: typeof d.aiSummary === 'string' ? d.aiSummary : '',
     }
   } catch {
     return null
@@ -206,6 +213,22 @@ export function CaptureForm({
   /** Сохранение остановлено из-за дубля ссылки. */
   const [dupAsk, setDupAsk] = useState<{ item: Item; keepOpen: boolean } | null>(null)
 
+  // ИИ-подсказка заголовка и описания. Описание сохраняется вместе с записью (поле `ai.summary`, блок «Кратко»).
+  const settings = useSettings()
+  const aiReady = !!settings?.aiEnabled && !!settings.aiApiKey.trim()
+  const [aiPending, setAiPending] = useState(false)
+  const [aiSummary, setAiSummary] = useState(initial.restored?.aiSummary ?? '')
+  /** Заголовок на сейчас: ответ ИИ приходит через секунды, и снимок рендера на момент клика к тому времени устаревает. */
+  const titleRef = useRef(title)
+  useEffect(() => {
+    titleRef.current = title
+  }, [title])
+  const aiMetaRef = useRef<Pick<AiMeta, 'model' | 'generatedAt'>>({})
+  /** Последний заголовок, подставленный ИИ: только его повторная подсказка вправе заменить. */
+  const aiTitleRef = useRef('')
+  const aiAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => aiAbortRef.current?.abort(), [])
+
   const stayRef = useRef<HTMLButtonElement>(null)
   const dupOpenRef = useRef<HTMLButtonElement>(null)
   const textSource = useRef<ItemSource>(initial.d?.text ? (initial.d.source ?? 'paste') : 'manual')
@@ -270,10 +293,10 @@ export function CaptureForm({
   }, [initial.preserved])
 
   useEffect(() => {
-    draftRef.current = text.trim() ? { text, title, tags, categoryId, manualType } : null
+    draftRef.current = text.trim() ? { text, title, tags, categoryId, manualType, aiSummary } : null
     const t = window.setTimeout(persistDraft, DRAFT_DELAY)
     return () => window.clearTimeout(t)
-  }, [text, title, tags, categoryId, manualType, persistDraft])
+  }, [text, title, tags, categoryId, manualType, aiSummary, persistDraft])
 
   useEffect(() => {
     const onVisibility = () => {
@@ -315,7 +338,7 @@ export function CaptureForm({
         setConfirmClose(!confirmClose)
         return false
       }
-      if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
+      if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType, aiSummary } : null)
       return true
     }
     return () => {
@@ -345,7 +368,7 @@ export function CaptureForm({
   /** «Закрыть» в вопросе: файлы теряются, текстовый черновик сохраняется как при обычном закрытии. */
   function closeWithoutFiles() {
     if (savingRef.current) return
-    if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType } : null)
+    if (!initial.preserved) writeDraft(hasText ? { text, title, tags, categoryId, manualType, aiSummary } : null)
     onClose()
   }
 
@@ -360,10 +383,12 @@ export function CaptureForm({
       setManualType(null)
       setManualLang(null)
       textSource.current = 'manual'
+      resetAi()
     }
   }
 
   function clearDraft() {
+    resetAi()
     writeDraft(null)
     setRestored(false)
     setText('')
@@ -392,6 +417,65 @@ export function CaptureForm({
     return { ...base, type, content: raw }
   }
 
+  async function suggest() {
+    if (!settings || aiPending || !(hasText || hasFiles)) return
+    aiAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    aiAbortRef.current = ctrl
+    setAiPending(true)
+    try {
+      const fresh = detectInput(text)
+      const src: SuggestSource = { type: effType, content: text.trim(), title: title.trim() || undefined }
+      if (hasFiles) {
+        src.type = detectFileType(files[0].file)
+        src.fileName = files[0].file.name
+      } else if (effType === 'link' && linkUrl) {
+        src.url = linkUrl
+        src.content = ''
+        // Заголовок и описание страницы дают модели куда больше, чем один адрес; сеть — только при включённой настройке.
+        if (settings.autoFetchLinkTitle) {
+          const meta = await fetchLinkMeta(linkUrl, { proxyUrl: settings.linkProxyUrl || undefined, signal: ctrl.signal })
+          if (meta.status === 'ok') src.linkMeta = meta
+        }
+      } else if (effType === 'code') {
+        src.content = (fresh.stripped ?? text).trim()
+        const lang = manualLang ?? fresh.language
+        if (lang) src.language = lang
+      }
+      const meta = await suggestForItem(src, settings, ctrl.signal)
+      if (ctrl.signal.aborted || !mountedRef.current) return
+      const suggested = meta.suggestedTitle?.trim()
+      const summary = meta.summary?.trim()
+      if (!suggested && !summary) {
+        toast.info('ИИ ничего не предложил')
+        return
+      }
+      // Заголовок, набранный вручную, не затираем: заменяем только пустой или подставленный прошлой подсказкой.
+      const nowTitle = titleRef.current
+      if (suggested && (nowTitle.trim() === '' || nowTitle === aiTitleRef.current)) {
+        setTitle(suggested)
+        aiTitleRef.current = suggested
+      }
+      if (summary) {
+        setAiSummary(summary)
+        aiMetaRef.current = { model: meta.model, generatedAt: meta.generatedAt }
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) toast.error(describeError(e, 'Не удалось получить подсказку'))
+    } finally {
+      if (aiAbortRef.current === ctrl) setAiPending(false)
+    }
+  }
+
+  function resetAi() {
+    aiAbortRef.current?.abort()
+    aiAbortRef.current = null
+    aiTitleRef.current = ''
+    aiMetaRef.current = {}
+    setAiPending(false)
+    setAiSummary('')
+  }
+
   async function save(keepOpen: boolean, allowDup = false) {
     if (savingRef.current || !(hasText || hasFiles)) return
     savingRef.current = true
@@ -405,6 +489,8 @@ export function CaptureForm({
       favorite,
       source: textSource.current,
     }
+    const aiText = aiSummary.trim()
+    if (aiText) base.ai = { summary: aiText, ...aiMetaRef.current }
     const createdIds: string[] = []
     try {
       // Категорию могли удалить, пока форма была закрыта или открыта в другой вкладке.
@@ -471,6 +557,7 @@ export function CaptureForm({
       setManualLang(null)
       setFavorite(false)
       setRestored(false)
+      resetAi()
       textSource.current = 'manual'
       textRef.current?.focus()
     } else {
@@ -722,19 +809,63 @@ export function CaptureForm({
       )}
 
       <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
-        <Input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={onTitleKeyDown}
-          placeholder="Заголовок (необязательно)"
-          aria-label="Заголовок"
-          className="sm:min-w-0 sm:flex-[1.2]"
-        />
+        <div className="flex min-w-0 gap-1.5 sm:flex-[1.2]">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={onTitleKeyDown}
+            placeholder="Заголовок (необязательно)"
+            aria-label="Заголовок"
+            className="min-w-0 flex-1"
+          />
+          {aiReady && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Предложить заголовок и описание"
+              title="ИИ: предложить заголовок и описание (текст записи уйдёт в ИИ-сервис)"
+              disabled={aiPending || !(hasText || hasFiles)}
+              className="px-btn shrink-0 pixel:size-7.5 pixel:max-md:size-9"
+              onClick={() => void suggest()}
+            >
+              {aiPending ? <Icon name="loader" className="animate-spin motion-reduce:animate-none" /> : <Icon name="sparkles" />}
+            </Button>
+          )}
+        </div>
         <div className="flex min-w-0 gap-1.5 sm:flex-[1.4]">
           <CategorySelect value={categoryId} onChange={setCategoryId} allowCreate className="min-w-0 flex-1" />
           <TagInput value={tags} onChange={setTags} placeholder="Теги" className="min-w-0 flex-1" />
         </div>
       </div>
+
+      {aiSummary && (
+        <div className="flex items-start gap-1.5">
+          <div className="min-w-0 flex-1">
+            <label htmlFor="qc-ai-summary" className="mb-0.5 block text-xs text-muted-foreground">
+              Описание от ИИ
+            </label>
+            <Textarea
+              id="qc-ai-summary"
+              value={aiSummary}
+              onChange={(e) => setAiSummary(e.target.value)}
+              rows={2}
+              className="field-sizing-content max-h-32 min-h-0 resize-none overflow-y-auto text-2sm"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Убрать описание"
+            title="Убрать описание"
+            className="mt-4 px-btn pixel:size-7.5 pixel:max-md:size-9"
+            onClick={() => setAiSummary('')}
+          >
+            <Icon name="x" />
+          </Button>
+        </div>
+      )}
 
       {confirmClose && (
         <div

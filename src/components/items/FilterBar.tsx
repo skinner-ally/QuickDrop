@@ -24,7 +24,7 @@ import { TYPE_LABEL_PLURAL } from '@/lib/itemTitle'
 import { cn } from '@/lib/utils'
 import { useGraph } from '@/store/graph'
 import { useUi } from '@/store/ui'
-import { ITEM_TYPES, type ItemType, type SortMode } from '@/types'
+import { IDEA_STATUSES, IDEA_STATUS_LABEL, ITEM_TYPES, type IdeaStatus, type ItemType, type SortMode } from '@/types'
 import { radioGroupKeyDown } from '@/views/settings/radioKeys'
 
 const focusRing = 'outline-none focus-visible:ring-2 focus-visible:ring-ring/60'
@@ -62,14 +62,19 @@ function FilterButton({
   )
 }
 
+/** Новый список типов фильтра; без «Идей» статусы идеи теряют смысл и сбрасываются вместе с ними. */
+function typesPatch(next: ItemType[]) {
+  const types = next.length ? next : undefined
+  return types?.includes('idea') ? { types } : { types, ideaStatuses: undefined }
+}
+
 function TypeChips() {
   const types = useUi((s) => s.filter.types)
   const setFilter = useUi((s) => s.setFilter)
 
   const toggle = (t: ItemType) => {
     const cur = types ?? []
-    const next = cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]
-    setFilter({ types: next.length ? next : undefined })
+    setFilter(typesPatch(cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]))
   }
 
   return (
@@ -92,6 +97,46 @@ function TypeChips() {
           >
             <TypeIcon type={t} className="size-3.5" />
             {TYPE_LABEL_PLURAL[t]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Статусы идеи: показываются, только когда в фильтре выбран тип «Идеи». Несколько статусов — любой из них. */
+function IdeaStatusChips() {
+  const types = useUi((s) => s.filter.types)
+  const selected = useUi((s) => s.filter.ideaStatuses)
+  const setFilter = useUi((s) => s.setFilter)
+  if (!types?.includes('idea')) return null
+
+  const toggle = (st: IdeaStatus) => {
+    const cur = selected ?? []
+    const next = cur.includes(st) ? cur.filter((x) => x !== st) : [...cur, st]
+    setFilter({ ideaStatuses: next.length ? next : undefined })
+  }
+
+  return (
+    <div role="group" aria-label="Статус идеи" className="flex shrink-0 items-center gap-1">
+      <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border pixel:w-0.5" />
+      {IDEA_STATUSES.map((st) => {
+        const on = !!selected?.includes(st)
+        return (
+          <button
+            key={st}
+            type="button"
+            aria-pressed={on}
+            onClick={() => toggle(st)}
+            className={cn(
+              'inline-flex h-7 shrink-0 items-center rounded-lg border px-2 text-2sm pointer-coarse:h-9 transition-colors px-chip pixel:px-1.5',
+              on
+                ? 'border-foreground/30 bg-muted text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              focusRing,
+            )}
+          >
+            {IDEA_STATUS_LABEL[st]}
           </button>
         )
       })}
@@ -423,6 +468,7 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
   const cat = categories.find((c) => c.id === filter.categoryId)
   const hasActive =
     !!filter.types?.length ||
+    !!filter.ideaStatuses?.length ||
     filter.categoryId !== undefined ||
     !!filter.tags?.length ||
     !!filter.untagged ||
@@ -520,6 +566,7 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
       <div className="flex items-center gap-1.5">
         <div className="no-scrollbar min-w-0 flex-1 -ml-4 flex items-center gap-1.5 overflow-x-auto pr-1 pl-4 md:mx-0 md:px-0 pixel:-ml-2.5 pixel:-my-1 pixel:pr-1 pixel:pl-2.5 pixel:py-1 pixel:md:-mx-1 pixel:md:px-1">
           <TypeChips />
+          <IdeaStatusChips />
           <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-border pixel:w-0.5" />
           <CategoryFilter />
           <TagsFilter graph={mode === 'graph'} />
@@ -549,9 +596,16 @@ export function FilterBar({ className, mode = 'list' }: { className?: string; mo
             <ActiveChip
               key={t}
               label={TYPE_LABEL_PLURAL[t]}
+              onRemove={() => setFilter(typesPatch((filter.types ?? []).filter((x) => x !== t)))}
+            />
+          ))}
+          {filter.ideaStatuses?.map((st) => (
+            <ActiveChip
+              key={st}
+              label={`Идея: ${IDEA_STATUS_LABEL[st].toLowerCase()}`}
               onRemove={() => {
-                const next = (filter.types ?? []).filter((x) => x !== t)
-                setFilter({ types: next.length ? next : undefined })
+                const next = (filter.ideaStatuses ?? []).filter((x) => x !== st)
+                setFilter({ ideaStatuses: next.length ? next : undefined })
               }}
             />
           ))}

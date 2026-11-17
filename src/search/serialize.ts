@@ -6,9 +6,9 @@ import {
   relativeRange,
 } from '@/lib/dates'
 import { categoryNameKey, normalizeTag, tagKey } from '@/lib/normalize'
-import { ITEM_STATUSES, ITEM_TYPES } from '@/types'
+import { IDEA_STATUSES, ITEM_STATUSES, ITEM_TYPES } from '@/types'
 import type { Category, ItemFilter } from '@/types'
-import { OPERATOR_KEYS, QUOTES, lex, parseQuery, withoutTypeOperators } from './query'
+import { OPERATOR_KEYS, QUOTES, lex, parseQuery, withoutIdeaOperators, withoutTypeOperators } from './query'
 import { fold } from './normalize'
 
 export interface SerializeOptions {
@@ -98,7 +98,7 @@ function dateParts(from: number | undefined, to: number | undefined, now: number
 
 /**
  * Строка операторов, обратная parseQuery + resolveQueryFilter. Порядок частей: статус, избранное,
- * без тегов, корзина, типы, категория, теги, даты. Точность дат — сутки. Категория, которой нет
+ * без тегов, корзина, типы, статусы идеи, категория, теги, даты. Точность дат — сутки. Категория, которой нет
  * в categories, пропускается. now — «сейчас» для распознавания относительных периодов.
  */
 export function serializeFilter(
@@ -118,6 +118,9 @@ export function serializeFilter(
 
   const types = [...new Set(filter.types ?? [])].filter((t) => ITEM_TYPES.includes(t))
   if (types.length > 0) parts.push(`type:${types.join(',')}`)
+
+  const ideaStatuses = [...new Set(filter.ideaStatuses ?? [])].filter((st) => IDEA_STATUSES.includes(st))
+  if (ideaStatuses.length > 0) parts.push(`idea:${ideaStatuses.join(',')}`)
 
   const category = categoryPart(filter.categoryId, categories)
   if (category !== null) parts.push(category)
@@ -146,6 +149,7 @@ export function serializeFilter(
  * типы строки в «любой из», поэтому при типах с обеих сторон пишется одно пересечение. Пустое
  * пересечение (на экране — ничего) записать нечем: побеждают типы строки поиска. Категория — так же:
  * при cat: в строке поиска категория фильтра не пишется (иначе «cat:none cat:x» или дубль «cat:x cat:x»).
+ * Статусы идеи (idea:) — как типы.
  */
 export function composeQuery(
   query: string,
@@ -171,6 +175,18 @@ export function composeQuery(
       } else {
         ownFilter = { ...ownFilter, types: undefined }
       }
+    }
+  }
+  // Статусы идеи — по тому же правилу, что типы: на экране фильтр и idea: строки пересекаются.
+  const ownIdea = [...new Set(filter.ideaStatuses ?? [])]
+  const queryIdea = parsed?.filter.ideaStatuses ?? []
+  if (ownIdea.length > 0 && queryIdea.length > 0) {
+    const both = ownIdea.filter((st) => queryIdea.includes(st))
+    if (both.length > 0) {
+      ownFilter = { ...ownFilter, ideaStatuses: both }
+      text = withoutIdeaOperators(text)
+    } else {
+      ownFilter = { ...ownFilter, ideaStatuses: undefined }
     }
   }
   return [serializeFilter(ownFilter, categories, now, options), text].filter(Boolean).join(' ')

@@ -56,7 +56,11 @@ export function parseAiJson(text: string): AiObject {
   throw new Error('Не удалось разобрать ответ ИИ')
 }
 
-function buildUserPrompt(item: Item): string {
+/** Поля записи, которые уходят в запрос: у ещё не сохранённой записи (форма добавления) остальных нет. */
+export type SuggestSource = Pick<Item, 'type' | 'content'> &
+  Partial<Pick<Item, 'url' | 'linkMeta' | 'title' | 'fileName' | 'language'>>
+
+function buildUserPrompt(item: SuggestSource): string {
   const parts = [`Тип: ${item.type}`]
   if (item.url) parts.push(`URL: ${item.url}`)
   if (item.linkMeta?.title) parts.push(`Заголовок страницы: ${item.linkMeta.title}`)
@@ -96,7 +100,7 @@ function httpError(status: number, body: string): Error {
 }
 
 export async function suggestForItem(
-  item: Item,
+  item: SuggestSource,
   settings: Settings,
   signal?: AbortSignal,
 ): Promise<AiMeta> {

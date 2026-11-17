@@ -1,5 +1,5 @@
 import { parseDateToken } from '@/lib/dates'
-import type { ItemFilter, ItemStatus, ItemType } from '@/types'
+import type { IdeaStatus, ItemFilter, ItemStatus, ItemType } from '@/types'
 import { fold, normalizeTagValue } from './normalize'
 
 export type ParsedQuery = {
@@ -46,19 +46,27 @@ const IS_ALIASES = aliasMap<IsFlag>([
   ['trashed', ['trash', 'trashed', 'deleted', 'bin', 'корзина', 'удаленные']],
 ])
 
+const IDEA_ALIASES = aliasMap<IdeaStatus>([
+  ['new', ['new', 'новая', 'новые', 'новое']],
+  ['active', ['active', 'wip', 'doing', 'в-работе', 'в работе', 'работа', 'в_работе']],
+  ['done', ['done', 'сделана', 'сделано', 'сделаны', 'готово']],
+  ['later', ['later', 'postponed', 'отложена', 'отложено', 'отложены']],
+])
+
 const HAS_ALIASES = aliasMap<ItemType[]>([
   [['file', 'image'], ['file', 'files', 'attachment', 'файл', 'файлы', 'вложение']],
   [['image'], ['image', 'img', 'picture', 'photo', 'картинка', 'изображение', 'фото']],
   [['link'], ['link', 'url', 'ссылка']],
 ])
 
-type OpKey = 'tag' | 'type' | 'is' | 'has' | 'cat' | 'date' | 'after' | 'before'
+type OpKey = 'tag' | 'type' | 'is' | 'has' | 'cat' | 'idea' | 'date' | 'after' | 'before'
 export const OPERATOR_KEYS = aliasMap<OpKey>([
   ['tag', ['tag', 'tags', 'тег']],
   ['type', ['type', 'тип']],
   ['is', ['is']],
   ['has', ['has']],
   ['cat', ['cat', 'category', 'кат', 'категория']],
+  ['idea', ['idea', 'идея']],
   ['date', ['date', 'дата']],
   ['after', ['after', 'since', 'после']],
   ['before', ['before', 'until', 'до']],
@@ -119,7 +127,7 @@ const pushUnique = <T>(arr: T[], v: T) => {
 }
 
 /**
- * Разбор строки поиска. Операторы: tag:x, #x, type:…, is:…, has:file, cat:имя / cat:"имя с пробелами",
+ * Разбор строки поиска. Операторы: tag:x, #x, type:…, is:…, has:file, idea:статус (new|active|done|later), cat:имя / cat:"имя с пробелами",
  * date:… / after:… / before:… (дата, период или диапазон A..B; локальное время, границы включительно).
  * Значения можно перечислять через запятую (type:link,code). Неизвестные операторы и значения
  * остаются свободным текстом; оператор без значения («tag:» в процессе набора) игнорируется.
@@ -131,6 +139,7 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
   const tags: string[] = []
   const types: ItemType[] = []
   const statuses: ItemStatus[] = []
+  const ideaStatuses: IdeaStatus[] = []
   let favorite = false
   let untagged = false
   let trashed = false
@@ -199,6 +208,12 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
           pushUnique(types, t)
           known++
         }
+      } else if (op === 'idea') {
+        const st = IDEA_ALIASES.get(key)
+        if (st) {
+          pushUnique(ideaStatuses, st)
+          known++
+        }
       } else if (op === 'has') {
         const ts = HAS_ALIASES.get(key)
         if (ts) {
@@ -225,6 +240,7 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
   if (tags.length) filter.tags = tags
   if (favorite) filter.favorite = true
   if (untagged) filter.untagged = true
+  if (ideaStatuses.length) filter.ideaStatuses = ideaStatuses
   if (trashed) filter.trashed = true
   if (from !== undefined) filter.from = from
   if (to !== undefined) filter.to = to
@@ -234,26 +250,26 @@ export function parseQuery(raw: string, now: number = Date.now()): ParsedQuery {
   return parsed
 }
 
-/** Слово, из которого parseQuery взял бы типы (type:… или has:… хотя бы с одним известным значением). */
-function isTypeOperator(value: string, quoted: boolean): boolean {
+/** Слово — оператор из ops с хотя бы одним значением, известным aliases (иначе parseQuery оставил бы его текстом). */
+function isKnownOperator(value: string, quoted: boolean, ops: readonly OpKey[]): boolean {
   if (value.startsWith('#')) return false
   const m = /^(\p{L}+):(.*)$/su.exec(value)
   const op = m ? OPERATOR_KEYS.get(fold(m[1])) : undefined
-  if (!m || (op !== 'type' && op !== 'has')) return false
+  if (!m || !op || !ops.includes(op)) return false
   const arg = m[2].trim()
   if (!arg) return false
   const values = quoted ? [arg] : arg.split(',').map((v) => v.trim()).filter(Boolean)
-  const aliases: Map<string, unknown> = op === 'type' ? TYPE_ALIASES : HAS_ALIASES
+  const aliases: Map<string, unknown> = op === 'type' ? TYPE_ALIASES : op === 'has' ? HAS_ALIASES : IDEA_ALIASES
   return values.some((v) => aliases.has(fold(v)))
 }
 
-/** Строка запроса без операторов типа (type:, has:); остальное — как было, пробелы на стыках схлопываются. */
-export function withoutTypeOperators(raw: string): string {
+/** Строка запроса без операторов ops; остальное — как было, пробелы на стыках схлопываются. */
+function withoutOperators(raw: string, ops: readonly OpKey[]): string {
   const source = raw ?? ''
   const kept: string[] = []
   let last = 0
   for (const tok of lex(source)) {
-    if (tok.kind !== 'word' || !isTypeOperator(tok.value, tok.quoted)) continue
+    if (tok.kind !== 'word' || !isKnownOperator(tok.value, tok.quoted, ops)) continue
     kept.push(source.slice(last, tok.start))
     last = tok.end
   }
@@ -262,4 +278,14 @@ export function withoutTypeOperators(raw: string): string {
     .map((part) => part.trim())
     .filter(Boolean)
     .join(' ')
+}
+
+/** Строка запроса без операторов типа (type:, has:); остальное — как было, пробелы на стыках схлопываются. */
+export function withoutTypeOperators(raw: string): string {
+  return withoutOperators(raw, ['type', 'has'])
+}
+
+/** Строка запроса без операторов статуса идеи (idea:); остальное — как было. */
+export function withoutIdeaOperators(raw: string): string {
+  return withoutOperators(raw, ['idea'])
 }

@@ -21,7 +21,17 @@ import { formatDateTime, TYPE_LABEL } from '@/lib/itemTitle'
 import { trashPurgeNote } from '@/lib/trash'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/store/ui'
-import { DEFAULT_SETTINGS, type Item, type ItemSource, type ItemStatus, type ItemType } from '@/types'
+import {
+  DEFAULT_SETTINGS,
+  IDEA_STATUSES,
+  IDEA_STATUS_LABEL,
+  ideaStatusOf,
+  type IdeaStatus,
+  type Item,
+  type ItemSource,
+  type ItemStatus,
+  type ItemType,
+} from '@/types'
 import { CategoryBadge } from './CategoryBadge'
 import { CategorySelect } from './CategorySelect'
 import { AiSuggest, AiSummary } from './detail/AiSuggest'
@@ -77,6 +87,38 @@ function TypeSwitch({ item, readOnly }: { item: Item; readOnly?: boolean }) {
           <DropdownMenuItem key={t} onClick={() => t !== item.type && void saveItem(item.id, { type: t })}>
             <TypeIcon type={t} />
             {TYPE_LABEL[t]}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** Статус идеи: только у записи типа «Идея». «Новая» — состояние по умолчанию, поле при этом сбрасывается. */
+function IdeaStatusSwitch({ item, readOnly }: { item: Item; readOnly?: boolean }) {
+  const current = ideaStatusOf(item)
+  if (!current) return null
+  const label = IDEA_STATUS_LABEL[current]
+  if (readOnly) {
+    return <span className="inline-flex h-7 items-center px-1.5 text-sm text-muted-foreground">{label}</span>
+  }
+  const choose = (st: IdeaStatus) => {
+    if (st !== current) void saveItem(item.id, { ideaStatus: st === 'new' ? undefined : st })
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={`Статус идеи: ${label}. Сменить`}
+        className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm text-foreground transition-colors outline-none select-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/60 aria-expanded:bg-muted px-btn px-btn-ghost pixel:h-7.5"
+      >
+        <span>{label}</span>
+        <Icon name="chevron-down" size={14} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-auto min-w-36">
+        {IDEA_STATUSES.map((st) => (
+          <DropdownMenuItem key={st} onClick={() => choose(st)}>
+            {IDEA_STATUS_LABEL[st]}
+            {st === current && <Icon name="check" size={14} className="ml-auto" />}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -173,6 +215,7 @@ function DetailBody({ item, onClose }: { item: Item; onClose: () => void }) {
         {/* Запас p-1 при -m-1: обводка фокуса выходит за кнопку на 2-4px и иначе срезается overflow-hidden. */}
         <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-hidden p-1">
           <TypeSwitch item={item} readOnly={trashed} />
+          <IdeaStatusSwitch item={item} readOnly={trashed} />
           <span className="hidden h-5 min-w-0 items-center rounded-md bg-muted px-1.5 text-xs text-muted-foreground @[26rem]:inline-flex px-chip pixel:h-auto pixel:min-h-6">
             <span className="truncate">{trashed ? 'В корзине' : STATUS_LABEL[item.status]}</span>
           </span>

@@ -18,6 +18,7 @@ export function isNarrowed(query: string, filter: UiFilter): boolean {
   // Те же признаки, что у «активных фильтров» в FilterBar: null у категории — «без категории».
   return (
     !!filter.types?.length ||
+    !!filter.ideaStatuses?.length ||
     filter.categoryId !== undefined ||
     !!filter.tags?.length ||
     !!filter.untagged ||

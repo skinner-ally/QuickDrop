@@ -85,6 +85,8 @@ export interface Item {
   processedAt?: number
 
   ai?: AiMeta
+  /** Статус идеи (только при type === 'idea'); нет поля — «новая». Хранится и при смене типа: вернули тип — статус на месте. */
+  ideaStatus?: IdeaStatus
 
   /**
    * Текст, извлечённый из вложения (PDF с текстовым слоем, распознанная картинка). Участвует в поиске.
@@ -290,12 +292,28 @@ export interface NewItemInput {
   /** Для file/image: сам файл; репозиторий сохранит его и сделает превью. */
   file?: File | Blob
   fileName?: string
+  /** Описание, предложенное ИИ ещё в форме добавления (кладётся в `Item.ai`, показывается как «Кратко»). */
+  ai?: AiMeta
 }
 
 /** Поля записи, которые можно править через updateItem. */
 export type ItemPatch = Partial<
-  Pick<Item, 'type' | 'title' | 'content' | 'url' | 'linkMeta' | 'language' | 'categoryId' | 'tags' | 'ai'>
+  Pick<Item, 'type' | 'title' | 'content' | 'url' | 'linkMeta' | 'language' | 'categoryId' | 'tags' | 'ai' | 'ideaStatus'>
 >
+
+/** Состояния идеи: новая → в работе → сделана; отложена — пока не нужна. У записи без поля — «новая». */
+export const IDEA_STATUSES = ['new', 'active', 'done', 'later'] as const
+export type IdeaStatus = (typeof IDEA_STATUSES)[number]
+export const IDEA_STATUS_LABEL: Record<IdeaStatus, string> = {
+  new: 'Новая',
+  active: 'В работе',
+  done: 'Сделана',
+  later: 'Отложена',
+}
+/** Статус идеи с учётом умолчания; у записи другого типа — undefined. */
+export function ideaStatusOf(item: Pick<Item, 'type' | 'ideaStatus'>): IdeaStatus | undefined {
+  return item.type === 'idea' ? (item.ideaStatus ?? 'new') : undefined
+}
 
 /** Фильтры списков. Все поля необязательны и комбинируются по И. */
 export interface ItemFilter {
@@ -308,6 +326,8 @@ export interface ItemFilter {
   favorite?: boolean
   /** Без тегов и без категории. */
   untagged?: boolean
+  /** Только идеи с одним из этих статусов (записи других типов не проходят). Пустой массив — без ограничения. */
+  ideaStatuses?: IdeaStatus[]
   /** Диапазон по createdAt (включительно). */
   from?: number
   to?: number

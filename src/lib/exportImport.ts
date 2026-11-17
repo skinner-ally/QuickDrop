@@ -21,6 +21,7 @@ import { isValidSetting } from '@/lib/settingsSchema'
 import {
   CATEGORY_COLORS,
   DEFAULT_SETTINGS,
+  IDEA_STATUSES,
   ITEM_SOURCES,
   ITEM_STATUSES,
   ITEM_TYPES,
@@ -462,6 +463,8 @@ export function sanitizeItem(raw: unknown, now = Date.now()): Item | null {
   if (processedAt !== undefined) item.processedAt = processedAt
   const ai = sanitizeAi(raw.ai, now)
   if (ai) item.ai = ai
+  // «Новая» — умолчание, поле не пишется; статус хранится и у записи, ставшей другим типом (вернули тип — статус на месте).
+  if (isOneOf(IDEA_STATUSES, raw.ideaStatus) && raw.ideaStatus !== 'new') item.ideaStatus = raw.ideaStatus
   const ocrText = str(raw.ocrText)
   if (ocrText !== undefined) {
     const clean = cleanOcrText(ocrText)

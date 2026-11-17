@@ -96,7 +96,7 @@ export function CategorySelect({
             aria-label="Поиск категории"
           />
           <CommandList>
-            <CommandEmpty>Ничего не найдено</CommandEmpty>
+            {!canCreate && <CommandEmpty>Ничего не найдено</CommandEmpty>}
             <CommandGroup>
               <CommandItem value={NONE} keywords={['без категории']} onSelect={() => choose(null)}>
                 <span className="text-muted-foreground">Без категории</span>
@@ -114,13 +114,16 @@ export function CategorySelect({
                   {c.id === value && <Icon name="check" size={14} className="ml-auto" />}
                 </CommandItem>
               ))}
-              {canCreate && (
+            </CommandGroup>
+            {/* Отдельная группа с forceMount: cmdk прячет группу, где нет совпадений, и «Создать» пропадало бы вместе с ней */}
+            {canCreate && (
+              <CommandGroup forceMount>
                 <CommandItem value={CREATE} forceMount onSelect={() => void create()}>
                   <Icon name="plus" size={14} />
                   <span className="truncate">Создать «{name}»</span>
                 </CommandItem>
-              )}
-            </CommandGroup>
+              </CommandGroup>
+            )}
           </CommandList>
         </Command>
       </PopoverContent>

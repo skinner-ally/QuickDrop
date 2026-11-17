@@ -240,6 +240,14 @@ export async function createItem(input: NewItemInput): Promise<Item> {
   if (input.language) item.language = input.language
   if (status === 'library') item.processedAt = now
   if (input.fileName) item.fileName = input.fileName
+  const aiSummary = input.ai?.summary?.trim()
+  if (aiSummary) {
+    item.ai = {
+      summary: aiSummary,
+      ...(input.ai?.model ? { model: input.ai.model } : {}),
+      generatedAt: input.ai?.generatedAt ?? now,
+    }
+  }
 
   let stored: StoredFile | undefined
   if (hasFile && input.file) {
@@ -288,7 +296,7 @@ export async function createItem(input: NewItemInput): Promise<Item> {
 }
 
 /** Необязательные поля записи: undefined в патче означает «сбросить». */
-const CLEARABLE_FIELDS: ReadonlySet<string> = new Set<keyof ItemPatch>(['url', 'linkMeta', 'language', 'ai'])
+const CLEARABLE_FIELDS: ReadonlySet<string> = new Set<keyof ItemPatch>(['url', 'linkMeta', 'language', 'ai', 'ideaStatus'])
 
 /** Бросает Error, если адрес ссылки с недопустимой схемой. */
 export async function updateItem(id: string, patch: ItemPatch): Promise<void> {

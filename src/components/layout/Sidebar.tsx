@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { matchKey } from '@/lib/keys'
 import { Icon, usePixel, type IconName } from '@/components/icons'
 import { useTheme } from '@/components/layout/ThemeProvider'
@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { CategoryDot } from '@/components/items/CategoryBadge'
-import { createCategory } from '@/db/repo'
+import { createCategory, updateCategory } from '@/db/repo'
 import { setSetting, useSettings } from '@/db/settings'
 import { useCategories, useCounts, useLegendCounts, useTrashCount } from '@/hooks/useItems'
 import { describeError } from '@/lib/errors'
@@ -14,7 +14,7 @@ import { NavButton, SectionHeader } from '@/components/layout/NavButton'
 import { SavedSearches } from '@/components/layout/SavedSearches'
 import { useGraph } from '@/store/graph'
 import { useUi, type View } from '@/store/ui'
-import { CATEGORY_COLORS, type Settings } from '@/types'
+import { CATEGORY_COLORS, type Category, type Settings } from '@/types'
 
 const TOP_TAGS = 12
 
@@ -100,6 +100,49 @@ function NewCategory({ onDone }: { onDone: () => void }) {
   )
 }
 
+/** Переименование категории на месте, в строке списка. Enter и уход фокуса сохраняют, Esc отменяет. */
+function RenameCategory({ category, onDone }: { category: Category; onDone: () => void }) {
+  const [name, setName] = useState(category.name)
+  const finished = useRef(false)
+
+  const finish = async (save: boolean) => {
+    if (finished.current) return
+    finished.current = true
+    const trimmed = name.trim()
+    if (save && trimmed && trimmed !== category.name) {
+      try {
+        await updateCategory(category.id, { name: trimmed })
+      } catch (e) {
+        toast.error(describeError(e, 'Не удалось переименовать категорию'))
+      }
+    }
+    onDone()
+  }
+
+  return (
+    <input
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      value={name}
+      maxLength={40}
+      onChange={(e) => setName(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          void finish(true)
+        } else if (matchKey(e, 'Escape', 'Escape')) {
+          e.preventDefault()
+          e.stopPropagation()
+          void finish(false)
+        }
+      }}
+      onBlur={() => void finish(true)}
+      aria-label={`Новое название категории «${category.name}»`}
+      className="mx-1 my-0.5 h-7 w-[calc(100%-0.5rem)] px-field pixel:h-7.5 rounded-md border border-input bg-background px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 md:text-2sm"
+    />
+  )
+}
+
 export function Sidebar() {
   const view = useUi((s) => s.view)
   const settingsFrom = useUi((s) => s.settingsFrom)
@@ -120,6 +163,7 @@ export function Sidebar() {
   const [tagsOpen, setTagsOpen] = useState(true)
   const [allTags, setAllTags] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
 
   // Вне «Графа» клик открывает «Базу знаний» и считается она; в «Графе» панель — легенда его нод (см. computeLegend).
   const showArchive = useGraph((s) => s.showArchive)
@@ -236,16 +280,32 @@ export function Sidebar() {
         />
         {catsOpen && (
           <div className="mt-0.5 flex flex-col gap-0.5">
-            {categories.map((c) => (
-              <NavButton
-                key={c.id}
-                active={filterable && filter.categoryId === c.id}
-                onClick={() => toggleCategory(c.id)}
-                icon={<CategoryDot color={c.color} className="size-2.5" />}
-                label={c.name}
-                count={perCategory.get(c.id) ?? 0}
-              />
-            ))}
+            {categories.map((c) =>
+              renamingId === c.id ? (
+                <RenameCategory key={c.id} category={c} onDone={() => setRenamingId(null)} />
+              ) : (
+                <div key={c.id} className="group relative">
+                  <NavButton
+                    active={filterable && filter.categoryId === c.id}
+                    onClick={() => toggleCategory(c.id)}
+                    icon={<CategoryDot color={c.color} className="size-2.5" />}
+                    label={c.name}
+                    count={perCategory.get(c.id) ?? 0}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Переименовать категорию «${c.name}»`}
+                    title="Переименовать"
+                    // Поверх счётчика: в покое не виден, на сенсорном экране (нет наведения) показан всегда.
+                    className="absolute top-1/2 right-1 -translate-y-1/2 bg-sidebar-accent px-btn opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 pixel:size-6 pixel:max-md:size-8"
+                    onClick={() => setRenamingId(c.id)}
+                  >
+                    <Icon name="pencil" />
+                  </Button>
+                </div>
+              ),
+            )}
             <NavButton
               active={filterable && filter.categoryId === null}
               onClick={() => toggleCategory(null)}
